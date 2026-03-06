@@ -8,22 +8,22 @@ real-estate-ai-platform
 │
 ├── frontend
 │   ├── public
-│   ├── src
-│   │   ├── components
-│   │   │   ├── Navbar.js
-│   │   │   ├── PropertyForm.js
-│   │   │   └── PriceChart.js
-│   │   │
-│   │   ├── pages
-│   │   │   ├── Login.js
-│   │   │   ├── Register.js
-│   │   │   ├── Predict.js
-│   │   │   └── Dashboard.js
-│   │   │
-│   │   ├── services
-│   │   │   └── api.js
-│   │   │
-│   │   └── App.js
+│   └──src
+│       ├── components
+│       │   ├── Navbar.js
+│       │   ├── PropertyForm.js
+│       │   └── PriceChart.js
+│       │
+│       ├── pages
+│       │   ├── Login.js
+│       │   ├── Register.js
+│       │   ├── Predict.js
+│       │   └── Dashboard.js
+│       │
+│       ├── services
+│       │   └── api.js
+│       │
+│       └── App.js
 │
 ├── backend
 │   ├── main.py
