@@ -22,19 +22,32 @@ propai/
 
 ## Setup Instructions
 
-1. **Install Dependencies**:
+1. **Setup Virtual Environment**:
+Windows (PowerShell):
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+macOS/Linux:
+python3 -m venv .venv
+source .venv/bin/activate
+
+2. **Install Dependencies**:
    ```bash
    pip install -r requirements.txt
    ```
 
-2. **Run the Backend**:
+3. **Run the Backend**:
    ```bash
    cd backend
    python server.py
    ```
 
-3. **Access the Application**:
-   Open your browser and navigate to `http://localhost:5000`.
+4. **Access the Application**:
+   Once the server is running, open your web browser and navigate to:
+
+   http://localhost:3000
+
+   Alternatively, you may click the link shown in the terminal (e.g., Running on `http://127.0.0.1:3000`).
 
 ## Features
 

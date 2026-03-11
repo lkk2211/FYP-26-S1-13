@@ -22,6 +22,7 @@ function showView(viewId) {
     }
     
     window.scrollTo({ top: 0, behavior: 'smooth' });
+    lucide.createIcons();
 }
 
 // Predict Logic
@@ -162,6 +163,8 @@ function showTab(tabId) {
     
     btn.classList.remove('text-slate-400');
     btn.classList.add('text-slate-900', 'border-slate-900');
+
+    lucide.createIcons();
 }
 
 function showAdminTab(tabId) {
@@ -324,27 +327,65 @@ async function fetchAdminStats() {
 // Auth Logic
 let currentUser = null;
 
-function handleSignIn(e) {
+async function handleSignIn(e) {
     if (e) e.preventDefault();
-    // Mock sign in
-    currentUser = {
-        name: "John Tan",
-        avatar: "https://picsum.photos/seed/johntan/100/100"
-    };
+
+    const inputs = document.querySelectorAll('#view-signin input');
+    const email = inputs[0].value.trim();
+    const password = inputs[1].value.trim();
+
+    const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+    });
+
+    const data = await res.json();
+
+    if (data.error) {
+        alert(data.error);
+        return;
+    }
+
+    currentUser = data.user;
     updateAuthUI();
+    loadProfileForm();
     showView('home');
 }
 
-function handleRegister(e) {
+async function handleRegister(e) {
     if (e) e.preventDefault();
-    // Mock register
-    const nameInput = document.querySelector('#view-register input[placeholder="Full Name"]');
-    const name = nameInput ? nameInput.value : "New User";
-    currentUser = {
-        name: name,
-        avatar: `https://picsum.photos/seed/${name}/100/100`
-    };
+
+    const inputs = document.querySelectorAll('#view-register input');
+    const full_name = inputs[0].value.trim();
+    const email = inputs[1].value.trim();
+    const password = inputs[2].value.trim();
+
+    const res = await fetch('/api/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ full_name, email, password })
+    });
+
+    const text = await res.text();
+    console.log('register response:', text);
+
+    let data;
+    try {
+        data = JSON.parse(text);
+    } catch (err) {
+        alert('Backend returned non-JSON response. Check Flask terminal for the real error.');
+        return;
+    }
+
+    if (data.error) {
+        alert(data.error);
+        return;
+    }
+
+    currentUser = data.user;
     updateAuthUI();
+    loadProfileForm();
     showView('home');
 }
 
@@ -364,8 +405,8 @@ function updateAuthUI() {
         authButtons.classList.add('hidden');
         userProfile.classList.remove('hidden');
         userProfile.classList.add('flex');
-        userName.innerText = currentUser.name;
-        userAvatar.src = currentUser.avatar;
+        userName.innerText = currentUser.full_name;
+        userAvatar.src = "https://picsum.photos/seed/user/100/100";
     } else {
         authButtons.classList.remove('hidden');
         userProfile.classList.add('hidden');
@@ -374,5 +415,51 @@ function updateAuthUI() {
     lucide.createIcons();
 }
 
-// Initial Icons
-lucide.createIcons();
+function loadProfileForm() {
+    if (!currentUser) return;
+
+    const inputs = document.querySelectorAll('#tab-profile input');
+    if (inputs.length < 4) return;
+
+    const parts = currentUser.full_name.split(' ');
+    const firstName = parts[0] || '';
+    const lastName = parts.slice(1).join(' ') || '';
+
+    inputs[0].value = firstName;
+    inputs[1].value = lastName;
+    inputs[2].value = currentUser.email || '';
+    inputs[3].value = currentUser.phone || '';
+}
+
+async function saveProfile() {
+    if (!currentUser) {
+        alert('Please login first');
+        return;
+    }
+
+    const inputs = document.querySelectorAll('#tab-profile input');
+    const firstName = inputs[0].value.trim();
+    const lastName = inputs[1].value.trim();
+    const email = inputs[2].value.trim();
+    const phone = inputs[3].value.trim();
+
+    const full_name = `${firstName} ${lastName}`.trim();
+
+    const res = await fetch(`/api/profile/${currentUser.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ full_name, email, phone })
+    });
+
+    const data = await res.json();
+
+    if (data.error) {
+        alert(data.error);
+        return;
+    }
+
+    currentUser = data.user;
+    updateAuthUI();
+    loadProfileForm();
+    alert('Profile updated');
+}
