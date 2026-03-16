@@ -31,7 +31,6 @@
                 <button onclick="showView('predict')" class="nav-link px-4 py-1.5 rounded-lg text-sm font-medium text-slate-500 transition-all hover:text-slate-900" id="nav-predict">Predict</button>
                 <button onclick="showView('map')" class="nav-link px-4 py-1.5 rounded-lg text-sm font-medium text-slate-500 transition-all hover:text-slate-900" id="nav-map">Map</button>
                 <button onclick="showView('trend')" class="nav-link px-4 py-1.5 rounded-lg text-sm font-medium text-slate-500 transition-all hover:text-slate-900" id="nav-trend">Trend</button>
-                <button onclick="showView('setting')" class="nav-link px-4 py-1.5 rounded-lg text-sm font-medium text-slate-500 transition-all hover:text-slate-900" id="nav-setting">Settings</button>
             </div>
             
             <div class="flex items-center gap-3" id="nav-auth-buttons">
@@ -48,7 +47,12 @@
                 </div>
                 <!-- Dropdown -->
                 <div class="absolute right-0 top-full pt-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
-                    <div class="bg-white border border-slate-200 rounded-xl shadow-xl p-2 min-w-[120px]">
+                    <div class="bg-white border border-slate-200 rounded-xl shadow-xl p-2 min-w-[140px] flex flex-col gap-1">
+                        <button onclick="showView('setting')" class="w-full flex items-center gap-2 px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50 rounded-lg transition-colors" id="nav-setting">
+                            <i data-lucide="settings" class="w-4 h-4"></i>
+                            Settings
+                        </button>
+                        <div class="h-px bg-slate-100 mx-2 my-1"></div>
                         <button onclick="handleLogout()" class="w-full flex items-center gap-2 px-4 py-2 text-sm font-bold text-rose-600 hover:bg-rose-50 rounded-lg transition-colors">
                             <i data-lucide="log-out" class="w-4 h-4"></i>
                             Logout
