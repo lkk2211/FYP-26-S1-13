@@ -239,23 +239,39 @@ function showAdminTab(tabId) {
 
 // Charts
 let trendChart;
-function initTrendChart() {
+
+async function initTrendChart() {
     const canvas = document.getElementById('trendChart');
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (trendChart) trendChart.destroy();
-    
+
+    // Fallback gradient
     const gradient = ctx.createLinearGradient(0, 0, 0, 400);
     gradient.addColorStop(0, 'rgba(37, 99, 235, 0.1)');
     gradient.addColorStop(1, 'rgba(37, 99, 235, 0)');
 
+    // Default / fallback data
+    let labels = ['Sep 25', 'Oct 25', 'Nov 25', 'Dec 25', 'Jan 26', 'Feb 26'];
+    let prices = [415000, 428000, 432000, 445000, 458000, 465000];
+
+    try {
+        const res = await fetch('/api/trend');
+        if (!res.ok) throw new Error('Trend API failed: ' + res.status);
+        const data = await res.json();
+        labels = data.labels;
+        prices = data.prices;
+    } catch (err) {
+        console.error('Failed to fetch trend data:', err);
+    }
+
     trendChart = new Chart(ctx, {
         type: 'line',
         data: {
-            labels: ['Sep 25', 'Oct 25', 'Nov 25', 'Dec 25', 'Jan 26', 'Feb 26'],
+            labels: labels,
             datasets: [{
                 label: 'Avg Price (S$)',
-                data: [415000, 428000, 432000, 445000, 458000, 465000],
+                data: prices,
                 borderColor: '#0F172A',
                 borderWidth: 4,
                 fill: true,
@@ -298,20 +314,41 @@ function initTrendChart() {
     });
 }
 
+
 let adminTypeChart;
-function initAdminTypeChart() {
+
+async function initAdminTypeChart() {
     const canvas = document.getElementById('adminTypeChart');
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (adminTypeChart) adminTypeChart.destroy();
 
+    // Default fallback
+    let labels = ['HDB 4-Room', 'Condo', 'HDB 5-Room', 'Landed', 'HDB 3-Room'];
+    let dataValues = [8420, 6540, 5210, 4100, 3274];
+
+    try {
+        const res = await fetch('/api/stats');
+        if (!res.ok) throw new Error('Stats API failed: ' + res.status);
+        const stats = await res.json();
+        labels = Object.keys(stats.prediction_types);
+        dataValues = Object.values(stats.prediction_types);
+
+        // Update HTML stats
+        document.getElementById('admin-users').innerText = stats.total_users.toLocaleString();
+        document.getElementById('admin-predictions').innerText = stats.total_predictions.toLocaleString();
+        document.getElementById('admin-db').innerText = stats.db_size;
+    } catch (err) {
+        console.error('Failed to fetch admin stats:', err);
+    }
+
     adminTypeChart = new Chart(ctx, {
         type: 'bar',
         data: {
-            labels: ['HDB 4-Room', 'Condo', 'HDB 5-Room', 'Landed', 'HDB 3-Room'],
+            labels: labels,
             datasets: [{
                 label: 'Predictions',
-                data: [8420, 6540, 5210, 4100, 3274],
+                data: dataValues,
                 backgroundColor: '#0F172A',
                 borderRadius: 8,
                 barThickness: 24
@@ -342,6 +379,7 @@ function initAdminTypeChart() {
         }
     });
 }
+
 
 // Admin Stats
 async function fetchAdminStats() {
