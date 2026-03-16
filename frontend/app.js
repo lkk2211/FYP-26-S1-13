@@ -2,6 +2,26 @@
 function showView(viewId) {
     const target = document.getElementById('view-' + viewId);
     if (!target) return;
+    localStorage.setItem('currentView', viewId);
+
+    // block admin page if user is not admin
+    /*
+    if (viewId === 'admin') {
+        const isAdmin = currentUser && (currentUser.is_admin === true || currentUser.role === 'admin');
+        if (!isAdmin) {
+            alert('Access denied. Admins only.');
+            showView(currentUser ? 'home' : 'signin');
+            return;
+        }
+    }
+    */
+
+    // block settings page if not logged in
+    if (viewId === 'setting' && !currentUser) {
+        alert('Please sign in first.');
+        showView('signin');
+        return;
+    }
 
     // Hide all views
     document.querySelectorAll('.view-section').forEach(s => s.classList.remove('active'));
@@ -16,9 +36,18 @@ function showView(viewId) {
 
     // View specific init
     if (viewId === 'trend') setTimeout(initTrendChart, 100);
+
     if (viewId === 'admin') {
         fetchAdminStats();
         setTimeout(initAdminTypeChart, 100);
+    }
+
+    if (viewId === 'setting') {
+        loadProfileForm();
+        loadProfilePhoto();
+        loadTheme();
+        loadPreferencesForm();
+        loadNotificationsForm();
     }
     
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -155,14 +184,32 @@ function showTab(tabId) {
     const btn = document.getElementById('tab-btn-' + tabId);
     if (!content || !btn) return;
 
-    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    localStorage.setItem('currentSettingsTab', tabId);
+
+    document.querySelectorAll('.tab-content').forEach(c => {
+        c.classList.remove('active');
+    });
     content.classList.add('active');
     
-    document.querySelectorAll('.setting-tab').forEach(t => t.classList.remove('text-slate-900', 'border-slate-900'));
-    document.querySelectorAll('.setting-tab').forEach(t => t.classList.add('text-slate-400'));
+    document.querySelectorAll('.setting-tab').forEach(t => {
+        t.classList.remove(
+            'text-slate-900',
+            'dark:text-white',
+            'border-slate-900',
+            'dark:border-white',
+            'border-b-2'
+        );
+        t.classList.add('text-slate-400', 'dark:text-slate-400');
+    });
     
-    btn.classList.remove('text-slate-400');
-    btn.classList.add('text-slate-900', 'border-slate-900');
+    btn.classList.remove('text-slate-400', 'dark:text-slate-400');
+    btn.classList.add(
+        'text-slate-900',
+        'dark:text-white',
+        'border-slate-900',
+        'dark:border-white',
+        'border-b-2'
+    );
 
     lucide.createIcons();
 }
@@ -171,6 +218,8 @@ function showAdminTab(tabId) {
     const content = document.getElementById('admin-tab-' + tabId);
     const btn = document.getElementById('admin-tab-btn-' + tabId);
     if (!content || !btn) return;
+
+    localStorage.setItem('currentAdminTab', tabId);
 
     document.querySelectorAll('.admin-tab-content').forEach(c => {
         c.classList.add('hidden');
@@ -327,6 +376,56 @@ async function fetchAdminStats() {
 // Auth Logic
 let currentUser = null;
 
+function getProfilePhotoKey() {
+    if (!currentUser || !currentUser.id) return null;
+    return `profilePhoto_${currentUser.id}`;
+}
+
+function toggleDarkMode() {
+    const html = document.documentElement;
+    const toggle = document.getElementById('darkModeToggle');
+
+    if (!toggle) return;
+
+    if (toggle.checked) {
+        html.classList.add('dark');
+        localStorage.setItem('theme', 'dark');
+    } else {
+        html.classList.remove('dark');
+        localStorage.setItem('theme', 'light');
+    }
+}
+
+function loadTheme() {
+    const savedTheme = localStorage.getItem('theme');
+    const toggle = document.getElementById('darkModeToggle');
+
+    if (savedTheme === 'dark') {
+        document.documentElement.classList.add('dark');
+        if (toggle) toggle.checked = true;
+    } else {
+        document.documentElement.classList.remove('dark');
+        if (toggle) toggle.checked = false;
+    }
+}
+
+function saveCurrentUser() {
+    localStorage.setItem('currentUser', JSON.stringify(currentUser));
+}
+
+function loadCurrentUser() {
+    const saved = localStorage.getItem('currentUser');
+    if (saved) {
+        currentUser = JSON.parse(saved);
+    } else {
+        currentUser = null;
+    }
+
+    updateAuthUI();
+    loadProfileForm();
+    loadPreferencesForm();
+}
+
 async function handleSignIn(e) {
     if (e) e.preventDefault();
 
@@ -348,6 +447,7 @@ async function handleSignIn(e) {
     }
 
     currentUser = data.user;
+    saveCurrentUser();
     updateAuthUI();
     loadProfileForm();
     showView('home');
@@ -384,15 +484,27 @@ async function handleRegister(e) {
     }
 
     currentUser = data.user;
+    saveCurrentUser();
     updateAuthUI();
     loadProfileForm();
     showView('home');
 }
 
+function clearAuthForms() {
+    document.querySelectorAll('#view-signin input, #view-register input').forEach(input => {
+        input.value = '';
+    });
+}
+
 function handleLogout() {
     currentUser = null;
+    localStorage.removeItem('currentUser');
+
     updateAuthUI();
-    showView('home');
+    clearProfileForm();
+    clearAuthForms();
+
+    showView('signin');
 }
 
 function updateAuthUI() {
@@ -400,35 +512,90 @@ function updateAuthUI() {
     const userProfile = document.getElementById('nav-user-profile');
     const userName = document.getElementById('nav-user-name');
     const userAvatar = document.getElementById('nav-user-avatar');
+    const adminBtn = document.getElementById('admin-panel-btn');
 
     if (currentUser) {
         authButtons.classList.add('hidden');
         userProfile.classList.remove('hidden');
         userProfile.classList.add('flex');
         userName.innerText = currentUser.full_name;
-        userAvatar.src = "https://picsum.photos/seed/user/100/100";
+
+        const photoKey = getProfilePhotoKey();
+        const savedPhoto = photoKey ? localStorage.getItem(photoKey) : null;
+        userAvatar.src = savedPhoto || "https://picsum.photos/seed/user/100/100";
+
+        /*
+        // show admin button only if admin
+        if (adminBtn) {
+            if (currentUser.is_admin === true || currentUser.role === 'admin') {
+                adminBtn.classList.remove('hidden');
+                adminBtn.classList.add('flex');
+            } else {
+                adminBtn.classList.add('hidden');
+                adminBtn.classList.remove('flex');
+            }
+        }
+        */
+        // TEMP: show admin panel for all logged-in users during development
+        if (adminBtn) {
+            adminBtn.classList.remove('hidden');
+            adminBtn.classList.add('flex');
+        }
+
     } else {
         authButtons.classList.remove('hidden');
         userProfile.classList.add('hidden');
-        userProfile.classList.remove('flex');
+        userProfile.classList.remove('flex'); 
+        
+
+        if (adminBtn) {
+            adminBtn.classList.add('hidden');
+            adminBtn.classList.remove('flex');
+        }
     }
+
     lucide.createIcons();
 }
 
+function clearProfileForm() {
+    const firstNameInput = document.getElementById('profile-first-name');
+    const lastNameInput = document.getElementById('profile-last-name');
+    const emailInput = document.getElementById('profile-email');
+    const phoneInput = document.getElementById('profile-phone');
+
+    if (firstNameInput) firstNameInput.value = '';
+    if (lastNameInput) lastNameInput.value = '';
+    if (emailInput) emailInput.value = '';
+    if (phoneInput) phoneInput.value = '';
+}
+
 function loadProfileForm() {
-    if (!currentUser) return;
+    const firstNameInput = document.getElementById('profile-first-name');
+    const lastNameInput = document.getElementById('profile-last-name');
+    const emailInput = document.getElementById('profile-email');
+    const phoneInput = document.getElementById('profile-phone');
 
-    const inputs = document.querySelectorAll('#tab-profile input');
-    if (inputs.length < 4) return;
+    if (!firstNameInput || !lastNameInput || !emailInput || !phoneInput) return;
 
-    const parts = currentUser.full_name.split(' ');
+    if (!currentUser) {
+        clearProfileForm();
+        return;
+    }
+
+    const fullName = currentUser.full_name || '';
+    const parts = fullName.split(' ');
     const firstName = parts[0] || '';
     const lastName = parts.slice(1).join(' ') || '';
 
-    inputs[0].value = firstName;
-    inputs[1].value = lastName;
-    inputs[2].value = currentUser.email || '';
-    inputs[3].value = currentUser.phone || '';
+    firstNameInput.value = firstName;
+    lastNameInput.value = lastName;
+    emailInput.value = currentUser.email || '';
+    phoneInput.value = currentUser.phone || '';
+}
+
+function cancelProfileChanges() {
+    loadProfileForm();
+    loadProfilePhoto();
 }
 
 async function saveProfile() {
@@ -437,11 +604,15 @@ async function saveProfile() {
         return;
     }
 
-    const inputs = document.querySelectorAll('#tab-profile input');
-    const firstName = inputs[0].value.trim();
-    const lastName = inputs[1].value.trim();
-    const email = inputs[2].value.trim();
-    const phone = inputs[3].value.trim();
+    const firstNameInput = document.getElementById('profile-first-name');
+    const lastNameInput = document.getElementById('profile-last-name');
+    const emailInput = document.getElementById('profile-email');
+    const phoneInput = document.getElementById('profile-phone');
+
+    const firstName = firstNameInput.value.trim();
+    const lastName = lastNameInput.value.trim();
+    const email = emailInput.value.trim();
+    const phone = phoneInput.value.trim();
 
     const full_name = `${firstName} ${lastName}`.trim();
 
@@ -459,7 +630,292 @@ async function saveProfile() {
     }
 
     currentUser = data.user;
+    saveCurrentUser();
     updateAuthUI();
     loadProfileForm();
-    alert('Profile updated');
+    showToast('Profile updated successfully');
 }
+
+// ===========================
+// Profile Photo Upload
+// ===========================
+
+function handleProfilePhotoUpload(event) {
+    if (!currentUser) {
+        alert('Please login first');
+        return;
+    }
+
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+
+    reader.onload = function(e) {
+        const photoData = e.target.result;
+        const preview = document.getElementById('profile-preview');
+        const icon = document.getElementById('profile-camera-icon');
+        const navAvatar = document.getElementById('nav-user-avatar');
+        const photoKey = getProfilePhotoKey();
+
+        if (photoKey) {
+            localStorage.setItem(photoKey, photoData);
+        }
+
+        if (preview) {
+            preview.src = photoData;
+            preview.classList.remove('hidden');
+        }
+
+        if (icon) {
+            icon.classList.add('hidden');
+        }
+
+        if (navAvatar) {
+            navAvatar.src = photoData;
+        }
+    };
+
+    reader.readAsDataURL(file);
+}
+
+function removeProfilePhoto() {
+    const preview = document.getElementById('profile-preview');
+    const icon = document.getElementById('profile-camera-icon');
+    const navAvatar = document.getElementById('nav-user-avatar');
+    const photoKey = getProfilePhotoKey();
+
+    if (photoKey) {
+        localStorage.removeItem(photoKey);
+    }
+
+    if (preview) {
+        preview.src = '';
+        preview.classList.add('hidden');
+    }
+
+    if (icon) {
+        icon.classList.remove('hidden');
+    }
+
+    if (navAvatar) {
+        navAvatar.src = "https://picsum.photos/seed/user/100/100";
+    }
+}
+
+function loadProfilePhoto() {
+    const photoKey = getProfilePhotoKey();
+    const savedPhoto = photoKey ? localStorage.getItem(photoKey) : null;
+
+    const preview = document.getElementById('profile-preview');
+    const icon = document.getElementById('profile-camera-icon');
+    const navAvatar = document.getElementById('nav-user-avatar');
+
+    if (!preview || !icon) return;
+
+    if (savedPhoto) {
+        preview.src = savedPhoto;
+        preview.classList.remove('hidden');
+        icon.classList.add('hidden');
+
+        if (navAvatar) {
+            navAvatar.src = savedPhoto;
+        }
+    } else {
+        preview.src = '';
+        preview.classList.add('hidden');
+        icon.classList.remove('hidden');
+
+        if (navAvatar) {
+            navAvatar.src = "https://picsum.photos/seed/user/100/100";
+        }
+    }
+}
+
+let originalPreferences = {
+    darkMode: false,
+    currency: 'Singapore Dollar ($)',
+    dateFormat: 'DD/MM/YYYY',
+    shareAnalytics: true
+};
+
+let originalNotifications = {
+    email: true,
+    market: true,
+    sms: true
+};
+
+function loadPreferencesForm() {
+    const darkModeToggle = document.getElementById('darkModeToggle');
+    const currencySelect = document.getElementById('preferences-currency');
+    const dateFormatSelect = document.getElementById('preferences-date-format');
+    const shareAnalyticsToggle = document.getElementById('preferences-share-analytics');
+
+    const savedPreferences = JSON.parse(localStorage.getItem('preferences')) || {
+        darkMode: localStorage.getItem('theme') === 'dark',
+        currency: 'Singapore Dollar ($)',
+        dateFormat: 'DD/MM/YYYY',
+        shareAnalytics: true
+    };
+
+    originalPreferences = { ...savedPreferences };
+
+    if (darkModeToggle) darkModeToggle.checked = !!savedPreferences.darkMode;
+    if (currencySelect) currencySelect.value = savedPreferences.currency;
+    if (dateFormatSelect) dateFormatSelect.value = savedPreferences.dateFormat;
+    if (shareAnalyticsToggle) shareAnalyticsToggle.checked = !!savedPreferences.shareAnalytics;
+}
+
+function savePreferences() {
+    const darkModeToggle = document.getElementById('darkModeToggle');
+    const currencySelect = document.getElementById('preferences-currency');
+    const dateFormatSelect = document.getElementById('preferences-date-format');
+    const shareAnalyticsToggle = document.getElementById('preferences-share-analytics');
+
+    const preferences = {
+        darkMode: darkModeToggle ? darkModeToggle.checked : false,
+        currency: currencySelect ? currencySelect.value : 'Singapore Dollar ($)',
+        dateFormat: dateFormatSelect ? dateFormatSelect.value : 'DD/MM/YYYY',
+        shareAnalytics: shareAnalyticsToggle ? shareAnalyticsToggle.checked : true
+    };
+
+    localStorage.setItem('preferences', JSON.stringify(preferences));
+    originalPreferences = { ...preferences };
+
+    if (preferences.darkMode) {
+        document.documentElement.classList.add('dark');
+        localStorage.setItem('theme', 'dark');
+    } else {
+        document.documentElement.classList.remove('dark');
+        localStorage.setItem('theme', 'light');
+    }
+
+    showToast('Preferences updated successfully');
+}
+
+function cancelPreferencesChanges() {
+    const darkModeToggle = document.getElementById('darkModeToggle');
+    const currencySelect = document.getElementById('preferences-currency');
+    const dateFormatSelect = document.getElementById('preferences-date-format');
+    const shareAnalyticsToggle = document.getElementById('preferences-share-analytics');
+
+    if (darkModeToggle) darkModeToggle.checked = !!originalPreferences.darkMode;
+    if (currencySelect) currencySelect.value = originalPreferences.currency;
+    if (dateFormatSelect) dateFormatSelect.value = originalPreferences.dateFormat;
+    if (shareAnalyticsToggle) shareAnalyticsToggle.checked = !!originalPreferences.shareAnalytics;
+
+    if (originalPreferences.darkMode) {
+        document.documentElement.classList.add('dark');
+        localStorage.setItem('theme', 'dark');
+    } else {
+        document.documentElement.classList.remove('dark');
+        localStorage.setItem('theme', 'light');
+    }
+}
+
+function resetPreferencesFormToDefaults() {
+    const darkModeToggle = document.getElementById('darkModeToggle');
+    const currencySelect = document.getElementById('preferences-currency');
+    const dateFormatSelect = document.getElementById('preferences-date-format');
+    const shareAnalyticsToggle = document.getElementById('preferences-share-analytics');
+
+    if (darkModeToggle) darkModeToggle.checked = false;
+    if (currencySelect) currencySelect.value = 'Singapore Dollar ($)';
+    if (dateFormatSelect) dateFormatSelect.value = 'DD/MM/YYYY';
+    if (shareAnalyticsToggle) shareAnalyticsToggle.checked = true;
+
+    originalPreferences = {
+        darkMode: false,
+        currency: 'Singapore Dollar ($)',
+        dateFormat: 'DD/MM/YYYY',
+        shareAnalytics: true
+    };
+}
+
+function loadNotificationsForm() {
+    const notifEmail = document.getElementById('notif-email');
+    const notifMarket = document.getElementById('notif-market');
+    const notifSms = document.getElementById('notif-sms');
+
+    const savedNotifications = JSON.parse(localStorage.getItem('notifications')) || {
+        email: true,
+        market: true,
+        sms: true
+    };
+
+    originalNotifications = { ...savedNotifications };
+
+    if (notifEmail) notifEmail.checked = !!savedNotifications.email;
+    if (notifMarket) notifMarket.checked = !!savedNotifications.market;
+    if (notifSms) notifSms.checked = !!savedNotifications.sms;
+}
+
+function resetNotifications() {
+    const notifEmail = document.getElementById('notif-email');
+    const notifMarket = document.getElementById('notif-market');
+    const notifSms = document.getElementById('notif-sms');
+
+    if (notifEmail) notifEmail.checked = true;
+    if (notifMarket) notifMarket.checked = true;
+    if (notifSms) notifSms.checked = true;
+}
+
+function saveNotifications() {
+    const notifEmail = document.getElementById('notif-email');
+    const notifMarket = document.getElementById('notif-market');
+    const notifSms = document.getElementById('notif-sms');
+
+    const notifications = {
+        email: notifEmail ? notifEmail.checked : true,
+        market: notifMarket ? notifMarket.checked : true,
+        sms: notifSms ? notifSms.checked : true
+    };
+
+    localStorage.setItem('notifications', JSON.stringify(notifications));
+    originalNotifications = { ...notifications };
+    showToast('Notifications updated successfully');
+}
+
+function restoreLastView() {
+    const savedView = localStorage.getItem('currentView') || 'home';
+    const savedSettingsTab = localStorage.getItem('currentSettingsTab') || 'profile';
+    const savedAdminTab = localStorage.getItem('currentAdminTab') || 'overview';
+
+    // if saved page is settings but user is logged out, go signin
+    if (savedView === 'setting' && !currentUser) {
+        showView('signin');
+        return;
+    }
+
+    showView(savedView);
+
+    if (savedView === 'setting') {
+        showTab(savedSettingsTab);
+    }
+
+    if (savedView === 'admin') {
+        showAdminTab(savedAdminTab);
+    }
+}
+
+function showToast(message) {
+    const toast = document.getElementById('toast-message');
+    if (!toast) return;
+
+    toast.textContent = message;
+    toast.classList.remove('hidden');
+
+    setTimeout(() => {
+        toast.classList.add('hidden');
+    }, 2500);
+}
+
+loadCurrentUser();
+loadTheme();
+loadProfilePhoto();
+loadPreferencesForm();
+restoreLastView();
+lucide.createIcons();
+
+
+

@@ -131,3 +131,28 @@ input:checked + .toggle-slider:before {
 /* Admin Tabs */
 .admin-tab-content { display: none; }
 .admin-tab-content.active { display: block; }
+
+/* Auth input visibility fix */
+#view-signin input,
+#view-register input {
+    color: #0F172A;
+    -webkit-text-fill-color: #0F172A;
+    caret-color: #0F172A;
+}
+
+#view-signin input::placeholder,
+#view-register input::placeholder {
+    color: #94A3B8;
+    opacity: 1;
+}
+
+#view-signin input:-webkit-autofill,
+#view-signin input:-webkit-autofill:hover,
+#view-signin input:-webkit-autofill:focus,
+#view-register input:-webkit-autofill,
+#view-register input:-webkit-autofill:hover,
+#view-register input:-webkit-autofill:focus {
+    -webkit-text-fill-color: #0F172A;
+    box-shadow: 0 0 0px 1000px #F8FAFC inset;
+    transition: background-color 5000s ease-in-out 0s;
+}

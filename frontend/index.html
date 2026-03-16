@@ -5,11 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PropAI.sg | Intelligent Property Valuations</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class'
+        }
+    </script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link rel="stylesheet" href="style.css">
 </head>
-<body class="antialiased">
+<body class="antialiased bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-white">
 
     <!-- Navigation -->
     <nav class="fixed top-0 left-0 right-0 z-50 glass border-b border-slate-200/50">
@@ -683,7 +688,7 @@
                         <h1 class="text-4xl font-bold tracking-tight mb-2">Settings</h1>
                         <p class="text-slate-500 text-lg">Manage your account settings and preferences</p>
                     </div>
-                    <button onclick="showView('admin')" class="px-6 py-3 bg-slate-100 text-slate-900 rounded-2xl text-sm font-bold hover:bg-slate-200 transition-all flex items-center gap-2">
+                    <button id="admin-panel-btn" onclick="showView('admin')" class="hidden px-6 py-3 bg-slate-100 text-slate-900 rounded-2xl text-sm font-bold hover:bg-slate-200 transition-all items-center gap-2">
                         <i data-lucide="shield" class="w-4 h-4"></i>
                         Admin Panel
                     </button>
@@ -695,46 +700,57 @@
                     <button onclick="showTab('preferences')" class="setting-tab pb-5 text-sm font-bold text-slate-400 hover:text-slate-600 transition-all" id="tab-btn-preferences">Preferences</button>
                 </div>
 
-                <div class="bg-white rounded-[40px] p-12 border border-slate-100 card-shadow">
+                <div class="bg-white dark:bg-slate-900 rounded-[40px] p-12 border border-slate-100 dark:border-slate-700 card-shadow">
                     <!-- Profile Tab -->
                     <div id="tab-profile" class="tab-content active space-y-12">
                         <div class="flex items-center gap-8">
-                            <div class="w-24 h-24 rounded-full bg-slate-50 border-2 border-slate-100 flex items-center justify-center">
-                                <i data-lucide="camera" class="w-10 h-10 text-slate-300"></i>
+                             <div class="w-24 h-24 rounded-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 flex items-center justify-center overflow-hidden">
+                                <img id="profile-preview" src="" class="hidden w-full h-full object-cover">
+                                <i id="profile-camera-icon" data-lucide="camera" class="w-10 h-10 text-slate-300"></i>
                             </div>
+
                             <div class="space-y-4">
                                 <div>
-                                    <h3 class="text-xl font-bold">Profile Photo</h3>
-                                    <p class="text-sm text-slate-400">JPG, PNG or GIF. Max size 2MB</p>
+                                    <h3 class="text-xl font-bold text-slate-900 dark:text-white">Profile Photo</h3>
+                                    <p class="text-sm text-slate-400 dark:text-slate-300">JPG, PNG or GIF. Max size 2MB</p>
                                 </div>
+
+                                <input type="file" id="profile-upload" accept="image/*" class="hidden" onchange="handleProfilePhotoUpload(event)">
+
                                 <div class="flex gap-3">
-                                    <button class="px-6 py-2 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-black transition-all">Upload</button>
-                                    <button class="px-6 py-2 bg-rose-600 text-white rounded-xl text-sm font-bold hover:bg-rose-700 transition-all">Remove</button>
+                                    <button onclick="document.getElementById('profile-upload').click()" class="px-6 py-2 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-black transition-all">
+                                        Upload
+                                    </button>
+
+                                    <button onclick="removeProfilePhoto()" class="px-6 py-2 bg-rose-600 text-white rounded-xl text-sm font-bold hover:bg-rose-700 transition-all">
+                                        Remove
+                                    </button>
+   
                                 </div>
                             </div>
                         </div>
 
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
                             <div class="space-y-2">
-                                <label class="text-xs font-bold text-slate-700 uppercase">First Name</label>
-                                <input type="text" placeholder="User" class="w-full px-6 py-4 rounded-2xl bg-slate-50 border border-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white transition-all font-medium" />
+                                <label class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">First Name</label>
+                                <input id="profile-first-name" type="text" placeholder="User" class="w-full px-6 py-4 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white dark:focus:bg-slate-800 transition-all font-medium" />
                             </div>
                             <div class="space-y-2">
-                                <label class="text-xs font-bold text-slate-700 uppercase">Last Name</label>
-                                <input type="text" placeholder="Name" class="w-full px-6 py-4 rounded-2xl bg-slate-50 border border-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white transition-all font-medium" />
+                                <label class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">Last Name</label>
+                                <input id="profile-last-name" type="text" placeholder="Name" class="w-full px-6 py-4 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white dark:focus:bg-slate-800 transition-all font-medium" />
                             </div>
                             <div class="space-y-2">
-                                <label class="text-xs font-bold text-slate-700 uppercase">Email Address</label>
-                                <input type="email" placeholder="user@gmail.com" class="w-full px-6 py-4 rounded-2xl bg-slate-50 border border-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white transition-all font-medium" />
+                                <label class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">Email Address</label>
+                                <input id="profile-email" type="email" placeholder="user@gmail.com" class="w-full px-6 py-4 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white dark:focus:bg-slate-800 transition-all font-medium" />
                             </div>
                             <div class="space-y-2">
-                                <label class="text-xs font-bold text-slate-700 uppercase">Phone Number</label>
-                                <input type="text" placeholder="+65" class="w-full px-6 py-4 rounded-2xl bg-slate-50 border border-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white transition-all font-medium" />
+                                <label class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">Phone Number</label>
+                                <input id="profile-phone" type="text" placeholder="+65" class="w-full px-6 py-4 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white dark:focus:bg-slate-800 transition-all font-medium" />
                             </div>
                         </div>
                         
                         <div class="pt-6 flex justify-end gap-4">
-                            <button class="px-8 py-3 bg-rose-600 text-white rounded-xl font-bold hover:bg-rose-700 transition-all">Cancel</button>
+                            <button onclick="cancelProfileChanges()" class="px-8 py-3 bg-rose-600 text-white rounded-xl font-bold hover:bg-rose-700 transition-all">Cancel</button>
                             <button onclick="saveProfile()" class="px-8 py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-black transition-all">Save Changes</button>
                         </div>
                     </div>
@@ -748,7 +764,7 @@
                                     <p class="text-sm text-slate-400">Receive notifications via email</p>
                                 </div>
                                 <label class="toggle-switch">
-                                    <input type="checkbox" checked>
+                                     <input type="checkbox" id="notif-email" checked>
                                     <span class="toggle-slider"></span>
                                 </label>
                             </div>
@@ -758,7 +774,7 @@
                                     <p class="text-sm text-slate-400">Get updates on property market trends</p>
                                 </div>
                                 <label class="toggle-switch">
-                                    <input type="checkbox" checked>
+                                    <input type="checkbox" id="notif-market" checked>
                                     <span class="toggle-slider"></span>
                                 </label>
                             </div>
@@ -768,15 +784,20 @@
                                     <p class="text-sm text-slate-400">Receive notifications via SMS</p>
                                 </div>
                                 <label class="toggle-switch">
-                                    <input type="checkbox" checked>
+                                    <input type="checkbox" id="notif-sms" checked>
                                     <span class="toggle-slider"></span>
                                 </label>
                             </div>
                         </div>
 
                         <div class="pt-12 flex justify-end gap-4">
-                            <button class="px-8 py-3 bg-rose-600 text-white rounded-xl font-bold hover:bg-rose-700 transition-all">Reset</button>
-                            <button class="px-8 py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-black transition-all">Save Changes</button>
+                            <button onclick="resetNotifications()" class="px-8 py-3 bg-rose-600 text-white rounded-xl font-bold hover:bg-rose-700 transition-all">
+                                Reset
+                            </button>
+
+                            <button onclick="saveNotifications()" class="px-8 py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-black transition-all">
+                                Save Changes
+                            </button>
                         </div>
                     </div>
 
@@ -785,18 +806,18 @@
                         <div class="space-y-8">
                             <div class="flex items-center justify-between">
                                 <div>
-                                    <p class="font-bold text-slate-900">Dark Mode</p>
-                                    <p class="text-sm text-slate-400">Toggle dark mode theme</p>
+                                    <p class="font-bold text-slate-900 dark:text-white">Dark Mode</p>
+                                    <p class="text-sm text-slate-400 dark:text-slate-300">Toggle dark mode theme</p>
                                 </div>
                                 <label class="toggle-switch">
-                                    <input type="checkbox">
+                                    <input type="checkbox" id="darkModeToggle" onchange="toggleDarkMode()">
                                     <span class="toggle-slider"></span>
                                 </label>
                             </div>
 
                             <div class="space-y-2">
-                                <label class="text-xs font-bold text-slate-700 uppercase">Currency Display</label>
-                                <select class="w-full px-6 py-4 rounded-2xl bg-slate-50 border border-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium appearance-none">
+                                <label class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">Current Display</label>
+                                <select id="preferences-currency" class="w-full px-6 py-4 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium appearance-none">
                                     <option>Singapore Dollar ($)</option>
                                     <option>US Dollar ($)</option>
                                     <option>Euro (€)</option>
@@ -804,8 +825,8 @@
                             </div>
 
                             <div class="space-y-2">
-                                <label class="text-xs font-bold text-slate-700 uppercase">Date Format</label>
-                                <select class="w-full px-6 py-4 rounded-2xl bg-slate-50 border border-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium appearance-none">
+                                <label class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">Date Format</label>
+                                <select id="preferences-date-format" class="w-full px-6 py-4 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium appearance-none">
                                     <option>DD/MM/YYYY</option>
                                     <option>MM/DD/YYYY</option>
                                     <option>YYYY-MM-DD</option>
@@ -814,19 +835,19 @@
 
                             <div class="flex items-center justify-between">
                                 <div>
-                                    <p class="font-bold text-slate-900">Share Analytics</p>
+                                    <p class="font-bold text-slate-900 dark:text-white">Share Analytics</p>
                                     <p class="text-sm text-slate-400">Help us improve by sharing usage data</p>
                                 </div>
                                 <label class="toggle-switch">
-                                    <input type="checkbox" checked>
+                                    <input type="checkbox" id="preferences-share-analytics" checked>
                                     <span class="toggle-slider"></span>
                                 </label>
                             </div>
                         </div>
 
                         <div class="pt-12 flex justify-end gap-4">
-                            <button class="px-8 py-3 bg-rose-600 text-white rounded-xl font-bold hover:bg-rose-700 transition-all">Cancel</button>
-                            <button class="px-8 py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-black transition-all">Save Changes</button>
+                            <button onclick="cancelPreferencesChanges()" class="px-8 py-3 bg-rose-600 text-white rounded-xl font-bold hover:bg-rose-700 transition-all">Cancel</button>
+                            <button onclick="savePreferences()" class="px-8 py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-black transition-all">Save Changes</button>
                         </div>
                     </div>
                 </div>
@@ -1086,7 +1107,7 @@
         <!-- Auth Views -->
         <section id="view-signin" class="view-section">
             <main class="min-h-[80vh] flex items-center justify-center px-6">
-                <div class="bg-white p-12 rounded-[48px] border border-slate-100 card-shadow w-full max-w-md space-y-10 text-center">
+                <div class="bg-white text-slate-900 p-12 rounded-[48px] border border-slate-100 card-shadow w-full max-w-md space-y-10 text-center">
                     <div>
                         <div class="w-16 h-16 bg-slate-900 rounded-2xl flex items-center justify-center mx-auto mb-8">
                             <i data-lucide="lock" class="w-8 h-8 text-white"></i>
@@ -1107,7 +1128,7 @@
         <!-- Register View -->
         <section id="view-register" class="view-section">
             <main class="min-h-[80vh] flex items-center justify-center px-6">
-                <div class="bg-white p-12 rounded-[48px] border border-slate-100 card-shadow w-full max-w-md space-y-10 text-center">
+                <div class="bg-white text-slate-900 p-12 rounded-[48px] border border-slate-100 card-shadow w-full max-w-md space-y-10 text-center">
                     <div>
                         <div class="w-16 h-16 bg-slate-900 rounded-2xl flex items-center justify-center mx-auto mb-8">
                             <i data-lucide="user-plus" class="w-8 h-8 text-white"></i>
@@ -1116,9 +1137,9 @@
                         <p class="text-slate-500 font-medium">Join PropAI to start your property journey.</p>
                     </div>
                     <div class="space-y-4">
-                        <input type="text" placeholder="Full Name" class="w-full px-6 py-5 rounded-2xl bg-slate-50 border border-slate-100 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white transition-all font-medium" />
-                        <input type="email" placeholder="Email Address" class="w-full px-6 py-5 rounded-2xl bg-slate-50 border border-slate-100 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white transition-all font-medium" />
-                        <input type="password" placeholder="Password" class="w-full px-6 py-5 rounded-2xl bg-slate-50 border border-slate-100 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white transition-all font-medium" />
+                        <input type="text" placeholder="Full Name" class="w-full px-6 py-5 rounded-2xl bg-slate-50 border border-slate-100 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white transition-all font-medium" />
+                        <input type="email" placeholder="Email Address" class="w-full px-6 py-5 rounded-2xl bg-slate-50 border border-slate-100 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white transition-all font-medium" />
+                       <input type="password" placeholder="Password" class="w-full px-6 py-5 rounded-2xl bg-slate-50 border border-slate-100 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white transition-all font-medium" />
                     </div>
                     <button onclick="handleRegister()" class="w-full py-5 bg-slate-900 text-white rounded-[32px] text-lg font-bold hover:bg-black transition-all shadow-xl shadow-slate-200">Create Account</button>
                     <p class="text-sm text-slate-400">Already have an account? <button onclick="showView('signin')" class="text-blue-600 font-bold hover:underline">Sign In</button></p>
@@ -1127,6 +1148,10 @@
         </section>
     </div>
 
+    <div id="toast-message" class="fixed top-24 right-6 z-[9999] hidden px-5 py-3 rounded-xl bg-emerald-600 text-white font-semibold shadow-lg">
+        Profile updated successfully
+    </div>
+    
     <script src="app.js"></script>
 </body>
 </html>
