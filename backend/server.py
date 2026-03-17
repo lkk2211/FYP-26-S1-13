@@ -13,7 +13,7 @@ from predict import predict_price
 
 app = Flask(__name__, static_folder='../frontend')
 
-DB_PATH = 'users.db'
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'propaisg.db')
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
@@ -22,15 +22,60 @@ def get_db():
 
 def init_db():
     conn = get_db()
-    conn.execute("""
+    conn.executescript("""
         CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            full_name TEXT NOT NULL,
-            email TEXT NOT NULL UNIQUE,
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            full_name     TEXT NOT NULL,
+            email         TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL,
-            phone TEXT DEFAULT ''
-        )
+            phone         TEXT DEFAULT '',
+            role          TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user','admin'))
+        );
+        CREATE TABLE IF NOT EXISTS predictions (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            town            TEXT,
+            flat_type       TEXT,
+            floor_area_sqm  REAL,
+            estimated_value REAL NOT NULL,
+            confidence      REAL,
+            market_trend    TEXT,
+            feature_scores  TEXT,
+            model_version   TEXT NOT NULL DEFAULT 'v1.0.0',
+            predicted_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS price_records (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            postal_code     TEXT NOT NULL,
+            address         TEXT,
+            property_type   TEXT,
+            floor_area_sqft REAL,
+            num_bedrooms    INTEGER,
+            floor_level     INTEGER,
+            price_sgd       REAL NOT NULL,
+            price_psf       REAL,
+            price_date      TEXT NOT NULL,
+            data_source     TEXT NOT NULL DEFAULT 'housing.csv'
+        );
+        CREATE TABLE IF NOT EXISTS amenities (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            amenity_name TEXT NOT NULL,
+            amenity_type TEXT NOT NULL,
+            latitude     REAL NOT NULL,
+            longitude    REAL NOT NULL,
+            source       TEXT
+        );
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            action     TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            details    TEXT,
+            logged_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        );
     """)
+    conn.commit()
+    conn.close()
 
     conn.commit()
     conn.close()
@@ -56,13 +101,51 @@ def predict():
 
 @app.route('/api/stats', methods=['GET'])
 def stats():
-    # Mock stats for admin dashboard
-    return jsonify({
-        "total_users": 12847,
-        "total_predictions": 27544,
-        "db_size": "12.3 GB"
-    })
+    conn = get_db()
+    total_users       = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    total_predictions = conn.execute("SELECT COUNT(*) FROM predictions").fetchone()[0]
+    recent_users      = [dict(r) for r in conn.execute("SELECT id, full_name, email FROM users ORDER BY id DESC LIMIT 5").fetchall()]
+    all_users         = [{"id": r["id"], "full_name": r["full_name"], "email": r["email"], "role": r["role"], "is_admin": r["role"] == "admin"} for r in conn.execute("SELECT id, full_name, email, role FROM users ORDER BY id DESC").fetchall()]
+    db_bytes          = os.path.getsize(DB_PATH)
+    db_size           = f"{db_bytes/1024:.1f} KB" if db_bytes < 1024**2 else f"{db_bytes/1024**2:.2f} MB"
+    conn.close()
+    return jsonify({"total_users": total_users, "total_predictions": total_predictions, "db_size": db_size, "recent_users": recent_users, "all_users": all_users})
 
+@app.route('/api/trend', methods=['GET'])
+def trend():
+    import statistics, random
+    from datetime import date, timedelta
+    postal = request.args.get('postal')
+    town   = request.args.get('town')
+    POSTAL_META   = {"238801": {"property_type": "Condominium", "location": "Marina Bay"}, "560123": {"property_type": "HDB", "location": "Hougang"}, "159088": {"property_type": "HDB", "location": "Queenstown"}, "342005": {"property_type": "HDB", "location": "Toa Payoh"}}
+    TOWN_DISTRICT = {"Clementi": "D05", "Ang Mo Kio": "D20", "Bedok": "D16", "Bishan": "D20", "Bukit Batok": "D23", "Queenstown": "D03"}
+    conn = get_db()
+    if postal:
+        rows = conn.execute("SELECT * FROM price_records WHERE postal_code=?", (str(postal).zfill(6),)).fetchall()
+    elif town:
+        rows = conn.execute("SELECT * FROM price_records").fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM price_records").fetchall()
+    conn.close()
+    prices = [r["price_sgd"] for r in rows] or [450000]
+    avg    = statistics.mean(prices)
+    rng    = random.Random(int(avg))
+    today  = date.today()
+    trend_data, p = [], avg * 0.94
+    for i in range(6, 0, -1):
+        mo = (today.replace(day=1) - timedelta(days=30*(i-1))).strftime("%b %Y")
+        p  = p * rng.uniform(1.005, 1.025)
+        trend_data.append({"month": mo, "price": int(p)})
+    similar = []
+    for idx, r in enumerate(sorted(rows, key=lambda r: abs(r["price_sgd"]-avg))[:5]):
+        mo   = (today.replace(day=1) - timedelta(days=30*[1,2,2,3,4][idx])).strftime("%b %Y")
+        meta = POSTAL_META.get(str(r["postal_code"]), {})
+        pt   = r["property_type"] or meta.get("property_type", "HDB")
+        beds = r["num_bedrooms"] or 0
+        similar.append({"address": meta.get("location", r["postal_code"]), "type": f"{beds} Room" if pt=="HDB" else f"{beds} Bed", "floor_area": int(r["floor_area_sqft"] or 0), "price": int(r["price_sgd"]), "date": mo})
+    return jsonify({"trend_data": trend_data, "similar_transactions": similar, "summary": {"avg_price": int(avg), "min_price": int(min(prices)), "max_price": int(max(prices)), "total_transactions": len(rows)}})\
+
+    
 @app.route('/api/register', methods=['POST'])
 def register():
     data = request.json
@@ -139,7 +222,9 @@ def login():
             "id": user["id"],
             "full_name": user["full_name"],
             "email": user["email"],
-            "phone": user["phone"]
+            "phone": user["phone"],
+            "role": user["role"],
+            "is_admin": user["role"] == "admin"
         }
     })
 
