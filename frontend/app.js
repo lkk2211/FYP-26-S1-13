@@ -333,9 +333,9 @@ async function initMapForPostal(postal) {
 
         if (!mapInstance) {
             mapInstance = L.map('leaflet-map', { zoomControl: true });
-            // CartoDB Voyager — bright, colourful, works on both light and dark UIs
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-                attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/">CARTO</a>',
+            // OneMap SG official tiles
+            L.tileLayer('https://maps-{s}.onemap.sg/v3/maps/Default/{z}/{x}/{y}.png', {
+                attribution: '<img src="https://www.onemap.gov.sg/web-assets/images/logo/om_logo.png" style="height:20px;width:20px;"/> <a href="https://www.onemap.gov.sg/" target="_blank">OneMap</a> &copy; contributors, <a href="https://www.sla.gov.sg/" target="_blank">Singapore Land Authority</a>',
                 maxZoom: 19, subdomains: 'abcd'
             }).addTo(mapInstance);
             // Delay setView so the div has time to render with dimensions
