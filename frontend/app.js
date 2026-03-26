@@ -664,10 +664,10 @@ function toggleDarkMode() {
 }
 
 function loadTheme() {
-    const savedTheme = localStorage.getItem('theme');
+    const savedTheme = localStorage.getItem('theme') ?? 'dark';
     const toggle = document.getElementById('darkModeToggle');
 
-    if (savedTheme === 'dark') {
+    if (savedTheme !== 'light') {
         document.documentElement.classList.add('dark');
         if (toggle) toggle.checked = true;
     } else {
