@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: propaisg
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r ../requirements.txt
+    startCommand: gunicorn server:app --bind 0.0.0.0:$PORT
+    envVars:
+      - key: DATABASE_URL
+        sync: false        # Set this manually in Render dashboard → paste your Supabase connection string
+      - key: PYTHON_VERSION
+        value: 3.11.0

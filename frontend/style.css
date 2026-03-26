@@ -1,0 +1,158 @@
+:root {
+    --bg: #F8FAFC;
+    --ink: #0F172A;
+    --accent: #2563EB;
+}
+
+body { 
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol"; 
+    background-color: var(--bg);
+    color: var(--ink);
+    overflow-x: hidden;
+}
+
+.view-section { 
+    display: none; 
+    opacity: 0;
+    transform: translateY(10px);
+    pointer-events: none;
+    transition: opacity 0.4s ease, transform 0.4s ease;
+}
+
+.view-section.active { 
+    display: block; 
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+.glass {
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.card-shadow {
+    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05);
+}
+
+.nav-link.active {
+    color: var(--ink);
+    background: rgba(0, 0, 0, 0.04);
+}
+
+/* Custom Range Slider */
+input[type="range"] {
+    -webkit-appearance: none;
+    width: 100%;
+    height: 6px;
+    background: #E2E8F0;
+    border-radius: 5px;
+    outline: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    background: #2563EB;
+    border: 3px solid white;
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* Toggle Switch */
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #E2E8F0;
+    transition: .4s;
+    border-radius: 24px;
+}
+
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: .4s;
+    border-radius: 50%;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+input:checked + .toggle-slider {
+    background-color: #0F172A;
+}
+
+input:checked + .toggle-slider:before {
+    transform: translateX(20px);
+}
+
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+    animation: fadeIn 0.5s ease forwards;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+
+/* Admin Tabs */
+.admin-tab-content { display: none; }
+.admin-tab-content.active { display: block; }
+
+/* Auth input visibility fix */
+#view-signin input,
+#view-register input {
+    color: #0F172A;
+    -webkit-text-fill-color: #0F172A;
+    caret-color: #0F172A;
+}
+
+#view-signin input::placeholder,
+#view-register input::placeholder {
+    color: #94A3B8;
+    opacity: 1;
+}
+
+#view-signin input:-webkit-autofill,
+#view-signin input:-webkit-autofill:hover,
+#view-signin input:-webkit-autofill:focus,
+#view-register input:-webkit-autofill,
+#view-register input:-webkit-autofill:hover,
+#view-register input:-webkit-autofill:focus {
+    -webkit-text-fill-color: #0F172A;
+    box-shadow: 0 0 0px 1000px #F8FAFC inset;
+    transition: background-color 5000s ease-in-out 0s;
+}
