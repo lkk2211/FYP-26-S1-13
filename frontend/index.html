@@ -26,11 +26,11 @@
                 <span class="font-bold text-xl tracking-tight">PropAI<span class="text-blue-600">.sg</span></span>
             </div>
             
-            <div class="hidden md:flex items-center gap-1 bg-slate-100/50 p-1 rounded-xl border border-slate-200/50">
-                <button onclick="showView('home')" class="nav-link px-4 py-1.5 rounded-lg text-sm font-medium text-slate-500 transition-all hover:text-slate-900 active" id="nav-home">Home</button>
-                <button onclick="showView('predict')" class="nav-link px-4 py-1.5 rounded-lg text-sm font-medium text-slate-500 transition-all hover:text-slate-900" id="nav-predict">Predict</button>
-                <button onclick="showView('map')" class="nav-link px-4 py-1.5 rounded-lg text-sm font-medium text-slate-500 transition-all hover:text-slate-900" id="nav-map">Map</button>
-                <button onclick="showView('trend')" class="nav-link px-4 py-1.5 rounded-lg text-sm font-medium text-slate-500 transition-all hover:text-slate-900" id="nav-trend">Trend</button>
+            <div class="hidden md:flex items-center gap-1 bg-slate-100/50 dark:bg-slate-800/50 p-1 rounded-xl border border-slate-200/50 dark:border-slate-700/50">
+                <button onclick="showView('home')" class="nav-link px-4 py-1.5 rounded-lg text-sm font-medium text-slate-500 dark:text-slate-400 transition-all hover:text-slate-900 dark:hover:text-white active" id="nav-home">Home</button>
+                <button onclick="showView('predict')" class="nav-link px-4 py-1.5 rounded-lg text-sm font-medium text-slate-500 dark:text-slate-400 transition-all hover:text-slate-900 dark:hover:text-white" id="nav-predict">Predict</button>
+                <button onclick="showView('map')" class="nav-link px-4 py-1.5 rounded-lg text-sm font-medium text-slate-500 dark:text-slate-400 transition-all hover:text-slate-900 dark:hover:text-white" id="nav-map">Map</button>
+                <button onclick="showView('trend')" class="nav-link px-4 py-1.5 rounded-lg text-sm font-medium text-slate-500 dark:text-slate-400 transition-all hover:text-slate-900 dark:hover:text-white" id="nav-trend">Trend</button>
             </div>
             
             <div class="flex items-center gap-3" id="nav-auth-buttons">
@@ -47,17 +47,17 @@
                 </div>
                 <!-- Dropdown -->
                 <div class="absolute right-0 top-full pt-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
-                    <div class="bg-white border border-slate-200 rounded-xl shadow-xl p-2 min-w-[140px] flex flex-col gap-1">
-                        <button onclick="showView('setting')" class="w-full flex items-center gap-2 px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50 rounded-lg transition-colors" id="nav-setting">
+                    <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl p-2 min-w-[140px] flex flex-col gap-1">
+                        <button onclick="showView('setting')" class="w-full flex items-center gap-2 px-4 py-2 text-sm font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 rounded-lg transition-colors" id="nav-setting">
                             <i data-lucide="settings" class="w-4 h-4"></i>
                             Settings
                         </button>
-                        <button onclick="showView('admin')" id="admin-panel-btn" class="hidden w-full items-center gap-2 px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50 rounded-lg transition-colors">
+                        <button onclick="showView('admin')" id="admin-panel-btn" class="hidden w-full items-center gap-2 px-4 py-2 text-sm font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 rounded-lg transition-colors">
                             <i data-lucide="shield" class="w-4 h-4"></i>
                             Admin Panel
                         </button>
-                        <div class="h-px bg-slate-100 mx-2 my-1"></div>
-                        <button onclick="handleLogout()" class="w-full flex items-center gap-2 px-4 py-2 text-sm font-bold text-rose-600 hover:bg-rose-50 rounded-lg transition-colors">
+                        <div class="h-px bg-slate-100 dark:bg-slate-700 mx-2 my-1"></div>
+                        <button onclick="handleLogout()" class="w-full flex items-center gap-2 px-4 py-2 text-sm font-bold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-lg transition-colors">
                             <i data-lucide="log-out" class="w-4 h-4"></i>
                             Logout
                         </button>
@@ -102,26 +102,26 @@
 
                 <!-- Feature Grid -->
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-8 mt-12 animate-fade-in" style="animation-delay: 0.4s">
-                    <div class="bg-white p-8 rounded-[32px] border border-slate-100 card-shadow">
-                        <div class="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center mb-6">
-                            <i data-lucide="zap" class="w-6 h-6 text-blue-600"></i>
+                    <div class="bg-white dark:bg-slate-800 p-8 rounded-[32px] border border-slate-100 dark:border-slate-700 card-shadow">
+                        <div class="w-12 h-12 bg-blue-50 dark:bg-blue-900/30 rounded-2xl flex items-center justify-center mb-6">
+                            <i data-lucide="zap" class="w-6 h-6 text-blue-600 dark:text-blue-400"></i>
                         </div>
-                        <h3 class="text-xl font-bold mb-3">Instant Results</h3>
-                        <p class="text-slate-500 text-sm leading-relaxed">Get your property valuation in under 2 seconds with our optimized inference engine.</p>
+                        <h3 class="text-xl font-bold mb-3 dark:text-white">Instant Results</h3>
+                        <p class="text-slate-500 dark:text-slate-400 text-sm leading-relaxed">Get your property valuation in under 2 seconds with our optimized inference engine.</p>
                     </div>
-                    <div class="bg-white p-8 rounded-[32px] border border-slate-100 card-shadow">
-                        <div class="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center mb-6">
-                            <i data-lucide="shield-check" class="w-6 h-6 text-emerald-600"></i>
+                    <div class="bg-white dark:bg-slate-800 p-8 rounded-[32px] border border-slate-100 dark:border-slate-700 card-shadow">
+                        <div class="w-12 h-12 bg-emerald-50 dark:bg-emerald-900/30 rounded-2xl flex items-center justify-center mb-6">
+                            <i data-lucide="shield-check" class="w-6 h-6 text-emerald-600 dark:text-emerald-400"></i>
                         </div>
-                        <h3 class="text-xl font-bold mb-3">98% Accuracy</h3>
-                        <p class="text-slate-500 text-sm leading-relaxed">Our models are back-tested against actual resale prices with industry-leading precision.</p>
+                        <h3 class="text-xl font-bold mb-3 dark:text-white">98% Accuracy</h3>
+                        <p class="text-slate-500 dark:text-slate-400 text-sm leading-relaxed">Our models are back-tested against actual resale prices with industry-leading precision.</p>
                     </div>
-                    <div class="bg-white p-8 rounded-[32px] border border-slate-100 card-shadow">
-                        <div class="w-12 h-12 bg-purple-50 rounded-2xl flex items-center justify-center mb-6">
-                            <i data-lucide="layers" class="w-6 h-6 text-purple-600"></i>
+                    <div class="bg-white dark:bg-slate-800 p-8 rounded-[32px] border border-slate-100 dark:border-slate-700 card-shadow">
+                        <div class="w-12 h-12 bg-purple-50 dark:bg-purple-900/30 rounded-2xl flex items-center justify-center mb-6">
+                            <i data-lucide="layers" class="w-6 h-6 text-purple-600 dark:text-purple-400"></i>
                         </div>
-                        <h3 class="text-xl font-bold mb-3">Deep Insights</h3>
-                        <p class="text-slate-500 text-sm leading-relaxed">Analyze location factors, amenities, and market trends in one unified dashboard.</p>
+                        <h3 class="text-xl font-bold mb-3 dark:text-white">Deep Insights</h3>
+                        <p class="text-slate-500 dark:text-slate-400 text-sm leading-relaxed">Analyze location factors, amenities, and market trends in one unified dashboard.</p>
                     </div>
                 </div>
             </main>
@@ -135,7 +135,7 @@
                         <!-- Left Column: Inputs -->
                         <div class="lg:col-span-8 space-y-6">
                             <!-- Property Location Card -->
-                            <div class="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm space-y-6">
+                            <div class="bg-white dark:bg-slate-800 p-8 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-6">
                                 <div class="flex items-center gap-2 text-blue-600">
                                     <i data-lucide="map-pin" class="w-5 h-5"></i>
                                     <h3 class="font-bold">Property Location</h3>
@@ -978,7 +978,7 @@
         <!-- Auth Views -->
         <section id="view-signin" class="view-section">
             <main class="min-h-[80vh] flex items-center justify-center px-6">
-                <div class="bg-white text-slate-900 p-12 rounded-[48px] border border-slate-100 card-shadow w-full max-w-md space-y-10 text-center">
+                <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-white p-12 rounded-[48px] border border-slate-100 dark:border-slate-700 card-shadow w-full max-w-md space-y-10 text-center">
                     <div>
                         <div class="w-16 h-16 bg-slate-900 rounded-2xl flex items-center justify-center mx-auto mb-8">
                             <i data-lucide="lock" class="w-8 h-8 text-white"></i>
@@ -987,11 +987,11 @@
                         <p class="text-slate-500 font-medium">Sign in to access your valuations.</p>
                     </div>
                     <div class="space-y-4">
-                        <input type="email" placeholder="Email Address" class="w-full px-6 py-5 rounded-2xl bg-slate-50 border border-slate-100 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white transition-all font-medium" />
-                        <input type="password" placeholder="Password" class="w-full px-6 py-5 rounded-2xl bg-slate-50 border border-slate-100 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white transition-all font-medium" />
+                        <input type="email" placeholder="Email Address" class="w-full px-6 py-5 rounded-2xl bg-slate-50 dark:bg-slate-700 border border-slate-100 dark:border-slate-600 dark:text-white dark:placeholder-slate-400 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white dark:focus:bg-slate-600 transition-all font-medium" />
+                        <input type="password" placeholder="Password" class="w-full px-6 py-5 rounded-2xl bg-slate-50 dark:bg-slate-700 border border-slate-100 dark:border-slate-600 dark:text-white dark:placeholder-slate-400 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white dark:focus:bg-slate-600 transition-all font-medium" />
                         <p id="signin-error" class="hidden text-sm text-red-500 font-medium text-left px-1"></p>
                     </div>
-                    <button onclick="handleSignIn()" class="w-full py-5 bg-slate-900 text-white rounded-[32px] text-lg font-bold hover:bg-black transition-all shadow-xl shadow-slate-200">Sign In</button>
+                    <button onclick="handleSignIn()" class="w-full py-5 bg-slate-900 dark:bg-blue-600 dark:hover:bg-blue-700 text-white rounded-[32px] text-lg font-bold hover:bg-black transition-all shadow-xl shadow-slate-200">Sign In</button>
                     <p class="text-sm text-slate-400">Don't have an account? <button onclick="showView('register')" class="text-blue-600 font-bold hover:underline">Register</button></p>
                 </div>
             </main>
@@ -1000,7 +1000,7 @@
         <!-- Register View -->
         <section id="view-register" class="view-section">
             <main class="min-h-[80vh] flex items-center justify-center px-6">
-                <div class="bg-white text-slate-900 p-12 rounded-[48px] border border-slate-100 card-shadow w-full max-w-md space-y-10 text-center">
+                <div class="bg-white dark:bg-slate-800 text-slate-900 dark:text-white p-12 rounded-[48px] border border-slate-100 dark:border-slate-700 card-shadow w-full max-w-md space-y-10 text-center">
                     <div>
                         <div class="w-16 h-16 bg-slate-900 rounded-2xl flex items-center justify-center mx-auto mb-8">
                             <i data-lucide="user-plus" class="w-8 h-8 text-white"></i>
@@ -1009,12 +1009,12 @@
                         <p class="text-slate-500 font-medium">Join PropAI to start your property journey.</p>
                     </div>
                     <div class="space-y-4">
-                        <input type="text" placeholder="Full Name" class="w-full px-6 py-5 rounded-2xl bg-slate-50 border border-slate-100 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white transition-all font-medium" />
-                        <input type="email" placeholder="Email Address" class="w-full px-6 py-5 rounded-2xl bg-slate-50 border border-slate-100 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white transition-all font-medium" />
-                        <input type="password" placeholder="Password" class="w-full px-6 py-5 rounded-2xl bg-slate-50 border border-slate-100 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white transition-all font-medium" />
+                        <input type="text" placeholder="Full Name" class="w-full px-6 py-5 rounded-2xl bg-slate-50 dark:bg-slate-700 border border-slate-100 dark:border-slate-600 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white dark:focus:bg-slate-600 transition-all font-medium" />
+                        <input type="email" placeholder="Email Address" class="w-full px-6 py-5 rounded-2xl bg-slate-50 dark:bg-slate-700 border border-slate-100 dark:border-slate-600 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white dark:focus:bg-slate-600 transition-all font-medium" />
+                        <input type="password" placeholder="Password" class="w-full px-6 py-5 rounded-2xl bg-slate-50 dark:bg-slate-700 border border-slate-100 dark:border-slate-600 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white dark:focus:bg-slate-600 transition-all font-medium" />
                         <p id="register-error" class="hidden text-sm text-red-500 font-medium text-left px-1"></p>
                     </div>
-                    <button onclick="handleRegister()" class="w-full py-5 bg-slate-900 text-white rounded-[32px] text-lg font-bold hover:bg-black transition-all shadow-xl shadow-slate-200">Create Account</button>
+                    <button onclick="handleRegister()" class="w-full py-5 bg-slate-900 dark:bg-blue-600 dark:hover:bg-blue-700 text-white rounded-[32px] text-lg font-bold hover:bg-black transition-all shadow-xl shadow-slate-200">Create Account</button>
                     <p class="text-sm text-slate-400">Already have an account? <button onclick="showView('signin')" class="text-blue-600 font-bold hover:underline">Sign In</button></p>
                 </div>
             </main>

@@ -4,8 +4,13 @@
     --accent: #2563EB;
 }
 
-body { 
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol"; 
+.dark {
+    --bg: #0F172A;
+    --ink: #F1F5F9;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
     background-color: var(--bg);
     color: var(--ink);
     overflow-x: hidden;
@@ -32,8 +37,34 @@ body {
     border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
+.dark .glass {
+    background: rgba(15, 23, 42, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
 .card-shadow {
     box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05);
+}
+
+.dark .card-shadow {
+    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.4);
+}
+
+/* Dark mode card backgrounds */
+.dark .dark-card {
+    background-color: #1E293B;
+    border-color: #334155;
+    color: #F1F5F9;
+}
+
+.dark .dark-input {
+    background-color: #1E293B;
+    border-color: #334155;
+    color: #F1F5F9;
+}
+
+.dark .dark-input::placeholder {
+    color: #64748B;
 }
 
 .nav-link.active {
