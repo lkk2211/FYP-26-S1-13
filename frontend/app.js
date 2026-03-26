@@ -356,8 +356,8 @@ async function initMapForPostal(postal) {
             .addTo(mapInstance);
         mapLayers.push(propMarker);
 
-        // Load amenities via Overpass
-        await loadAmenities(lat, lng);
+        // Load amenities via backend (OneMap + Overpass, cached in DB)
+        await loadAmenities(lat, lng, postal);
 
     } catch (err) {
         placeholder.innerHTML = `<div class="text-center text-slate-400 text-sm"><p class="font-medium">Could not locate postal code</p><p class="text-xs mt-1">Try a different postal code</p></div>`;
@@ -366,109 +366,40 @@ async function initMapForPostal(postal) {
     }
 }
 
-async function loadAmenities(lat, lng) {
+async function loadAmenities(lat, lng, postal) {
     const amenityCards = document.getElementById('amenity-cards');
     amenityCards.innerHTML = `<div class="bg-white rounded-2xl border border-slate-200 p-6 text-center text-slate-400 text-sm shadow-sm">
         <p class="font-medium">Loading nearby amenities...</p></div>`;
 
-    const query = `[out:json][timeout:25];(
-        node["railway"="station"](around:2000,${lat},${lng});
-        way["railway"="station"](around:2000,${lat},${lng});
-        node["station"="subway"](around:2000,${lat},${lng});
-        node["public_transport"="station"]["subway"="yes"](around:2000,${lat},${lng});
-        node["public_transport"="station"]["train"="yes"](around:2000,${lat},${lng});
-        node["amenity"="school"](around:1500,${lat},${lng});
-        way["amenity"="school"](around:1500,${lat},${lng});
-        node["amenity"="university"](around:1500,${lat},${lng});
-        way["amenity"="university"](around:1500,${lat},${lng});
-        node["amenity"="college"](around:1500,${lat},${lng});
-        node["amenity"="hospital"](around:2000,${lat},${lng});
-        node["amenity"="clinic"](around:1000,${lat},${lng});
-        node["amenity"="doctors"](around:1000,${lat},${lng});
-        node["healthcare"="hospital"](around:2000,${lat},${lng});
-        node["leisure"="park"](around:1200,${lat},${lng});
-        way["leisure"="park"](around:1200,${lat},${lng});
-        node["amenity"="hawker_centre"](around:1200,${lat},${lng});
-        node["amenity"="food_court"](around:1000,${lat},${lng});
-        way["amenity"="hawker_centre"](around:1200,${lat},${lng});
-        node["amenity"="community_centre"](around:1500,${lat},${lng});
-        node["amenity"="community_hall"](around:1500,${lat},${lng});
-        node["amenity"="library"](around:1500,${lat},${lng});
-    );out center body;`;
-
     try {
-        const res = await fetch('https://overpass-api.de/api/interpreter', { method: 'POST', body: query });
+        const params = new URLSearchParams({ lat, lng });
+        if (postal) params.append('postal', postal);
+        const res = await fetch(`/api/amenities?${params}`);
+        if (!res.ok) throw new Error('API error');
         const data = await res.json();
-        const elements = data.elements || [];
-
-        const categories = {
-            mrt:       { label: 'MRT / LRT Stations', color: '#8b5cf6', icon: '🚇', items: [], lucide: 'train' },
-            school:    { label: 'Schools & Universities', color: '#10b981', icon: '🏫', items: [], lucide: 'graduation-cap' },
-            park:      { label: 'Parks & Green Spaces', color: '#14b8a6', icon: '🌳', items: [], lucide: 'trees' },
-            health:    { label: 'Healthcare', color: '#f43f5e', icon: '🏥', items: [], lucide: 'heart-pulse' },
-            hawker:    { label: 'Hawker / Food Centres', color: '#f97316', icon: '🍜', items: [], lucide: 'utensils' },
-            community: { label: 'Community & Library', color: '#3b82f6', icon: '🏛️', items: [], lucide: 'users' },
-        };
-
-        elements.forEach(el => {
-            const elLat = el.lat ?? el.center?.lat;
-            const elLng = el.lon ?? el.center?.lon;
-            if (!elLat || !elLng) return;
-            const name = el.tags?.name || el.tags?.['name:en'] || null;
-            if (!name) return;
-
-            const dist = getDistKm(lat, lng, elLat, elLng);
-            // 5 km/h walking = 83 m/min; bus in SG ~20 km/h = 333 m/min
-            const walkMin = Math.round(dist * 60 / 5);
-            const busMin  = Math.round(dist * 60 / 20);
-            const travelLabel = dist > 1.0
-                ? `~${walkMin} min walk / ~${busMin} min bus`
-                : `~${walkMin} min walk`;
-            const item = { name, dist: dist.toFixed(2), travel: travelLabel, lat: elLat, lng: elLng };
-
-            const t = el.tags || {};
-            const isMRT = t.railway === 'station' || t.station === 'subway' ||
-                (t.public_transport === 'station' && (t.subway === 'yes' || t.train === 'yes')) ||
-                (t.public_transport === 'stop_position' && t.train === 'yes');
-            if (isMRT) {
-                categories.mrt.items.push(item);
-            } else if (t.amenity === 'school' || t.amenity === 'university' || t.amenity === 'college') {
-                categories.school.items.push(item);
-            } else if (t.leisure === 'park') {
-                categories.park.items.push(item);
-            } else if (t.amenity === 'hospital' || t.amenity === 'clinic' || t.amenity === 'doctors') {
-                categories.health.items.push(item);
-            } else if (t.amenity === 'hawker_centre' || t.amenity === 'food_court') {
-                categories.hawker.items.push(item);
-            } else if (t.amenity === 'community_centre' || t.amenity === 'community_hall' || t.amenity === 'library') {
-                categories.community.items.push(item);
-            }
-        });
-
-        // Sort by distance, keep top 3 each
-        Object.values(categories).forEach(c => { c.items.sort((a,b) => a.dist - b.dist); c.items = c.items.slice(0, 3); });
+        const cats = data.categories;
 
         // Add markers to map
-        Object.entries(categories).forEach(([key, cat]) => {
+        Object.values(cats).forEach(cat => {
             cat.items.forEach(item => {
-                const icon = L.circleMarker([item.lat, item.lng], {
+                const marker = L.circleMarker([item.lat, item.lng], {
                     radius: 7, fillColor: cat.color, color: '#fff',
                     weight: 2, opacity: 1, fillOpacity: 0.9
                 }).bindPopup(`<b>${cat.icon} ${item.name}</b><br>${item.dist} km · ${item.travel}`);
-                icon.addTo(mapInstance);
-                mapLayers.push(icon);
+                marker.addTo(mapInstance);
+                mapLayers.push(marker);
             });
         });
 
         // Render sidebar cards
-        const hasAny = Object.values(categories).some(c => c.items.length > 0);
+        const hasAny = Object.values(cats).some(c => c.items.length > 0);
         if (!hasAny) {
             amenityCards.innerHTML = `<div class="bg-white rounded-2xl border border-slate-200 p-6 text-center shadow-sm">
-                <p class="text-slate-400 text-sm">No amenities found within 1.5km</p></div>`;
+                <p class="text-slate-400 text-sm">No amenities found nearby</p></div>`;
             return;
         }
 
-        amenityCards.innerHTML = Object.values(categories).filter(c => c.items.length > 0).map(cat => `
+        amenityCards.innerHTML = Object.values(cats).filter(c => c.items.length > 0).map(cat => `
             <div class="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
                 <div class="flex items-center gap-3 mb-4">
                     <div class="w-8 h-8 rounded-xl flex items-center justify-center" style="background:${cat.color}22">

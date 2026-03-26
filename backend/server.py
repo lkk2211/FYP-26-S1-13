@@ -5,6 +5,12 @@ import hashlib
 import os
 import json
 import sys
+import math
+import re
+import datetime
+import time
+import threading
+import urllib.request
 
 # Add current directory to path for imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -14,9 +20,15 @@ from predict import predict_price
 app = Flask(__name__, static_folder='../frontend')
 CORS(app)
 
-DB_PATH     = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'propaisg.db')
-DATABASE_URL = os.environ.get('DATABASE_URL')  # Set on Render to point at Supabase
-USE_POSTGRES = bool(DATABASE_URL)
+DB_PATH      = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'propaisg.db')
+DATABASE_URL  = os.environ.get('DATABASE_URL')  # Set on Render to point at Supabase
+USE_POSTGRES  = bool(DATABASE_URL)
+
+# OneMap credentials (set ONEMAP_EMAIL + ONEMAP_PASSWORD env vars on Render)
+ONEMAP_EMAIL    = os.environ.get('ONEMAP_EMAIL', '')
+ONEMAP_PASSWORD = os.environ.get('ONEMAP_PASSWORD', '')
+_om_token_cache = {'token': None, 'expiry': 0}
+_om_lock        = threading.Lock()
 
 # ---------------------------------------------------------------------------
 # Database helpers — transparently supports SQLite (local) and PostgreSQL (Supabase)
@@ -103,6 +115,13 @@ SQLITE_SCHEMA = """
         details    TEXT,
         logged_at  TEXT NOT NULL DEFAULT (datetime('now'))
     );
+    CREATE TABLE IF NOT EXISTS amenity_cache (
+        postal_code TEXT PRIMARY KEY,
+        lat         REAL NOT NULL,
+        lng         REAL NOT NULL,
+        data        TEXT NOT NULL,
+        cached_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    );
 """
 
 POSTGRES_SCHEMA = """
@@ -156,6 +175,13 @@ POSTGRES_SCHEMA = """
         details    TEXT,
         logged_at  TIMESTAMP NOT NULL DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS amenity_cache (
+        postal_code TEXT PRIMARY KEY,
+        lat         REAL NOT NULL,
+        lng         REAL NOT NULL,
+        data        TEXT NOT NULL,
+        cached_at   TIMESTAMP NOT NULL DEFAULT NOW()
+    );
 """
 
 def init_db():
@@ -171,6 +197,335 @@ def init_db():
         conn.executescript(SQLITE_SCHEMA)
         conn.commit()
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# OneMap helpers
+# ---------------------------------------------------------------------------
+def get_onemap_token():
+    """Return a cached OneMap JWT, refreshing if near expiry. None if unconfigured."""
+    with _om_lock:
+        if _om_token_cache['token'] and time.time() < _om_token_cache['expiry']:
+            return _om_token_cache['token']
+        if not ONEMAP_EMAIL or not ONEMAP_PASSWORD:
+            return None
+        try:
+            payload = json.dumps({'email': ONEMAP_EMAIL, 'password': ONEMAP_PASSWORD}).encode()
+            req = urllib.request.Request(
+                'https://www.onemap.gov.sg/api/auth/post/getToken',
+                data=payload,
+                headers={'Content-Type': 'application/json'},
+                method='POST'
+            )
+            with urllib.request.urlopen(req, timeout=10) as r:
+                data = json.loads(r.read())
+            token = data.get('access_token')
+            if token:
+                _om_token_cache['token'] = token
+                _om_token_cache['expiry'] = time.time() + 172800  # 48 h
+            return token
+        except Exception as e:
+            print(f'OneMap auth error: {e}')
+            return None
+
+
+def _haversine(lat1, lng1, lat2, lng2):
+    R = 6371
+    d = math.radians
+    a = (math.sin(d(lat2 - lat1) / 2) ** 2
+         + math.cos(d(lat1)) * math.cos(d(lat2)) * math.sin(d(lng2 - lng1) / 2) ** 2)
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _travel_label(dist_km):
+    walk = round(dist_km * 60 / 5)
+    if dist_km > 1.0:
+        bus = round(dist_km * 60 / 20)
+        return f'~{walk} min walk / ~{bus} min bus'
+    return f'~{walk} min walk'
+
+
+def _bbox(lat, lng, radius_km):
+    delta = radius_km / 111.0
+    return lat - delta, lng - delta, lat + delta, lng + delta
+
+
+def _parse_om_coords(item):
+    """Handle multiple OneMap field name conventions for lat/lng."""
+    for lk, lngk in [('LATITUDE', 'LONGITUDE'), ('Lat', 'Lng'), ('lat', 'lng')]:
+        if lk in item and lngk in item:
+            return float(item[lk]), float(item[lngk])
+    # Combined "lat,lng" string
+    for key in ('LatLng', 'latlng', 'LATLNG'):
+        if key in item:
+            parts = str(item[key]).split(',')
+            if len(parts) == 2:
+                return float(parts[0].strip()), float(parts[1].strip())
+    return None, None
+
+
+def fetch_onemap_transport(lat, lng, mrt_radius=2.0, bus_radius=0.6):
+    """Fetch MRT stations (deduplicated) and nearby bus stops from OneMap Themes API."""
+    token = get_onemap_token()
+    if not token:
+        return None
+
+    results = {'mrt': [], 'bus': []}
+    lo, lb, hi, hb = _bbox(lat, lng, mrt_radius)
+
+    # --- MRT station exits → deduplicate to unique stations ---
+    try:
+        url = (f'https://www.onemap.gov.sg/api/public/themesvc/retrieveTheme'
+               f'?queryName=mrt_station_exit&extents={lo},{lb},{hi},{hb}')
+        req = urllib.request.Request(url, headers={'Authorization': f'Bearer {token}'})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = json.loads(r.read())
+
+        seen = {}
+        for ex in data.get('SrchResults', []):
+            elat, elng = _parse_om_coords(ex)
+            if elat is None:
+                continue
+            name = (ex.get('NAME') or ex.get('name') or ex.get('SEARCHVAL') or '').strip()
+            if not name:
+                continue
+            # "HOUGANG MRT STATION EXIT A" → "Hougang Mrt Station"
+            station = re.sub(r'\s+EXIT\s+[A-Z\d]+$', '', name, flags=re.IGNORECASE)
+            station = re.sub(r'\s+\(.*?\)$', '', station).strip().title()
+            d = _haversine(lat, lng, elat, elng)
+            if d > mrt_radius:
+                continue
+            if station not in seen or d < seen[station]['_d']:
+                seen[station] = {'name': station, 'dist': f'{d:.2f}',
+                                 'travel': _travel_label(d), 'lat': elat, 'lng': elng, '_d': d}
+        results['mrt'] = sorted(
+            [{k: v for k, v in it.items() if k != '_d'} for it in seen.values()],
+            key=lambda x: float(x['dist'])
+        )[:5]
+    except Exception as e:
+        print(f'OneMap MRT error: {e}')
+
+    # --- Bus stops (within bus_radius) ---
+    lo2, lb2, hi2, hb2 = _bbox(lat, lng, bus_radius)
+    try:
+        url = (f'https://www.onemap.gov.sg/api/public/themesvc/retrieveTheme'
+               f'?queryName=bus_stop&extents={lo2},{lb2},{hi2},{hb2}')
+        req = urllib.request.Request(url, headers={'Authorization': f'Bearer {token}'})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = json.loads(r.read())
+
+        bus_list = []
+        for s in data.get('SrchResults', []):
+            elat, elng = _parse_om_coords(s)
+            if elat is None:
+                continue
+            name = (s.get('NAME') or s.get('name') or s.get('SEARCHVAL') or
+                    s.get('DESCRIPTION') or '').strip()
+            if not name:
+                continue
+            d = _haversine(lat, lng, elat, elng)
+            if d > bus_radius:
+                continue
+            bus_list.append({'name': name.title(), 'dist': f'{d:.2f}',
+                             'travel': _travel_label(d), 'lat': elat, 'lng': elng})
+        results['bus'] = sorted(bus_list, key=lambda x: float(x['dist']))[:5]
+    except Exception as e:
+        print(f'OneMap bus error: {e}')
+
+    return results
+
+
+def fetch_overpass_amenities(lat, lng):
+    """Fetch schools, parks, healthcare, hawker, community from Overpass (OSM)."""
+    query = f"""[out:json][timeout:25];(
+        node["amenity"="school"](around:1500,{lat},{lng});
+        way["amenity"="school"](around:1500,{lat},{lng});
+        node["amenity"="university"](around:1500,{lat},{lng});
+        node["amenity"="college"](around:1500,{lat},{lng});
+        node["amenity"="hospital"](around:2000,{lat},{lng});
+        node["healthcare"="hospital"](around:2000,{lat},{lng});
+        node["amenity"="clinic"](around:1000,{lat},{lng});
+        node["amenity"="doctors"](around:1000,{lat},{lng});
+        node["leisure"="park"](around:1200,{lat},{lng});
+        way["leisure"="park"](around:1200,{lat},{lng});
+        node["amenity"="hawker_centre"](around:1200,{lat},{lng});
+        way["amenity"="hawker_centre"](around:1200,{lat},{lng});
+        node["amenity"="food_court"](around:1000,{lat},{lng});
+        node["amenity"="community_centre"](around:2000,{lat},{lng});
+        node["amenity"="library"](around:2000,{lat},{lng});
+    );out center body;"""
+
+    cats = {'school': [], 'park': [], 'health': [], 'hawker': [], 'community': []}
+    try:
+        req = urllib.request.Request(
+            'https://overpass-api.de/api/interpreter',
+            data=query.encode(),
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = json.loads(r.read())
+
+        for el in data.get('elements', []):
+            elat = el.get('lat') or (el.get('center') or {}).get('lat')
+            elng = el.get('lon') or (el.get('center') or {}).get('lon')
+            if not elat or not elng:
+                continue
+            t    = el.get('tags') or {}
+            name = t.get('name') or t.get('name:en')
+            if not name:
+                continue
+            d    = _haversine(lat, lng, float(elat), float(elng))
+            item = {'name': name, 'dist': f'{d:.2f}', 'travel': _travel_label(d),
+                    'lat': float(elat), 'lng': float(elng)}
+            if t.get('amenity') in ('school', 'university', 'college'):
+                cats['school'].append(item)
+            elif t.get('leisure') == 'park':
+                cats['park'].append(item)
+            elif t.get('amenity') in ('hospital', 'clinic', 'doctors') or t.get('healthcare') == 'hospital':
+                cats['health'].append(item)
+            elif t.get('amenity') in ('hawker_centre', 'food_court'):
+                cats['hawker'].append(item)
+            elif t.get('amenity') in ('community_centre', 'community_hall', 'library'):
+                cats['community'].append(item)
+    except Exception as e:
+        print(f'Overpass error: {e}')
+
+    for items in cats.values():
+        items.sort(key=lambda x: float(x['dist']))
+        items[:] = items[:5]
+    return cats
+
+
+def fetch_overpass_mrt_fallback(lat, lng):
+    """Overpass fallback for MRT when OneMap credentials are not configured."""
+    query = f"""[out:json][timeout:20];(
+        node["railway"="station"](around:2000,{lat},{lng});
+        way["railway"="station"](around:2000,{lat},{lng});
+        node["station"="subway"](around:2000,{lat},{lng});
+        node["public_transport"="station"]["subway"="yes"](around:2000,{lat},{lng});
+        node["public_transport"="station"]["train"="yes"](around:2000,{lat},{lng});
+    );out center body;"""
+    items = []
+    try:
+        req = urllib.request.Request(
+            'https://overpass-api.de/api/interpreter',
+            data=query.encode(),
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=20) as r:
+            data = json.loads(r.read())
+        for el in data.get('elements', []):
+            elat = el.get('lat') or (el.get('center') or {}).get('lat')
+            elng = el.get('lon') or (el.get('center') or {}).get('lon')
+            if not elat or not elng:
+                continue
+            name = (el.get('tags') or {}).get('name') or (el.get('tags') or {}).get('name:en')
+            if not name:
+                continue
+            d = _haversine(lat, lng, float(elat), float(elng))
+            items.append({'name': name, 'dist': f'{d:.2f}', 'travel': _travel_label(d),
+                          'lat': float(elat), 'lng': float(elng)})
+    except Exception as e:
+        print(f'Overpass MRT fallback error: {e}')
+    items.sort(key=lambda x: float(x['dist']))
+    return items[:5]
+
+
+@app.route('/api/amenities', methods=['GET'])
+def get_amenities():
+    postal  = (request.args.get('postal') or '').strip()
+    lat_p   = request.args.get('lat')
+    lng_p   = request.args.get('lng')
+
+    if not postal and not (lat_p and lng_p):
+        return jsonify({'error': 'postal or lat/lng required'}), 400
+
+    cache_key = postal if postal else f'{float(lat_p):.4f},{float(lng_p):.4f}'
+
+    # --- Cache check ---
+    conn = get_db()
+    cur  = _cursor(conn)
+    cur.execute(_q("SELECT lat, lng, data, cached_at FROM amenity_cache WHERE postal_code = ?"), (cache_key,))
+    row = _row(cur)
+    conn.close()
+
+    if row:
+        try:
+            raw_ts = row['cached_at']
+            if USE_POSTGRES and hasattr(raw_ts, 'tzinfo') and raw_ts.tzinfo:
+                age = (datetime.datetime.now(datetime.timezone.utc) - raw_ts).total_seconds()
+            elif USE_POSTGRES:
+                age = (datetime.datetime.now() - raw_ts).total_seconds()
+            else:
+                age = (datetime.datetime.now() - datetime.datetime.fromisoformat(str(raw_ts))).total_seconds()
+            if age < 7 * 86400:
+                return jsonify(json.loads(row['data']))
+        except Exception:
+            pass  # Re-fetch on cache error
+
+    # --- Resolve coordinates ---
+    if lat_p and lng_p:
+        lat, lng = float(lat_p), float(lng_p)
+    else:
+        try:
+            url = (f'https://www.onemap.gov.sg/api/common/elastic/search'
+                   f'?searchVal={postal}&returnGeom=Y&getAddrDetails=Y&pageNum=1')
+            with urllib.request.urlopen(url, timeout=10) as r:
+                geo = json.loads(r.read())
+            r0  = geo.get('results', [{}])[0]
+            lat = float(r0.get('LATITUDE', 1.3521))
+            lng = float(r0.get('LONGITUDE', 103.8198))
+        except Exception:
+            return jsonify({'error': 'Geocoding failed'}), 400
+
+    # --- Fetch transport (OneMap preferred, Overpass fallback) ---
+    transport = fetch_onemap_transport(lat, lng)
+    if not transport or not transport.get('mrt'):
+        mrt_fallback = fetch_overpass_mrt_fallback(lat, lng)
+        if transport is None:
+            transport = {'mrt': mrt_fallback, 'bus': []}
+        else:
+            transport['mrt'] = mrt_fallback
+
+    # --- Fetch other amenities from Overpass ---
+    others = fetch_overpass_amenities(lat, lng)
+
+    payload = {
+        'postal': postal, 'lat': lat, 'lng': lng,
+        'categories': {
+            'mrt':       {'label': 'MRT / LRT Stations',     'color': '#8b5cf6', 'icon': '🚇', 'lucide': 'train-front', 'items': transport.get('mrt', [])},
+            'bus':       {'label': 'Bus Stops (≤600m)',      'color': '#6366f1', 'icon': '🚌', 'lucide': 'bus',          'items': transport.get('bus', [])},
+            'school':    {'label': 'Schools & Universities', 'color': '#10b981', 'icon': '🏫', 'lucide': 'graduation-cap', 'items': others.get('school', [])},
+            'park':      {'label': 'Parks & Green Spaces',   'color': '#14b8a6', 'icon': '🌳', 'lucide': 'trees',        'items': others.get('park', [])},
+            'health':    {'label': 'Healthcare',             'color': '#f43f5e', 'icon': '🏥', 'lucide': 'heart-pulse',  'items': others.get('health', [])},
+            'hawker':    {'label': 'Hawker / Food Centres',  'color': '#f97316', 'icon': '🍜', 'lucide': 'utensils',     'items': others.get('hawker', [])},
+            'community': {'label': 'Community & Library',    'color': '#3b82f6', 'icon': '🏛️', 'lucide': 'users',        'items': others.get('community', [])},
+        }
+    }
+
+    # --- Cache result ---
+    data_json = json.dumps(payload, ensure_ascii=False)
+    conn = get_db()
+    cur  = _cursor(conn)
+    if USE_POSTGRES:
+        cur.execute(
+            """INSERT INTO amenity_cache (postal_code, lat, lng, data)
+               VALUES (%s, %s, %s, %s)
+               ON CONFLICT (postal_code) DO UPDATE
+                   SET lat=EXCLUDED.lat, lng=EXCLUDED.lng,
+                       data=EXCLUDED.data, cached_at=NOW()""",
+            (cache_key, lat, lng, data_json)
+        )
+    else:
+        cur.execute(
+            """INSERT OR REPLACE INTO amenity_cache (postal_code, lat, lng, data, cached_at)
+               VALUES (?, ?, ?, ?, datetime('now'))""",
+            (cache_key, lat, lng, data_json)
+        )
+    conn.commit()
+    conn.close()
+
+    return jsonify(payload)
 
 
 # Serve Frontend
