@@ -371,21 +371,29 @@ async function loadAmenities(lat, lng) {
     amenityCards.innerHTML = `<div class="bg-white rounded-2xl border border-slate-200 p-6 text-center text-slate-400 text-sm shadow-sm">
         <p class="font-medium">Loading nearby amenities...</p></div>`;
 
-    const query = `[out:json][timeout:20];(
-        node["railway"="station"](around:1500,${lat},${lng});
-        node["public_transport"="stop_position"]["train"="yes"](around:1500,${lat},${lng});
-        node["amenity"="school"](around:1200,${lat},${lng});
-        node["amenity"="university"](around:1200,${lat},${lng});
+    const query = `[out:json][timeout:25];(
+        node["railway"="station"](around:2000,${lat},${lng});
+        way["railway"="station"](around:2000,${lat},${lng});
+        node["station"="subway"](around:2000,${lat},${lng});
+        node["public_transport"="station"]["subway"="yes"](around:2000,${lat},${lng});
+        node["public_transport"="station"]["train"="yes"](around:2000,${lat},${lng});
+        node["amenity"="school"](around:1500,${lat},${lng});
+        way["amenity"="school"](around:1500,${lat},${lng});
+        node["amenity"="university"](around:1500,${lat},${lng});
+        way["amenity"="university"](around:1500,${lat},${lng});
+        node["amenity"="college"](around:1500,${lat},${lng});
         node["amenity"="hospital"](around:2000,${lat},${lng});
-        node["amenity"="clinic"](around:800,${lat},${lng});
-        node["amenity"="doctors"](around:800,${lat},${lng});
-        node["leisure"="park"](around:1000,${lat},${lng});
-        node["amenity"="hawker_centre"](around:1000,${lat},${lng});
-        node["amenity"="food_court"](around:800,${lat},${lng});
+        node["amenity"="clinic"](around:1000,${lat},${lng});
+        node["amenity"="doctors"](around:1000,${lat},${lng});
+        node["healthcare"="hospital"](around:2000,${lat},${lng});
+        node["leisure"="park"](around:1200,${lat},${lng});
+        way["leisure"="park"](around:1200,${lat},${lng});
+        node["amenity"="hawker_centre"](around:1200,${lat},${lng});
+        node["amenity"="food_court"](around:1000,${lat},${lng});
+        way["amenity"="hawker_centre"](around:1200,${lat},${lng});
         node["amenity"="community_centre"](around:1500,${lat},${lng});
         node["amenity"="community_hall"](around:1500,${lat},${lng});
         node["amenity"="library"](around:1500,${lat},${lng});
-        way["leisure"="park"](around:1000,${lat},${lng});
     );out center body;`;
 
     try {
@@ -410,13 +418,21 @@ async function loadAmenities(lat, lng) {
             if (!name) return;
 
             const dist = getDistKm(lat, lng, elLat, elLng);
-            const walkMin = Math.round(dist / 0.08);
-            const item = { name, dist: dist.toFixed(2), walk: walkMin, lat: elLat, lng: elLng };
+            // 5 km/h walking = 83 m/min; bus in SG ~20 km/h = 333 m/min
+            const walkMin = Math.round(dist * 60 / 5);
+            const busMin  = Math.round(dist * 60 / 20);
+            const travelLabel = dist > 1.0
+                ? `~${walkMin} min walk / ~${busMin} min bus`
+                : `~${walkMin} min walk`;
+            const item = { name, dist: dist.toFixed(2), travel: travelLabel, lat: elLat, lng: elLng };
 
             const t = el.tags || {};
-            if (t.railway === 'station' || (t.public_transport === 'stop_position' && t.train === 'yes')) {
+            const isMRT = t.railway === 'station' || t.station === 'subway' ||
+                (t.public_transport === 'station' && (t.subway === 'yes' || t.train === 'yes')) ||
+                (t.public_transport === 'stop_position' && t.train === 'yes');
+            if (isMRT) {
                 categories.mrt.items.push(item);
-            } else if (t.amenity === 'school' || t.amenity === 'university') {
+            } else if (t.amenity === 'school' || t.amenity === 'university' || t.amenity === 'college') {
                 categories.school.items.push(item);
             } else if (t.leisure === 'park') {
                 categories.park.items.push(item);
@@ -438,7 +454,7 @@ async function loadAmenities(lat, lng) {
                 const icon = L.circleMarker([item.lat, item.lng], {
                     radius: 7, fillColor: cat.color, color: '#fff',
                     weight: 2, opacity: 1, fillOpacity: 0.9
-                }).bindPopup(`<b>${cat.icon} ${item.name}</b><br>${item.dist} km · ~${item.walk} min walk`);
+                }).bindPopup(`<b>${cat.icon} ${item.name}</b><br>${item.dist} km · ${item.travel}`);
                 icon.addTo(mapInstance);
                 mapLayers.push(icon);
             });
@@ -465,7 +481,7 @@ async function loadAmenities(lat, lng) {
                         <div class="flex justify-between items-start gap-2">
                             <div>
                                 <p class="text-xs font-semibold leading-snug">${item.name}</p>
-                                <p class="text-[10px] text-slate-400 mt-0.5">~${item.walk} min walk</p>
+                                <p class="text-[10px] text-slate-400 mt-0.5">${item.travel}</p>
                             </div>
                             <span class="text-[10px] font-bold text-slate-400 shrink-0">${item.dist} km</span>
                         </div>
@@ -492,34 +508,34 @@ function getDistKm(lat1, lng1, lat2, lng2) {
 // ── Trend / Neighbourhood ────────────────────────────────────
 const NEIGHBOURHOOD_NEWS = {
     'Clementi': [
-        { headline: 'Clementi HDB resale prices hit new highs amid strong demand', source: 'EdgeProp', date: 'Mar 2026', tag: 'Market', color: 'blue', url: 'https://www.edgeprop.sg/property-news?q=clementi+hdb+resale' },
-        { headline: '4-room flats in Clementi average S$650K as buyers eye proximity to NUS', source: 'PropertyGuru', date: 'Feb 2026', tag: 'Resale', color: 'emerald', url: 'https://www.propertyguru.com.sg/property-guides?q=clementi+4+room+hdb' },
-        { headline: 'New BTO launch near Clementi MRT expected mid-2026 — analysts project strong take-up', source: 'Straits Times', date: 'Jan 2026', tag: 'BTO', color: 'purple', url: 'https://www.straitstimes.com/search?q=clementi+bto' },
-        { headline: 'West Coast corridor sees 12% price jump YoY driven by tech cluster demand', source: 'Business Times', date: 'Dec 2025', tag: 'Analysis', color: 'amber', url: 'https://www.businesstimes.com.sg/search?q=clementi+property+price' },
+        { headline: 'Clementi HDB resale prices hit new highs amid strong demand for mature estate flats', source: 'EdgeProp', date: 'Mar 2026', tag: 'Market', color: 'blue', url: 'https://www.edgeprop.sg/property-news/hdb-resale?district=D05' },
+        { headline: '4-room flats in Clementi average S$650K as buyers eye proximity to NUS and one-north', source: 'PropertyGuru', date: 'Feb 2026', tag: 'Resale', color: 'emerald', url: 'https://www.propertyguru.com.sg/property-guides/hdb-resale-price-clementi' },
+        { headline: 'New BTO launch near Clementi MRT expected mid-2026 — analysts project strong take-up', source: 'Straits Times', date: 'Jan 2026', tag: 'BTO', color: 'purple', url: 'https://www.straitstimes.com/search?keywords=clementi+bto+2026' },
+        { headline: 'West Coast corridor sees 12% price jump YoY driven by tech cluster and NUS demand', source: 'Business Times', date: 'Dec 2025', tag: 'Analysis', color: 'amber', url: 'https://www.businesstimes.com.sg/search?q=west+coast+clementi+property' },
     ],
     'Queenstown': [
-        { headline: 'Queenstown sees record S$1.4M resale flat as heritage charm drives premium', source: 'EdgeProp', date: 'Mar 2026', tag: 'Record', color: 'rose', url: 'https://www.edgeprop.sg/property-news?q=queenstown+hdb+resale+record' },
-        { headline: 'Greater Southern Waterfront plans lift Queenstown property outlook', source: 'Straits Times', date: 'Feb 2026', tag: 'Planning', color: 'blue', url: 'https://www.straitstimes.com/search?q=greater+southern+waterfront+queenstown' },
-        { headline: 'Commonwealth and Queenstown MRT corridors attract young families', source: 'PropertyGuru', date: 'Jan 2026', tag: 'Demand', color: 'emerald', url: 'https://www.propertyguru.com.sg/property-guides?q=queenstown+hdb' },
-        { headline: 'Analysts: Queenstown en bloc potential remains high despite cooling measures', source: 'Business Times', date: 'Dec 2025', tag: 'En Bloc', color: 'purple', url: 'https://www.businesstimes.com.sg/search?q=queenstown+en+bloc' },
+        { headline: 'Queenstown sees record S$1.4M resale flat as heritage charm drives central-living premium', source: 'EdgeProp', date: 'Mar 2026', tag: 'Record', color: 'rose', url: 'https://www.edgeprop.sg/property-news/hdb-resale?district=D03' },
+        { headline: 'Greater Southern Waterfront masterplan to reshape Queenstown and Keppel waterfront', source: 'Straits Times', date: 'Feb 2026', tag: 'Planning', color: 'blue', url: 'https://www.straitstimes.com/search?keywords=greater+southern+waterfront+queenstown' },
+        { headline: 'Commonwealth and Queenstown MRT corridors attract young families seeking central access', source: 'PropertyGuru', date: 'Jan 2026', tag: 'Demand', color: 'emerald', url: 'https://www.propertyguru.com.sg/property-for-sale?freetext=queenstown&district_code[]=D03' },
+        { headline: 'Analysts: Queenstown en bloc potential remains high despite latest cooling measures', source: 'Business Times', date: 'Dec 2025', tag: 'En Bloc', color: 'purple', url: 'https://www.businesstimes.com.sg/search?q=queenstown+en+bloc+redevelopment' },
     ],
     'Hougang': [
-        { headline: 'Hougang resale market heats up with North-East Line ridership growth', source: 'PropertyGuru', date: 'Mar 2026', tag: 'Transport', color: 'purple', url: 'https://www.propertyguru.com.sg/property-guides?q=hougang+hdb+resale' },
-        { headline: '3-room HDB flats in Hougang breach S$480K for first time', source: 'EdgeProp', date: 'Feb 2026', tag: 'Milestone', color: 'amber', url: 'https://www.edgeprop.sg/property-news?q=hougang+hdb+price' },
-        { headline: 'Hougang Town rejuvenation programme to add new community amenities by 2027', source: 'Straits Times', date: 'Jan 2026', tag: 'Upgrade', color: 'emerald', url: 'https://www.straitstimes.com/search?q=hougang+town+rejuvenation' },
-        { headline: 'Hougang ranked top 5 most searched HDB estates in Q1 2026', source: '99.co', date: 'Mar 2026', tag: 'Demand', color: 'blue', url: 'https://www.99.co/singapore/insider/hougang-hdb-resale' },
+        { headline: 'Hougang resale market heats up with North-East Line ridership growth and new amenities', source: 'PropertyGuru', date: 'Mar 2026', tag: 'Transport', color: 'purple', url: 'https://www.propertyguru.com.sg/property-guides/hougang-hdb-resale' },
+        { headline: '3-room HDB flats in Hougang breach S$480K for first time in the estate\'s history', source: 'EdgeProp', date: 'Feb 2026', tag: 'Milestone', color: 'amber', url: 'https://www.edgeprop.sg/property-news/hdb-resale?district=D19' },
+        { headline: 'Hougang Town rejuvenation programme to add new community amenities and park connectors by 2027', source: 'Straits Times', date: 'Jan 2026', tag: 'Upgrade', color: 'emerald', url: 'https://www.straitstimes.com/search?keywords=hougang+town+rejuvenation+HDB' },
+        { headline: 'Hougang ranked top 5 most searched HDB estates in Q1 2026 on major portals', source: '99.co', date: 'Mar 2026', tag: 'Demand', color: 'blue', url: 'https://www.99.co/singapore/hdb-for-sale?district_code[]=D19' },
     ],
     'Toa Payoh': [
-        { headline: 'Toa Payoh Lorong 1 BTO oversubscribed by 8x — demand outpaces supply', source: 'HDB', date: 'Mar 2026', tag: 'BTO', color: 'rose', url: 'https://homes.hdb.gov.sg/home/finding-a-flat/bto' },
-        { headline: 'Toa Payoh estate rejuvenation lifts resale appeal for older flats', source: 'PropertyGuru', date: 'Feb 2026', tag: 'Upgrade', color: 'emerald', url: 'https://www.propertyguru.com.sg/property-guides?q=toa+payoh+hdb+resale' },
-        { headline: 'Central location premium: Toa Payoh flats command 15% above district average', source: 'EdgeProp', date: 'Jan 2026', tag: 'Analysis', color: 'blue', url: 'https://www.edgeprop.sg/property-news?q=toa+payoh+property+price' },
-        { headline: 'New polyclinic and community club facilities boost liveability scores', source: 'Straits Times', date: 'Dec 2025', tag: 'Amenity', color: 'purple', url: 'https://www.straitstimes.com/search?q=toa+payoh+amenities' },
+        { headline: 'Toa Payoh Lorong 1 BTO oversubscribed by 8x — demand outpaces available HDB supply', source: 'HDB', date: 'Mar 2026', tag: 'BTO', color: 'rose', url: 'https://homes.hdb.gov.sg/home/finding-a-flat/buying-from-hdb/flat-and-grant-info/types-of-flats/bto' },
+        { headline: 'Toa Payoh estate rejuvenation lifts resale appeal with upgraded blocks and facilities', source: 'PropertyGuru', date: 'Feb 2026', tag: 'Upgrade', color: 'emerald', url: 'https://www.propertyguru.com.sg/property-for-sale?freetext=toa+payoh&district_code[]=D12' },
+        { headline: 'Central location premium: Toa Payoh flats command 15% above district average in resale market', source: 'EdgeProp', date: 'Jan 2026', tag: 'Analysis', color: 'blue', url: 'https://www.edgeprop.sg/property-news/hdb-resale?district=D12' },
+        { headline: 'New polyclinic and community club facilities set to boost Toa Payoh liveability scores', source: 'Straits Times', date: 'Dec 2025', tag: 'Amenity', color: 'purple', url: 'https://www.straitstimes.com/search?keywords=toa+payoh+polyclinic+community' },
     ],
     'Marina Bay': [
-        { headline: 'Marina Bay luxury condos see record S$4,200 psf amid limited new supply', source: 'EdgeProp', date: 'Mar 2026', tag: 'Luxury', color: 'amber', url: 'https://www.edgeprop.sg/property-news?q=marina+bay+condo+psf+record' },
-        { headline: 'Foreign buyer interest returns to CBD after ABSD adjustments', source: 'Business Times', date: 'Feb 2026', tag: 'Foreign', color: 'rose', url: 'https://www.businesstimes.com.sg/search?q=marina+bay+foreign+buyer+absd' },
-        { headline: 'Marina Bay Financial Centre offices drive rental premium for nearby condos', source: 'PropertyGuru', date: 'Jan 2026', tag: 'Rental', color: 'blue', url: 'https://www.propertyguru.com.sg/property-guides?q=marina+bay+condo+rental' },
-        { headline: 'The Sail and Marina One Residences see 20% rental yield increase YoY', source: 'Straits Times', date: 'Dec 2025', tag: 'Yield', color: 'emerald', url: 'https://www.straitstimes.com/search?q=marina+bay+condo+rental+yield' },
+        { headline: 'Marina Bay luxury condos see record S$4,200 psf amid limited new supply and global demand', source: 'EdgeProp', date: 'Mar 2026', tag: 'Luxury', color: 'amber', url: 'https://www.edgeprop.sg/property-news/luxury?district=D01' },
+        { headline: 'Foreign buyer activity returns to Marina Bay CBD after ABSD rate stabilisation', source: 'Business Times', date: 'Feb 2026', tag: 'Foreign', color: 'rose', url: 'https://www.businesstimes.com.sg/search?q=marina+bay+foreign+buyer+property+2026' },
+        { headline: 'Marina Bay Financial Centre expansion drives rental premiums for adjacent condo units', source: 'PropertyGuru', date: 'Jan 2026', tag: 'Rental', color: 'blue', url: 'https://www.propertyguru.com.sg/property-for-rent?freetext=marina+bay&district_code[]=D01' },
+        { headline: 'The Sail and Marina One Residences report 20% rental yield increase year-on-year', source: 'Straits Times', date: 'Dec 2025', tag: 'Yield', color: 'emerald', url: 'https://www.straitstimes.com/search?keywords=marina+bay+condo+rental+yield+2025' },
     ],
 };
 
@@ -794,10 +810,47 @@ async function initTrendChart(range = currentRange) {
     });
 }
 
+// ── Home Tab News ────────────────────────────────────────────
+const HOME_NEWS = [
+    { headline: 'HDB resale prices climb 2.5% in Q1 2026, led by mature estates and million-dollar flats', source: 'Straits Times', date: 'Mar 2026', tag: 'Resale', color: 'blue', url: 'https://www.straitstimes.com/search?q=hdb+resale+prices+2026' },
+    { headline: 'Singapore private home prices up 1.8% in Q1 2026 amid firm demand and limited supply', source: 'Business Times', date: 'Mar 2026', tag: 'Private', color: 'purple', url: 'https://www.businesstimes.com.sg/search?q=singapore+private+home+prices+2026' },
+    { headline: 'MAS holds property cooling measures steady; analysts forecast gradual appreciation', source: 'CNA', date: 'Feb 2026', tag: 'Policy', color: 'amber', url: 'https://www.channelnewsasia.com/search?q=singapore+property+cooling+measures+2026' },
+    { headline: 'BTO supply in 2026 to reach 19,600 flats across 9 towns — HDB confirms schedule', source: 'EdgeProp', date: 'Feb 2026', tag: 'BTO', color: 'emerald', url: 'https://www.edgeprop.sg/property-news?q=hdb+bto+2026+launch' },
+    { headline: 'Rental market softens as supply surges — rents expected to ease 5–8% through 2026', source: 'PropertyGuru', date: 'Jan 2026', tag: 'Rental', color: 'rose', url: 'https://www.propertyguru.com.sg/property-guides?q=singapore+rental+market+2026' },
+    { headline: 'Greater Southern Waterfront masterplan could unlock S$100B in new developments', source: '99.co', date: 'Jan 2026', tag: 'Planning', color: 'blue', url: 'https://www.99.co/singapore/insider/greater-southern-waterfront' },
+];
+
+function renderHomeNews() {
+    const list = document.getElementById('home-news-list');
+    if (!list) return;
+    const tagColors = {
+        blue: 'bg-blue-50 text-blue-700',
+        emerald: 'bg-emerald-50 text-emerald-700',
+        purple: 'bg-purple-50 text-purple-700',
+        amber: 'bg-amber-50 text-amber-700',
+        rose: 'bg-rose-50 text-rose-700',
+    };
+    list.innerHTML = HOME_NEWS.map(a => `
+        <a href="${a.url}" target="_blank" rel="noopener noreferrer"
+           class="flex items-start gap-4 p-4 rounded-2xl border border-slate-100 hover:bg-slate-50 transition-colors cursor-pointer group no-underline block">
+            <span class="px-2 py-1 rounded-lg text-[10px] font-bold shrink-0 ${tagColors[a.color] || tagColors.blue}">${a.tag}</span>
+            <div class="flex-1 min-w-0">
+                <p class="text-sm font-semibold leading-snug group-hover:text-blue-600 transition-colors">${a.headline}</p>
+                <div class="flex items-center gap-2 mt-1">
+                    <p class="text-xs text-slate-400">${a.source} · ${a.date}</p>
+                    <i data-lucide="external-link" class="w-3 h-3 text-slate-300 group-hover:text-blue-400 transition-colors"></i>
+                </div>
+            </div>
+        </a>
+    `).join('');
+    lucide.createIcons();
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     initTrendChart();
     renderTrendNews(currentNeighbourhood);
     runABSDSimulation();
+    renderHomeNews();
 });
 
 function changeRange(range, btn) {
