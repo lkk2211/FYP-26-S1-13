@@ -2,77 +2,109 @@
     --bg: #F8FAFC;
     --ink: #0F172A;
     --accent: #2563EB;
+    --card-bg: #FFFFFF;
+    --card-border: #E2E8F0;
+    --input-bg: #F8FAFC;
+    --input-border: #E2E8F0;
+    --muted: #64748B;
+    --subtle: #F1F5F9;
 }
 
 .dark {
-    --bg: #0F172A;
-    --ink: #F1F5F9;
+    --bg: #0B1120;
+    --ink: #E2E8F0;
+    --card-bg: #151F32;
+    --card-border: #1E2D45;
+    --input-bg: #1A2740;
+    --input-border: #243349;
+    --muted: #94A3B8;
+    --subtle: #1A2740;
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     background-color: var(--bg);
     color: var(--ink);
     overflow-x: hidden;
 }
 
-.view-section { 
-    display: none; 
-    opacity: 0;
-    transform: translateY(10px);
-    pointer-events: none;
-    transition: opacity 0.4s ease, transform 0.4s ease;
+/* ── Global dark overrides ─────────────────────────────────── */
+.dark .bg-white,
+.dark .bg-slate-50 {
+    background-color: var(--card-bg) !important;
 }
 
-.view-section.active { 
-    display: block; 
-    opacity: 1;
-    transform: translateY(0);
-    pointer-events: auto;
+.dark .border-slate-100,
+.dark .border-slate-200 {
+    border-color: var(--card-border) !important;
 }
 
+.dark .text-slate-900 { color: #E2E8F0 !important; }
+.dark .text-slate-700 { color: #CBD5E1 !important; }
+.dark .text-slate-600 { color: #94A3B8 !important; }
+.dark .text-slate-500 { color: #64748B !important; }
+.dark .text-slate-400 { color: #475569 !important; }
+
+.dark .bg-slate-100,
+.dark .bg-slate-100\/50 { background-color: #1A2740 !important; }
+
+.dark .divide-slate-50 > * + * { border-color: #1E2D45 !important; }
+
+/* ── Nav ───────────────────────────────────────────────────── */
 .glass {
-    background: rgba(255, 255, 255, 0.7);
-    backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.3);
+    background: rgba(255, 255, 255, 0.75);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-bottom: 1px solid rgba(0,0,0,0.06);
 }
 
 .dark .glass {
-    background: rgba(15, 23, 42, 0.8);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(11, 17, 32, 0.85);
+    border-bottom: 1px solid rgba(255,255,255,0.06);
 }
 
+/* ── Cards ─────────────────────────────────────────────────── */
 .card-shadow {
-    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05);
+    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.06);
 }
 
 .dark .card-shadow {
-    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 4px 24px -2px rgba(0, 0, 0, 0.5);
 }
 
-/* Dark mode card backgrounds */
-.dark .dark-card {
-    background-color: #1E293B;
-    border-color: #334155;
-    color: #F1F5F9;
+/* ── Inputs ────────────────────────────────────────────────── */
+.dark input:not([type="range"]):not([type="checkbox"]),
+.dark select,
+.dark textarea {
+    background-color: var(--input-bg) !important;
+    border-color: var(--input-border) !important;
+    color: #E2E8F0 !important;
 }
 
-.dark .dark-input {
-    background-color: #1E293B;
-    border-color: #334155;
-    color: #F1F5F9;
-}
+.dark input::placeholder,
+.dark select::placeholder,
+.dark textarea::placeholder { color: #475569 !important; }
 
-.dark .dark-input::placeholder {
-    color: #64748B;
-}
-
+/* ── Nav pill ──────────────────────────────────────────────── */
 .nav-link.active {
     color: var(--ink);
-    background: rgba(0, 0, 0, 0.04);
+    background: rgba(0, 0, 0, 0.06);
 }
 
-/* Custom Range Slider */
+.dark .nav-link.active {
+    background: rgba(255,255,255,0.08);
+    color: #F1F5F9;
+}
+
+/* ── Dropdown ──────────────────────────────────────────────── */
+.dark .bg-white.border.border-slate-200.rounded-xl {
+    background-color: #151F32 !important;
+    border-color: #1E2D45 !important;
+}
+
+.dark .hover\:bg-slate-50:hover { background-color: #1A2740 !important; }
+
+/* ── Range Slider ──────────────────────────────────────────── */
 input[type="range"] {
     -webkit-appearance: none;
     width: 100%;
@@ -81,6 +113,8 @@ input[type="range"] {
     border-radius: 5px;
     outline: none;
 }
+
+.dark input[type="range"] { background: #1E2D45; }
 
 input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
@@ -91,10 +125,16 @@ input[type="range"]::-webkit-slider-thumb {
     border: 3px solid white;
     border-radius: 50%;
     cursor: pointer;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.15);
 }
 
-/* Toggle Switch */
+/* ── Scrollbar ─────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 10px; }
+.dark ::-webkit-scrollbar-thumb { background: #1E2D45; }
+
+/* ── Toggle Switch ─────────────────────────────────────────── */
 .toggle-switch {
     position: relative;
     display: inline-block;
@@ -102,19 +142,12 @@ input[type="range"]::-webkit-slider-thumb {
     height: 24px;
 }
 
-.toggle-switch input {
-    opacity: 0;
-    width: 0;
-    height: 0;
-}
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
 
 .toggle-slider {
     position: absolute;
     cursor: pointer;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
+    top: 0; left: 0; right: 0; bottom: 0;
     background-color: #E2E8F0;
     transition: .4s;
     border-radius: 24px;
@@ -133,37 +166,39 @@ input[type="range"]::-webkit-slider-thumb {
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
-input:checked + .toggle-slider {
-    background-color: #0F172A;
-}
+input:checked + .toggle-slider { background-color: #2563EB; }
+input:checked + .toggle-slider:before { transform: translateX(20px); }
 
-input:checked + .toggle-slider:before {
-    transform: translateX(20px);
-}
-
+/* ── Tabs ──────────────────────────────────────────────────── */
 .tab-content { display: none; }
 .tab-content.active { display: block; }
-
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-.animate-fade-in {
-    animation: fadeIn 0.5s ease forwards;
-}
-
-/* Custom Scrollbar */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 10px; }
-::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
-
-/* Admin Tabs */
 .admin-tab-content { display: none; }
 .admin-tab-content.active { display: block; }
 
-/* Auth input visibility fix */
+/* ── Animations ────────────────────────────────────────────── */
+.view-section {
+    display: none;
+    opacity: 0;
+    transform: translateY(10px);
+    pointer-events: none;
+    transition: opacity 0.4s ease, transform 0.4s ease;
+}
+
+.view-section.active {
+    display: block;
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in { animation: fadeIn 0.5s ease forwards; }
+
+/* ── Auth inputs (force legible text) ──────────────────────── */
 #view-signin input,
 #view-register input {
     color: #0F172A;
@@ -171,11 +206,18 @@ input:checked + .toggle-slider:before {
     caret-color: #0F172A;
 }
 
-#view-signin input::placeholder,
-#view-register input::placeholder {
-    color: #94A3B8;
-    opacity: 1;
+.dark #view-signin input,
+.dark #view-register input {
+    color: #E2E8F0 !important;
+    -webkit-text-fill-color: #E2E8F0 !important;
+    caret-color: #E2E8F0;
 }
+
+#view-signin input::placeholder,
+#view-register input::placeholder { color: #94A3B8; opacity: 1; }
+
+.dark #view-signin input::placeholder,
+.dark #view-register input::placeholder { color: #475569; }
 
 #view-signin input:-webkit-autofill,
 #view-signin input:-webkit-autofill:hover,
@@ -187,3 +229,18 @@ input:checked + .toggle-slider:before {
     box-shadow: 0 0 0px 1000px #F8FAFC inset;
     transition: background-color 5000s ease-in-out 0s;
 }
+
+.dark #view-signin input:-webkit-autofill,
+.dark #view-register input:-webkit-autofill {
+    -webkit-text-fill-color: #E2E8F0 !important;
+    box-shadow: 0 0 0px 1000px #1A2740 inset !important;
+}
+
+/* ── Emerald/Green success banners in dark ─────────────────── */
+.dark .bg-emerald-50 { background-color: rgba(16,185,129,0.1) !important; }
+.dark .border-emerald-100 { border-color: rgba(16,185,129,0.2) !important; }
+
+/* ── Blue tinted icon backgrounds in dark ──────────────────── */
+.dark .bg-blue-50    { background-color: rgba(37,99,235,0.15) !important; }
+.dark .bg-purple-50  { background-color: rgba(124,58,237,0.15) !important; }
+.dark .bg-rose-50    { background-color: rgba(225,29,72,0.1) !important; }
