@@ -312,14 +312,16 @@ async function initMapForPostal(postal) {
     mapDiv.classList.add('hidden');
 
     try {
-        const geo = await fetch(`https://nominatim.openstreetmap.org/search?q=${postal}+Singapore&format=json&limit=1&countrycodes=sg&accept-language=en`);
+        // OneMap Singapore API — accurate postal code geocoding
+        const geo = await fetch(`https://www.onemap.gov.sg/api/common/elastic/search?searchVal=${postal}&returnGeom=Y&getAddrDetails=Y&pageNum=1`);
         const geoData = await geo.json();
 
-        if (!geoData.length) throw new Error('Not found');
+        if (!geoData.results || !geoData.results.length) throw new Error('Not found');
 
-        const lat = parseFloat(geoData[0].lat);
-        const lng = parseFloat(geoData[0].lon);
-        const displayName = geoData[0].display_name.split(',').slice(0,3).join(', ');
+        const result = geoData.results[0];
+        const lat = parseFloat(result.LATITUDE);
+        const lng = parseFloat(result.LONGITUDE);
+        const displayName = result.ADDRESS || result.BUILDING || postal;
 
         document.getElementById('map-address-text').innerText = displayName;
         document.getElementById('map-district-text').innerText = `Postal Code: ${postal} · Singapore`;
@@ -329,14 +331,10 @@ async function initMapForPostal(postal) {
         placeholder.classList.add('hidden');
         mapDiv.classList.remove('hidden');
 
-        const isDark = document.documentElement.classList.contains('dark');
-        const tileUrl = isDark
-            ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-            : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
-
         if (!mapInstance) {
             mapInstance = L.map('leaflet-map', { zoomControl: true });
-            L.tileLayer(tileUrl, {
+            // CartoDB Voyager — bright, colourful, works on both light and dark UIs
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
                 attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/">CARTO</a>',
                 maxZoom: 19, subdomains: 'abcd'
             }).addTo(mapInstance);
@@ -494,34 +492,34 @@ function getDistKm(lat1, lng1, lat2, lng2) {
 // ── Trend / Neighbourhood ────────────────────────────────────
 const NEIGHBOURHOOD_NEWS = {
     'Clementi': [
-        { headline: 'Clementi HDB resale prices hit new highs amid strong demand', source: 'EdgeProp', date: 'Mar 2026', tag: 'Market', color: 'blue' },
-        { headline: '4-room flats in Clementi average S$650K as buyers eye proximity to NUS', source: 'PropertyGuru', date: 'Feb 2026', tag: 'Resale', color: 'emerald' },
-        { headline: 'New BTO launch near Clementi MRT expected mid-2026 — analysts project strong take-up', source: 'Straits Times', date: 'Jan 2026', tag: 'BTO', color: 'purple' },
-        { headline: 'West Coast corridor sees 12% price jump YoY driven by tech cluster demand', source: 'Business Times', date: 'Dec 2025', tag: 'Analysis', color: 'amber' },
+        { headline: 'Clementi HDB resale prices hit new highs amid strong demand', source: 'EdgeProp', date: 'Mar 2026', tag: 'Market', color: 'blue', url: 'https://www.edgeprop.sg/property-news?q=clementi+hdb+resale' },
+        { headline: '4-room flats in Clementi average S$650K as buyers eye proximity to NUS', source: 'PropertyGuru', date: 'Feb 2026', tag: 'Resale', color: 'emerald', url: 'https://www.propertyguru.com.sg/property-guides?q=clementi+4+room+hdb' },
+        { headline: 'New BTO launch near Clementi MRT expected mid-2026 — analysts project strong take-up', source: 'Straits Times', date: 'Jan 2026', tag: 'BTO', color: 'purple', url: 'https://www.straitstimes.com/search?q=clementi+bto' },
+        { headline: 'West Coast corridor sees 12% price jump YoY driven by tech cluster demand', source: 'Business Times', date: 'Dec 2025', tag: 'Analysis', color: 'amber', url: 'https://www.businesstimes.com.sg/search?q=clementi+property+price' },
     ],
     'Queenstown': [
-        { headline: 'Queenstown sees record S$1.4M resale flat as heritage charm drives premium', source: 'EdgeProp', date: 'Mar 2026', tag: 'Record', color: 'rose' },
-        { headline: 'Greater Southern Waterfront plans lift Queenstown property outlook', source: 'Straits Times', date: 'Feb 2026', tag: 'Planning', color: 'blue' },
-        { headline: 'Commonwealth and Queenstown MRT corridors attract young families', source: 'PropertyGuru', date: 'Jan 2026', tag: 'Demand', color: 'emerald' },
-        { headline: 'Analysts: Queenstown en bloc potential remains high despite cooling measures', source: 'Business Times', date: 'Dec 2025', tag: 'En Bloc', color: 'purple' },
+        { headline: 'Queenstown sees record S$1.4M resale flat as heritage charm drives premium', source: 'EdgeProp', date: 'Mar 2026', tag: 'Record', color: 'rose', url: 'https://www.edgeprop.sg/property-news?q=queenstown+hdb+resale+record' },
+        { headline: 'Greater Southern Waterfront plans lift Queenstown property outlook', source: 'Straits Times', date: 'Feb 2026', tag: 'Planning', color: 'blue', url: 'https://www.straitstimes.com/search?q=greater+southern+waterfront+queenstown' },
+        { headline: 'Commonwealth and Queenstown MRT corridors attract young families', source: 'PropertyGuru', date: 'Jan 2026', tag: 'Demand', color: 'emerald', url: 'https://www.propertyguru.com.sg/property-guides?q=queenstown+hdb' },
+        { headline: 'Analysts: Queenstown en bloc potential remains high despite cooling measures', source: 'Business Times', date: 'Dec 2025', tag: 'En Bloc', color: 'purple', url: 'https://www.businesstimes.com.sg/search?q=queenstown+en+bloc' },
     ],
     'Hougang': [
-        { headline: 'Hougang resale market heats up with North-East Line ridership growth', source: 'PropertyGuru', date: 'Mar 2026', tag: 'Transport', color: 'purple' },
-        { headline: '3-room HDB flats in Hougang breach S$480K for first time', source: 'EdgeProp', date: 'Feb 2026', tag: 'Milestone', color: 'amber' },
-        { headline: 'Hougang Town rejuvenation programme to add new community amenities by 2027', source: 'Straits Times', date: 'Jan 2026', tag: 'Upgrade', color: 'emerald' },
-        { headline: 'Hougang ranked top 5 most searched HDB estates in Q1 2026', source: '99.co', date: 'Mar 2026', tag: 'Demand', color: 'blue' },
+        { headline: 'Hougang resale market heats up with North-East Line ridership growth', source: 'PropertyGuru', date: 'Mar 2026', tag: 'Transport', color: 'purple', url: 'https://www.propertyguru.com.sg/property-guides?q=hougang+hdb+resale' },
+        { headline: '3-room HDB flats in Hougang breach S$480K for first time', source: 'EdgeProp', date: 'Feb 2026', tag: 'Milestone', color: 'amber', url: 'https://www.edgeprop.sg/property-news?q=hougang+hdb+price' },
+        { headline: 'Hougang Town rejuvenation programme to add new community amenities by 2027', source: 'Straits Times', date: 'Jan 2026', tag: 'Upgrade', color: 'emerald', url: 'https://www.straitstimes.com/search?q=hougang+town+rejuvenation' },
+        { headline: 'Hougang ranked top 5 most searched HDB estates in Q1 2026', source: '99.co', date: 'Mar 2026', tag: 'Demand', color: 'blue', url: 'https://www.99.co/singapore/insider/hougang-hdb-resale' },
     ],
     'Toa Payoh': [
-        { headline: 'Toa Payoh Lorong 1 BTO oversubscribed by 8x — demand outpaces supply', source: 'HDB', date: 'Mar 2026', tag: 'BTO', color: 'rose' },
-        { headline: 'Toa Payoh estate rejuvenation lifts resale appeal for older flats', source: 'PropertyGuru', date: 'Feb 2026', tag: 'Upgrade', color: 'emerald' },
-        { headline: 'Central location premium: Toa Payoh flats command 15% above district average', source: 'EdgeProp', date: 'Jan 2026', tag: 'Analysis', color: 'blue' },
-        { headline: 'New polyclinic and community club facilities boost liveability scores', source: 'Straits Times', date: 'Dec 2025', tag: 'Amenity', color: 'purple' },
+        { headline: 'Toa Payoh Lorong 1 BTO oversubscribed by 8x — demand outpaces supply', source: 'HDB', date: 'Mar 2026', tag: 'BTO', color: 'rose', url: 'https://homes.hdb.gov.sg/home/finding-a-flat/bto' },
+        { headline: 'Toa Payoh estate rejuvenation lifts resale appeal for older flats', source: 'PropertyGuru', date: 'Feb 2026', tag: 'Upgrade', color: 'emerald', url: 'https://www.propertyguru.com.sg/property-guides?q=toa+payoh+hdb+resale' },
+        { headline: 'Central location premium: Toa Payoh flats command 15% above district average', source: 'EdgeProp', date: 'Jan 2026', tag: 'Analysis', color: 'blue', url: 'https://www.edgeprop.sg/property-news?q=toa+payoh+property+price' },
+        { headline: 'New polyclinic and community club facilities boost liveability scores', source: 'Straits Times', date: 'Dec 2025', tag: 'Amenity', color: 'purple', url: 'https://www.straitstimes.com/search?q=toa+payoh+amenities' },
     ],
     'Marina Bay': [
-        { headline: 'Marina Bay luxury condos see record S$4,200 psf amid limited new supply', source: 'EdgeProp', date: 'Mar 2026', tag: 'Luxury', color: 'amber' },
-        { headline: 'Foreign buyer interest returns to CBD after ABSD adjustments', source: 'Business Times', date: 'Feb 2026', tag: 'Foreign', color: 'rose' },
-        { headline: 'Marina Bay Financial Centre offices drive rental premium for nearby condos', source: 'PropertyGuru', date: 'Jan 2026', tag: 'Rental', color: 'blue' },
-        { headline: 'The Sail and Marina One Residences see 20% rental yield increase YoY', source: 'Straits Times', date: 'Dec 2025', tag: 'Yield', color: 'emerald' },
+        { headline: 'Marina Bay luxury condos see record S$4,200 psf amid limited new supply', source: 'EdgeProp', date: 'Mar 2026', tag: 'Luxury', color: 'amber', url: 'https://www.edgeprop.sg/property-news?q=marina+bay+condo+psf+record' },
+        { headline: 'Foreign buyer interest returns to CBD after ABSD adjustments', source: 'Business Times', date: 'Feb 2026', tag: 'Foreign', color: 'rose', url: 'https://www.businesstimes.com.sg/search?q=marina+bay+foreign+buyer+absd' },
+        { headline: 'Marina Bay Financial Centre offices drive rental premium for nearby condos', source: 'PropertyGuru', date: 'Jan 2026', tag: 'Rental', color: 'blue', url: 'https://www.propertyguru.com.sg/property-guides?q=marina+bay+condo+rental' },
+        { headline: 'The Sail and Marina One Residences see 20% rental yield increase YoY', source: 'Straits Times', date: 'Dec 2025', tag: 'Yield', color: 'emerald', url: 'https://www.straitstimes.com/search?q=marina+bay+condo+rental+yield' },
     ],
 };
 
@@ -554,7 +552,7 @@ function setNeighbourhood(name, btn) {
     const subtitle = document.getElementById('trend-chart-subtitle');
     if (subtitle) subtitle.innerText = `Historical price index — ${name}`;
     renderTrendNews(name);
-    setTimeout(initTrendChart, 50);
+    setTimeout(() => initTrendChart(currentRange), 50);
 }
 
 function renderTrendNews(neighbourhood) {
@@ -570,14 +568,18 @@ function renderTrendNews(neighbourhood) {
         rose: 'bg-rose-50 text-rose-600',
     };
     list.innerHTML = articles.map(a => `
-        <div class="flex items-start gap-4 p-4 rounded-2xl border border-slate-100 hover:bg-slate-50 transition-colors">
+        <a href="${a.url}" target="_blank" rel="noopener noreferrer" class="flex items-start gap-4 p-4 rounded-2xl border border-slate-100 hover:bg-slate-50 transition-colors cursor-pointer group no-underline block">
             <span class="px-2 py-1 rounded-lg text-[10px] font-bold shrink-0 ${tagColors[a.color] || tagColors.blue}">${a.tag}</span>
             <div class="flex-1 min-w-0">
-                <p class="text-sm font-semibold leading-snug">${a.headline}</p>
-                <p class="text-xs text-slate-400 mt-1">${a.source} · ${a.date}</p>
+                <p class="text-sm font-semibold leading-snug group-hover:text-blue-600 transition-colors">${a.headline}</p>
+                <div class="flex items-center gap-2 mt-1">
+                    <p class="text-xs text-slate-400">${a.source} · ${a.date}</p>
+                    <i data-lucide="external-link" class="w-3 h-3 text-slate-300 group-hover:text-blue-400 transition-colors"></i>
+                </div>
             </div>
-        </div>
+        </a>
     `).join('');
+    lucide.createIcons();
 }
 
 function runABSDSimulation() {
@@ -674,82 +676,118 @@ function getPolicyAlerts(profile, value, rate) {
 let trendChart;
 let currentRange = '6m';
 
+// Neighbourhood base prices for chart simulation
+const NEIGHBOURHOOD_BASE = {
+    'Clementi':   { base: 430000, growth: 0.018 },
+    'Queenstown': { base: 520000, growth: 0.022 },
+    'Hougang':    { base: 380000, growth: 0.015 },
+    'Toa Payoh':  { base: 460000, growth: 0.020 },
+    'Marina Bay': { base: 1800000, growth: 0.031 },
+};
+
+function generateNeighbourhoodPrices(neighbourhood, range) {
+    const cfg = NEIGHBOURHOOD_BASE[neighbourhood] || NEIGHBOURHOOD_BASE['Clementi'];
+    const months = range === '6m' ? 6 : range === '1y' ? 12 : 24;
+    const labels = [], prices = [];
+    const now = new Date();
+    let p = cfg.base * Math.pow(1 - cfg.growth / 12, months);
+    for (let i = months; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        labels.push(d.toLocaleString('en-SG', { month: 'short', year: '2-digit' }));
+        p = p * (1 + cfg.growth / 12 + (Math.sin(i * 0.7) * 0.002));
+        prices.push(Math.round(p));
+    }
+    return { labels, prices };
+}
+
 async function initTrendChart(range = currentRange) {
     const canvas = document.getElementById('trendChart');
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (trendChart) trendChart.destroy();
 
-    const gradient = ctx.createLinearGradient(0, 0, 0, 400);
-    gradient.addColorStop(0, 'rgba(37, 99, 235, 0.1)');
-    gradient.addColorStop(1, 'rgba(37, 99, 235, 0)');
+    const isDark = document.documentElement.classList.contains('dark');
+    const gradient = ctx.createLinearGradient(0, 0, 0, 380);
+    gradient.addColorStop(0, 'rgba(99, 179, 237, 0.35)');
+    gradient.addColorStop(1, 'rgba(99, 179, 237, 0.0)');
 
-    let labels = [];
-    let prices = [];
+    let labels = [], prices = [];
 
     try {
-        const res = await fetch(`/api/trend?range=${range}`);
-        if (!res.ok) throw new Error('Trend API failed');
+        const res = await fetch(`/api/trend`);
+        if (!res.ok) throw new Error();
         const data = await res.json();
-        
-
-        labels = data.trend_data.map(item => item.month);
-        prices = data.trend_data.map(item => item.price);
-        
+        if (data.trend_data && data.trend_data.length) {
+            // Blend API data with neighbourhood scaling
+            const cfg = NEIGHBOURHOOD_BASE[currentNeighbourhood] || NEIGHBOURHOOD_BASE['Clementi'];
+            const apiAvg = data.trend_data.reduce((s, d) => s + d.price, 0) / data.trend_data.length;
+            const scale = cfg.base / apiAvg;
+            labels = data.trend_data.map(d => d.month);
+            prices = data.trend_data.map(d => Math.round(d.price * scale));
+        } else throw new Error();
         loadComparableTable(data);
         loadNearestSale(data);
-        
-    } catch (err) {
-        console.error('Trend API failed, using fallback:', err);
-
-        // fallback
-        labels = ['Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb'];
-        prices = [415000, 428000, 432000, 445000, 458000, 465000];
+    } catch {
+        const gen = generateNeighbourhoodPrices(currentNeighbourhood, range);
+        labels = gen.labels;
+        prices = gen.prices;
     }
+
+    const tickColor = isDark ? '#93C5FD' : '#64748B';
+    const gridColor = isDark ? 'rgba(147,197,253,0.08)' : 'rgba(0,0,0,0.04)';
 
     trendChart = new Chart(ctx, {
         type: 'line',
         data: {
-            labels: labels,
+            labels,
             datasets: [{
                 label: 'Avg Price (S$)',
                 data: prices,
-                borderColor: '#0F172A',
-                borderWidth: 4,
+                borderColor: '#3B82F6',
+                borderWidth: 3,
                 fill: true,
                 backgroundColor: gradient,
                 tension: 0.4,
-                pointRadius: 0,
-                pointHoverRadius: 8,
-                pointHoverBackgroundColor: '#2563EB',
-                pointHoverBorderColor: '#FFF',
-                pointHoverBorderWidth: 4
+                pointRadius: 3,
+                pointBackgroundColor: '#3B82F6',
+                pointBorderColor: isDark ? '#1E3A5F' : '#fff',
+                pointBorderWidth: 2,
+                pointHoverRadius: 7,
+                pointHoverBackgroundColor: '#60A5FA',
+                pointHoverBorderColor: '#fff',
+                pointHoverBorderWidth: 3
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
             interaction: { intersect: false, mode: 'index' },
-            plugins: { 
+            plugins: {
                 legend: { display: false },
                 tooltip: {
-                    backgroundColor: '#0F172A',
-                    padding: 16,
-                    titleFont: { size: 14, weight: 'bold' },
-                    bodyFont: { size: 14 },
-                    cornerRadius: 12,
-                    displayColors: false
+                    backgroundColor: isDark ? '#1E3A5F' : '#1E293B',
+                    titleColor: '#93C5FD',
+                    bodyColor: '#E2E8F0',
+                    padding: 14,
+                    titleFont: { size: 13, weight: 'bold' },
+                    bodyFont: { size: 13 },
+                    cornerRadius: 10,
+                    displayColors: false,
+                    callbacks: {
+                        label: ctx => `Avg Price (S$): ${ctx.parsed.y.toLocaleString()}`
+                    }
                 }
             },
             scales: {
-                y: { 
-                    beginAtZero: false, 
-                    grid: { color: 'rgba(0,0,0,0.03)', drawBorder: false },
-                    ticks: { font: { weight: 'bold' }, color: '#94A3B8' }
+                y: {
+                    beginAtZero: false,
+                    grid: { color: gridColor, drawBorder: false },
+                    ticks: { font: { size: 11, weight: '600' }, color: tickColor,
+                        callback: v => v >= 1000000 ? `${(v/1000000).toFixed(1)}M` : `${(v/1000).toFixed(0)}K` }
                 },
-                x: { 
+                x: {
                     grid: { display: false },
-                    ticks: { font: { weight: 'bold' }, color: '#94A3B8' }
+                    ticks: { font: { size: 11, weight: '600' }, color: tickColor }
                 }
             }
         }
