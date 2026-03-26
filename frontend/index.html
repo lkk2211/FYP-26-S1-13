@@ -12,6 +12,8 @@
     </script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <link rel="stylesheet" href="style.css">
 </head>
 <body class="antialiased bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-white">
@@ -400,218 +402,69 @@
 
         <!-- Map View -->
         <section id="view-map" class="view-section">
-            <main class="max-w-7xl mx-auto px-6">
-                <div class="grid grid-cols-1 lg:grid-cols-12 gap-10">
+            <main class="max-w-7xl mx-auto px-6 space-y-6">
+                <!-- Search bar -->
+                <div class="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col sm:flex-row items-center gap-3 shadow-sm">
+                    <div class="flex flex-1 items-center gap-3 w-full px-2">
+                        <i data-lucide="search" class="w-5 h-5 text-slate-400 shrink-0"></i>
+                        <input id="map-postal-input" type="text" placeholder="Enter postal code (e.g. 560123, 238801, 159088)" maxlength="6"
+                            class="flex-1 bg-transparent outline-none font-medium text-slate-900 placeholder:text-slate-400 text-sm" />
+                    </div>
+                    <button onclick="loadMap()" class="w-full sm:w-auto px-6 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 transition-colors shrink-0 flex items-center justify-center gap-2">
+                        <i data-lucide="map-pin" class="w-4 h-4"></i> Show on Map
+                    </button>
+                </div>
+
+                <!-- Address bar (shown after search) -->
+                <div id="map-address-bar" class="hidden items-center gap-3 px-1">
+                    <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shrink-0">
+                        <i data-lucide="map-pin" class="w-4 h-4 text-white"></i>
+                    </div>
+                    <div>
+                        <p id="map-address-text" class="font-bold text-slate-900 text-sm"></p>
+                        <p id="map-district-text" class="text-xs text-slate-400"></p>
+                    </div>
+                </div>
+
+                <!-- Map + Sidebar -->
+                <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                    <!-- Map -->
                     <div class="lg:col-span-8">
-                        <div class="bg-white p-10 rounded-[48px] border border-slate-100 shadow-sm">
-                            <div class="flex items-start gap-4 mb-10">
-                                <div class="w-1.5 h-12 bg-blue-600 rounded-full"></div>
-                                <div>
-                                    <h2 class="text-xl font-bold text-slate-900">Property Location</h2>
-                                    <p class="text-sm text-slate-400">Clementi, Singapore</p>
-                                </div>
+                        <div id="map-placeholder" class="h-[580px] bg-slate-100 rounded-[28px] flex flex-col items-center justify-center gap-4 border border-slate-200">
+                            <div class="w-16 h-16 bg-slate-200 rounded-full flex items-center justify-center">
+                                <i data-lucide="map" class="w-8 h-8 text-slate-400"></i>
                             </div>
-
-                            <div class="flex items-center gap-6 mb-10">
-                                <div class="w-14 h-14 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-200">
-                                    <i data-lucide="building-2" class="w-8 h-8 text-white"></i>
-                                </div>
-                                <div>
-                                    <h3 class="text-xl font-bold text-slate-900">4 Room HDB Resale</h3>
-                                    <p class="text-sm text-slate-400 mb-3">Clementi Avenue 5</p>
-                                    <div class="flex gap-2">
-                                        <span class="px-3 py-1 bg-blue-50 text-blue-600 rounded-lg text-[10px] font-bold">67 sqm</span>
-                                        <span class="px-3 py-1 bg-emerald-50 text-emerald-600 rounded-lg text-[10px] font-bold">07-09 Floor</span>
-                                        <span class="px-3 py-1 bg-purple-50 text-purple-600 rounded-lg text-[10px] font-bold">New Generation</span>
-                                    </div>
-                                </div>
+                            <div class="text-center">
+                                <p class="text-slate-600 font-semibold">Enter a postal code to explore</p>
+                                <p class="text-xs text-slate-400 mt-1">Powered by OpenStreetMap · Amenities via OpenStreetMap</p>
                             </div>
-
-                            <div class="relative h-[600px] bg-slate-100 rounded-[40px] overflow-hidden border border-slate-100">
-                                <img src="https://picsum.photos/seed/singapore-map-v2/1600/1200" class="w-full h-full object-cover grayscale-[0.1]" alt="Map" />
-                                
-                                <!-- Custom Markers -->
-                                <div class="absolute top-[35%] left-[15%] flex items-center gap-2">
-                                    <div class="w-4 h-4 bg-emerald-500 rounded-full border-2 border-white shadow-lg animate-pulse"></div>
-                                    <span class="text-[10px] font-bold text-emerald-700 bg-white/90 px-2 py-1 rounded-lg backdrop-blur-sm shadow-sm">Training Field</span>
-                                </div>
-
-                                <div class="absolute top-[60%] left-[30%] flex items-center gap-2">
-                                    <div class="w-4 h-4 bg-orange-500 rounded-full border-2 border-white shadow-lg animate-pulse"></div>
-                                    <span class="text-[10px] font-bold text-orange-700 bg-white/90 px-2 py-1 rounded-lg backdrop-blur-sm shadow-sm">Starbucks - SIM</span>
-                                </div>
-
-                                <div class="absolute bottom-[15%] left-[10%] flex items-center gap-2">
-                                    <div class="w-4 h-4 bg-emerald-600 rounded-full border-2 border-white shadow-lg animate-pulse"></div>
-                                    <span class="text-[10px] font-bold text-emerald-800 bg-white/90 px-2 py-1 rounded-lg backdrop-blur-sm shadow-sm">Maju Forest</span>
-                                </div>
-
-                                <div class="absolute bottom-[30%] left-[35%] flex items-center gap-2">
-                                    <div class="w-4 h-4 bg-blue-500 rounded-full border-2 border-white shadow-lg animate-pulse"></div>
-                                    <span class="text-[10px] font-bold text-blue-700 bg-white/90 px-2 py-1 rounded-lg backdrop-blur-sm shadow-sm">Far East Flora Centre</span>
-                                </div>
+                            <div class="flex gap-2 mt-2 flex-wrap justify-center">
+                                <button onclick="document.getElementById('map-postal-input').value='560123';loadMap()" class="px-3 py-1.5 text-xs font-bold bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">Hougang 560123</button>
+                                <button onclick="document.getElementById('map-postal-input').value='159088';loadMap()" class="px-3 py-1.5 text-xs font-bold bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">Queenstown 159088</button>
+                                <button onclick="document.getElementById('map-postal-input').value='238801';loadMap()" class="px-3 py-1.5 text-xs font-bold bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">Marina Bay 238801</button>
                             </div>
                         </div>
+                        <div id="leaflet-map" class="h-[580px] rounded-[28px] overflow-hidden hidden border border-slate-200 shadow-sm"></div>
                     </div>
 
-                    <div class="lg:col-span-4 space-y-6">
-                        <!-- MRT Stations -->
-                        <div class="bg-white p-8 rounded-[32px] border border-slate-100 shadow-sm">
-                            <div class="flex items-center gap-4 mb-8">
-                                <div class="w-10 h-10 bg-purple-50 rounded-xl flex items-center justify-center">
-                                    <i data-lucide="train" class="w-5 h-5 text-purple-600"></i>
-                                </div>
-                                <h3 class="text-sm font-bold text-slate-900">MRT Stations</h3>
-                            </div>
-                            <div class="space-y-8">
-                                <div class="flex justify-between items-start">
-                                    <div>
-                                        <p class="text-sm font-bold text-slate-900">Clementi MRT Station</p>
-                                        <p class="text-[10px] text-slate-400 mt-1">4 mins walk</p>
-                                    </div>
-                                    <div class="flex items-center gap-1 text-[10px] text-slate-400">
-                                        <i data-lucide="map-pin" class="w-3 h-3"></i>
-                                        0.3 km
-                                    </div>
-                                </div>
-                                <div class="flex justify-between items-start">
-                                    <div>
-                                        <p class="text-sm font-bold text-slate-900">Dover MRT Station</p>
-                                        <p class="text-[10px] text-slate-400 mt-1">15 mins walk</p>
-                                    </div>
-                                    <div class="flex items-center gap-1 text-[10px] text-slate-400">
-                                        <i data-lucide="map-pin" class="w-3 h-3"></i>
-                                        1.2 km
-                                    </div>
-                                </div>
+                    <!-- Sidebar -->
+                    <div class="lg:col-span-4 space-y-4">
+                        <!-- Legend -->
+                        <div class="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+                            <h3 class="font-bold text-sm mb-4">Amenity Legend</h3>
+                            <div class="grid grid-cols-2 gap-2">
+                                <div class="flex items-center gap-2 text-xs text-slate-500"><span class="w-3 h-3 rounded-full bg-purple-500 shrink-0"></span>MRT / LRT</div>
+                                <div class="flex items-center gap-2 text-xs text-slate-500"><span class="w-3 h-3 rounded-full bg-emerald-500 shrink-0"></span>Schools</div>
+                                <div class="flex items-center gap-2 text-xs text-slate-500"><span class="w-3 h-3 rounded-full bg-teal-500 shrink-0"></span>Parks</div>
+                                <div class="flex items-center gap-2 text-xs text-slate-500"><span class="w-3 h-3 rounded-full bg-rose-500 shrink-0"></span>Healthcare</div>
+                                <div class="flex items-center gap-2 text-xs text-slate-500"><span class="w-3 h-3 rounded-full bg-orange-500 shrink-0"></span>Hawker / Food</div>
+                                <div class="flex items-center gap-2 text-xs text-slate-500"><span class="w-3 h-3 rounded-full bg-blue-500 shrink-0"></span>Community</div>
                             </div>
                         </div>
-
-                        <!-- Bus Stops -->
-                        <div class="bg-white p-8 rounded-[32px] border border-slate-100 shadow-sm">
-                            <div class="flex items-center gap-4 mb-8">
-                                <div class="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center">
-                                    <i data-lucide="bus" class="w-5 h-5 text-blue-600"></i>
-                                </div>
-                                <h3 class="text-sm font-bold text-slate-900">Bus Stops</h3>
-                            </div>
-                            <div class="space-y-8">
-                                <div class="flex justify-between items-start">
-                                    <div>
-                                        <p class="text-sm font-bold text-slate-900">Blk 341 Bus Stop</p>
-                                        <p class="text-[10px] text-slate-400 mt-1">2 mins walk</p>
-                                    </div>
-                                    <div class="flex items-center gap-1 text-[10px] text-slate-400">
-                                        <i data-lucide="map-pin" class="w-3 h-3"></i>
-                                        0.1 km
-                                    </div>
-                                </div>
-                                <div class="flex justify-between items-start">
-                                    <div>
-                                        <p class="text-sm font-bold text-slate-900">Clementi Int Bus Stop</p>
-                                        <p class="text-[10px] text-slate-400 mt-1">5 mins walk</p>
-                                    </div>
-                                    <div class="flex items-center gap-1 text-[10px] text-slate-400">
-                                        <i data-lucide="map-pin" class="w-3 h-3"></i>
-                                        0.4 km
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Shopping Malls -->
-                        <div class="bg-white p-8 rounded-[32px] border border-slate-100 shadow-sm">
-                            <div class="flex items-center gap-4 mb-8">
-                                <div class="w-10 h-10 bg-pink-50 rounded-xl flex items-center justify-center">
-                                    <i data-lucide="shopping-bag" class="w-5 h-5 text-pink-600"></i>
-                                </div>
-                                <h3 class="text-sm font-bold text-slate-900">Shopping Malls</h3>
-                            </div>
-                            <div class="space-y-8">
-                                <div class="flex justify-between items-start">
-                                    <div>
-                                        <p class="text-sm font-bold text-slate-900">Clementi Mall</p>
-                                        <p class="text-[10px] text-slate-400 mt-1">5 mins walk</p>
-                                    </div>
-                                    <div class="flex items-center gap-1 text-[10px] text-slate-400">
-                                        <i data-lucide="map-pin" class="w-3 h-3"></i>
-                                        0.4 km
-                                    </div>
-                                </div>
-                                <div class="flex justify-between items-start">
-                                    <div>
-                                        <p class="text-sm font-bold text-slate-900">West Coast Plaza</p>
-                                        <p class="text-[10px] text-slate-400 mt-1">23 mins walk</p>
-                                    </div>
-                                    <div class="flex items-center gap-1 text-[10px] text-slate-400">
-                                        <i data-lucide="map-pin" class="w-3 h-3"></i>
-                                        1.8 km
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Schools -->
-                        <div class="bg-white p-8 rounded-[32px] border border-slate-100 shadow-sm">
-                            <div class="flex items-center gap-4 mb-8">
-                                <div class="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center">
-                                    <i data-lucide="graduation-cap" class="w-5 h-5 text-emerald-600"></i>
-                                </div>
-                                <h3 class="text-sm font-bold text-slate-900">Schools</h3>
-                            </div>
-                            <div class="space-y-8">
-                                <div class="flex justify-between items-start">
-                                    <div>
-                                        <p class="text-sm font-bold text-slate-900">Clementi Primary School</p>
-                                        <p class="text-[10px] text-slate-400 mt-1">6 mins walk</p>
-                                    </div>
-                                    <div class="flex items-center gap-1 text-[10px] text-slate-400">
-                                        <i data-lucide="map-pin" class="w-3 h-3"></i>
-                                        0.5 km
-                                    </div>
-                                </div>
-                                <div class="flex justify-between items-start">
-                                    <div>
-                                        <p class="text-sm font-bold text-slate-900">Nan Hua High School</p>
-                                        <p class="text-[10px] text-slate-400 mt-1">10 mins walk</p>
-                                    </div>
-                                    <div class="flex items-center gap-1 text-[10px] text-slate-400">
-                                        <i data-lucide="map-pin" class="w-3 h-3"></i>
-                                        0.8 km
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Healthcare -->
-                        <div class="bg-white p-8 rounded-[32px] border border-slate-100 shadow-sm">
-                            <div class="flex items-center gap-4 mb-8">
-                                <div class="w-10 h-10 bg-rose-50 rounded-xl flex items-center justify-center">
-                                    <i data-lucide="heart-pulse" class="w-5 h-5 text-rose-600"></i>
-                                </div>
-                                <h3 class="text-sm font-bold text-slate-900">Healthcare</h3>
-                            </div>
-                            <div class="space-y-8">
-                                <div class="flex justify-between items-start">
-                                    <div>
-                                        <p class="text-sm font-bold text-slate-900">Ng Teng Fong General Hospital</p>
-                                        <p class="text-[10px] text-slate-400 mt-1">19 mins walk</p>
-                                    </div>
-                                    <div class="flex items-center gap-1 text-[10px] text-slate-400">
-                                        <i data-lucide="map-pin" class="w-3 h-3"></i>
-                                        1.5 km
-                                    </div>
-                                </div>
-                                <div class="flex justify-between items-start">
-                                    <div>
-                                        <p class="text-sm font-bold text-slate-900">Clementi Polyclinic</p>
-                                        <p class="text-[10px] text-slate-400 mt-1">9 mins walk</p>
-                                    </div>
-                                    <div class="flex items-center gap-1 text-[10px] text-slate-400">
-                                        <i data-lucide="map-pin" class="w-3 h-3"></i>
-                                        0.7 km
-                                    </div>
-                                </div>
+                        <!-- Amenity list (populated by JS) -->
+                        <div id="amenity-cards">
+                            <div class="bg-white rounded-2xl border border-slate-200 p-6 text-center shadow-sm">
+                                <p class="text-slate-400 text-sm">Search a postal code to see nearby amenities</p>
                             </div>
                         </div>
                     </div>
@@ -621,12 +474,29 @@
 
         <!-- Trend View -->
         <section id="view-trend" class="view-section">
-            <main class="max-w-7xl mx-auto px-6 space-y-10">
-                <div class="bg-white p-12 rounded-[48px] border border-slate-100 card-shadow">
-                    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-12">
+            <main class="max-w-7xl mx-auto px-6 space-y-8">
+
+                <!-- Neighbourhood Filter -->
+                <div class="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm flex flex-col sm:flex-row items-start sm:items-center gap-4">
+                    <div class="flex items-center gap-2 shrink-0">
+                        <i data-lucide="map-pin" class="w-4 h-4 text-blue-600"></i>
+                        <span class="font-bold text-sm">Neighbourhood:</span>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <button onclick="setNeighbourhood('Clementi', this)" class="neighbourhood-btn px-4 py-1.5 rounded-xl text-xs font-bold bg-blue-600 text-white transition-colors">Clementi</button>
+                        <button onclick="setNeighbourhood('Queenstown', this)" class="neighbourhood-btn px-4 py-1.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors">Queenstown</button>
+                        <button onclick="setNeighbourhood('Hougang', this)" class="neighbourhood-btn px-4 py-1.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors">Hougang</button>
+                        <button onclick="setNeighbourhood('Toa Payoh', this)" class="neighbourhood-btn px-4 py-1.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors">Toa Payoh</button>
+                        <button onclick="setNeighbourhood('Marina Bay', this)" class="neighbourhood-btn px-4 py-1.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors">Marina Bay</button>
+                    </div>
+                </div>
+
+                <!-- Market Chart -->
+                <div class="bg-white p-8 rounded-[32px] border border-slate-100 card-shadow">
+                    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-8">
                         <div>
-                            <h2 class="text-3xl font-bold mb-2">Market Performance</h2>
-                            <p class="text-slate-400 font-medium">Historical price index for 4-Room flats in Clementi</p>
+                            <h2 class="text-2xl font-bold mb-1">Market Performance</h2>
+                            <p id="trend-chart-subtitle" class="text-slate-400 text-sm font-medium">Historical price index — Clementi</p>
                         </div>
                         <div class="flex bg-slate-100 p-1 rounded-xl border border-slate-200/50">
                             <button onclick="changeRange('6m', this)" class="range-btn px-4 py-1.5 rounded-lg text-xs font-bold bg-white shadow-sm">6M</button>
@@ -634,29 +504,98 @@
                             <button onclick="changeRange('all', this)" class="range-btn px-4 py-1.5 rounded-lg text-xs font-bold text-slate-500">ALL</button>
                         </div>
                     </div>
-                    <div class="h-[450px]">
+                    <div class="h-[380px]">
                         <canvas id="trendChart"></canvas>
                     </div>
                 </div>
 
-                <div class="bg-white p-12 rounded-[48px] border border-slate-100 card-shadow">
-                    <h2 class="text-2xl font-bold mb-10">Recent Comparable Sales</h2>
+                <!-- Comparable Sales -->
+                <div class="bg-white p-8 rounded-[32px] border border-slate-100 card-shadow">
+                    <h2 class="text-xl font-bold mb-6">Recent Comparable Sales</h2>
                     <div class="overflow-x-auto">
                         <table class="w-full text-left">
                             <thead>
-                                <tr class="text-slate-400 text-xs font-bold uppercase tracking-[0.2em] border-b border-slate-50">
-                                    <th class="pb-6 pl-4">Address</th>
-                                        <th class="pb-6">Flat Type</th>
-                                        <th class="pb-6">Sale Price</th>
-                                        <th class="pb-6">Floor</th>
-                                        <th class="pb-6 pr-4 text-right">Date</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="comparable-body" class="divide-y divide-slate-50">
-                                </tbody>
+                                <tr class="text-slate-400 text-xs font-bold uppercase tracking-widest border-b border-slate-100">
+                                    <th class="pb-4 pl-2">Address</th>
+                                    <th class="pb-4">Flat Type</th>
+                                    <th class="pb-4">Sale Price</th>
+                                    <th class="pb-4">Floor</th>
+                                    <th class="pb-4 pr-2 text-right">Date</th>
+                                </tr>
+                            </thead>
+                            <tbody id="comparable-body" class="divide-y divide-slate-50"></tbody>
                         </table>
                     </div>
                 </div>
+
+                <!-- Property News -->
+                <div class="bg-white p-8 rounded-[32px] border border-slate-100 card-shadow">
+                    <div class="flex items-center justify-between mb-6">
+                        <div class="flex items-center gap-3">
+                            <div class="w-9 h-9 bg-blue-50 rounded-xl flex items-center justify-center">
+                                <i data-lucide="newspaper" class="w-5 h-5 text-blue-600"></i>
+                            </div>
+                            <div>
+                                <h2 class="text-xl font-bold">Property News</h2>
+                                <p id="news-subtitle" class="text-xs text-slate-400">Latest headlines for Clementi</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="news-list" class="space-y-4">
+                        <div class="animate-pulse space-y-3">
+                            <div class="h-4 bg-slate-100 rounded w-3/4"></div>
+                            <div class="h-3 bg-slate-100 rounded w-1/2"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Government Policy Simulator -->
+                <div class="bg-white p-8 rounded-[32px] border border-slate-100 card-shadow">
+                    <div class="flex items-center gap-3 mb-6">
+                        <div class="w-9 h-9 bg-amber-50 rounded-xl flex items-center justify-center">
+                            <i data-lucide="landmark" class="w-5 h-5 text-amber-600"></i>
+                        </div>
+                        <div>
+                            <h2 class="text-xl font-bold">Government Policy Impact</h2>
+                            <p class="text-xs text-slate-400">ABSD rates & cooling measures simulation</p>
+                        </div>
+                    </div>
+
+                    <!-- ABSD Simulator inputs -->
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                        <div class="space-y-1.5">
+                            <label class="text-xs font-bold text-slate-500 uppercase">Buyer Profile</label>
+                            <select id="absd-profile" onchange="runABSDSimulation()" class="w-full px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20">
+                                <option value="sc1">Singapore Citizen — 1st Property</option>
+                                <option value="sc2">Singapore Citizen — 2nd Property</option>
+                                <option value="sc3">Singapore Citizen — 3rd+ Property</option>
+                                <option value="pr1">Permanent Resident — 1st Property</option>
+                                <option value="pr2">Permanent Resident — 2nd+ Property</option>
+                                <option value="fg">Foreigner</option>
+                                <option value="entity">Entity / Company</option>
+                            </select>
+                        </div>
+                        <div class="space-y-1.5">
+                            <label class="text-xs font-bold text-slate-500 uppercase">Property Value (SGD)</label>
+                            <input id="absd-value" type="number" value="650000" step="10000" oninput="runABSDSimulation()"
+                                class="w-full px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+                        </div>
+                        <div class="space-y-1.5">
+                            <label class="text-xs font-bold text-slate-500 uppercase">Property Type</label>
+                            <select id="absd-type" onchange="runABSDSimulation()" class="w-full px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20">
+                                <option value="residential">Residential (HDB / Condo)</option>
+                                <option value="commercial">Commercial</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- ABSD Result -->
+                    <div id="absd-result" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6"></div>
+
+                    <!-- Policy alerts -->
+                    <div id="policy-alerts" class="space-y-3"></div>
+                </div>
+
             </main>
         </section>
 

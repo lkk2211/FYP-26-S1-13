@@ -236,6 +236,35 @@ input:checked + .toggle-slider:before { transform: translateX(20px); }
     box-shadow: 0 0 0px 1000px #1A2740 inset !important;
 }
 
+/* ── Leaflet map overrides ─────────────────────────────────── */
+.leaflet-container { border-radius: 28px; }
+.leaflet-popup-content-wrapper {
+    border-radius: 12px !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 13px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.15) !important;
+}
+.dark .leaflet-popup-content-wrapper {
+    background: #1E293B !important;
+    color: #E2E8F0 !important;
+}
+.dark .leaflet-popup-tip { background: #1E293B !important; }
+.dark .leaflet-control-zoom a {
+    background: #1E293B !important;
+    color: #E2E8F0 !important;
+    border-color: #334155 !important;
+}
+.dark .leaflet-control-attribution {
+    background: rgba(15,23,42,0.8) !important;
+    color: #64748B !important;
+}
+
+/* ── Neighbourhood filter pills in dark ────────────────────── */
+.dark .neighbourhood-btn:not(.bg-blue-600) {
+    background: #1A2740 !important;
+    color: #94A3B8 !important;
+}
+
 /* ── Emerald/Green success banners in dark ─────────────────── */
 .dark .bg-emerald-50 { background-color: rgba(16,185,129,0.1) !important; }
 .dark .border-emerald-100 { border-color: rgba(16,185,129,0.2) !important; }
