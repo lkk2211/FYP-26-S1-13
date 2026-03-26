@@ -190,6 +190,7 @@ async function handlePredict() {
         `).join('');
 
         togglePredictView('output');
+        renderPredictNews(postal);
 
         // Animate bars + re-init icons after DOM update
         lucide.createIcons();
@@ -502,31 +503,53 @@ function setNeighbourhood(name, btn) {
     setTimeout(() => initTrendChart(currentRange), 50);
 }
 
-function renderTrendNews(neighbourhood) {
-    const list = document.getElementById('news-list');
-    const subtitle = document.getElementById('news-subtitle');
-    if (subtitle) subtitle.innerText = `Latest headlines for ${neighbourhood}`;
-    const articles = NEIGHBOURHOOD_NEWS[neighbourhood] || [];
-    const tagColors = {
-        blue: 'bg-blue-50 text-blue-600',
-        emerald: 'bg-emerald-50 text-emerald-600',
-        purple: 'bg-purple-50 text-purple-600',
-        amber: 'bg-amber-50 text-amber-600',
-        rose: 'bg-rose-50 text-rose-600',
-    };
-    list.innerHTML = articles.map(a => `
-        <a href="${a.url}" target="_blank" rel="noopener noreferrer" class="flex items-start gap-4 p-4 rounded-2xl border border-slate-100 hover:bg-slate-50 transition-colors cursor-pointer group no-underline block">
-            <span class="px-2 py-1 rounded-lg text-[10px] font-bold shrink-0 ${tagColors[a.color] || tagColors.blue}">${a.tag}</span>
+function _newsCardHTML(a) {
+    return `
+        <a href="${a.url}" target="_blank" rel="noopener noreferrer"
+           class="flex items-start gap-4 p-4 rounded-2xl border border-slate-100 hover:bg-slate-50 transition-colors cursor-pointer group no-underline block">
             <div class="flex-1 min-w-0">
-                <p class="text-sm font-semibold leading-snug group-hover:text-blue-600 transition-colors">${a.headline}</p>
+                <p class="text-sm font-semibold leading-snug group-hover:text-blue-600 transition-colors">${a.title}</p>
                 <div class="flex items-center gap-2 mt-1">
                     <p class="text-xs text-slate-400">${a.source} · ${a.date}</p>
                     <i data-lucide="external-link" class="w-3 h-3 text-slate-300 group-hover:text-blue-400 transition-colors"></i>
                 </div>
             </div>
-        </a>
-    `).join('');
-    lucide.createIcons();
+        </a>`;
+}
+
+function _newsLoadingHTML() {
+    return `<div class="animate-pulse space-y-3">
+        ${[1,2,3].map(() => `<div class="h-12 bg-slate-100 rounded-xl w-full"></div>`).join('')}
+    </div>`;
+}
+
+async function renderTrendNews(neighbourhood) {
+    const list = document.getElementById('news-list');
+    const subtitle = document.getElementById('news-subtitle');
+    if (!list) return;
+    if (subtitle) subtitle.innerText = `Latest headlines for ${neighbourhood}`;
+    list.innerHTML = _newsLoadingHTML();
+
+    try {
+        const res = await fetch(`/api/news?neighbourhood=${encodeURIComponent(neighbourhood)}&limit=4`);
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        const articles = data.articles || [];
+        if (!articles.length) throw new Error();
+        list.innerHTML = articles.map(_newsCardHTML).join('');
+        lucide.createIcons();
+    } catch {
+        // Fall back to static data
+        const fallback = NEIGHBOURHOOD_NEWS[neighbourhood] || [];
+        if (fallback.length) {
+            list.innerHTML = fallback.map(a => _newsCardHTML({
+                title: a.headline, url: a.url, source: a.source, date: a.date
+            })).join('');
+        } else {
+            list.innerHTML = '<p class="text-xs text-slate-400 p-4">No recent news found.</p>';
+        }
+        lucide.createIcons();
+    }
 }
 
 function runABSDSimulation() {
@@ -742,39 +765,46 @@ async function initTrendChart(range = currentRange) {
 }
 
 // ── Home Tab News ────────────────────────────────────────────
-const HOME_NEWS = [
-    { headline: 'HDB resale prices climb 2.5% in Q1 2026, led by mature estates and million-dollar flats', source: 'Straits Times', date: 'Mar 2026', tag: 'Resale', color: 'blue', url: 'https://www.straitstimes.com/search?q=hdb+resale+prices+2026' },
-    { headline: 'Singapore private home prices up 1.8% in Q1 2026 amid firm demand and limited supply', source: 'Business Times', date: 'Mar 2026', tag: 'Private', color: 'purple', url: 'https://www.businesstimes.com.sg/search?q=singapore+private+home+prices+2026' },
-    { headline: 'MAS holds property cooling measures steady; analysts forecast gradual appreciation', source: 'CNA', date: 'Feb 2026', tag: 'Policy', color: 'amber', url: 'https://www.channelnewsasia.com/search?q=singapore+property+cooling+measures+2026' },
-    { headline: 'BTO supply in 2026 to reach 19,600 flats across 9 towns — HDB confirms schedule', source: 'EdgeProp', date: 'Feb 2026', tag: 'BTO', color: 'emerald', url: 'https://www.edgeprop.sg/property-news?q=hdb+bto+2026+launch' },
-    { headline: 'Rental market softens as supply surges — rents expected to ease 5–8% through 2026', source: 'PropertyGuru', date: 'Jan 2026', tag: 'Rental', color: 'rose', url: 'https://www.propertyguru.com.sg/property-guides?q=singapore+rental+market+2026' },
-    { headline: 'Greater Southern Waterfront masterplan could unlock S$100B in new developments', source: '99.co', date: 'Jan 2026', tag: 'Planning', color: 'blue', url: 'https://www.99.co/singapore/insider/greater-southern-waterfront' },
-];
-
-function renderHomeNews() {
+async function renderHomeNews() {
     const list = document.getElementById('home-news-list');
     if (!list) return;
-    const tagColors = {
-        blue: 'bg-blue-50 text-blue-700',
-        emerald: 'bg-emerald-50 text-emerald-700',
-        purple: 'bg-purple-50 text-purple-700',
-        amber: 'bg-amber-50 text-amber-700',
-        rose: 'bg-rose-50 text-rose-700',
-    };
-    list.innerHTML = HOME_NEWS.map(a => `
-        <a href="${a.url}" target="_blank" rel="noopener noreferrer"
-           class="flex items-start gap-4 p-4 rounded-2xl border border-slate-100 hover:bg-slate-50 transition-colors cursor-pointer group no-underline block">
-            <span class="px-2 py-1 rounded-lg text-[10px] font-bold shrink-0 ${tagColors[a.color] || tagColors.blue}">${a.tag}</span>
-            <div class="flex-1 min-w-0">
-                <p class="text-sm font-semibold leading-snug group-hover:text-blue-600 transition-colors">${a.headline}</p>
-                <div class="flex items-center gap-2 mt-1">
-                    <p class="text-xs text-slate-400">${a.source} · ${a.date}</p>
-                    <i data-lucide="external-link" class="w-3 h-3 text-slate-300 group-hover:text-blue-400 transition-colors"></i>
-                </div>
-            </div>
-        </a>
-    `).join('');
+    list.innerHTML = _newsLoadingHTML();
+
+    try {
+        const res = await fetch('/api/news?limit=6');
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        const articles = data.articles || [];
+        if (!articles.length) throw new Error();
+        list.innerHTML = articles.map(_newsCardHTML).join('');
+    } catch {
+        list.innerHTML = '<p class="text-xs text-slate-400 p-4">Could not load property news. Check back shortly.</p>';
+    }
     lucide.createIcons();
+}
+
+// ── Predict Tab Neighbourhood News ───────────────────────────
+async function renderPredictNews(postal) {
+    const section = document.getElementById('predict-news-section');
+    const list    = document.getElementById('predict-news-list');
+    const label   = document.getElementById('predict-news-area');
+    if (!section || !list) return;
+
+    section.classList.remove('hidden');
+    list.innerHTML = _newsLoadingHTML();
+
+    try {
+        const res = await fetch(`/api/news?postal=${encodeURIComponent(postal)}&limit=4`);
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        const articles = data.articles || [];
+        if (label) label.innerText = `Latest news for ${data.area || 'this area'}`;
+        if (!articles.length) throw new Error();
+        list.innerHTML = articles.map(_newsCardHTML).join('');
+        lucide.createIcons();
+    } catch {
+        section.classList.add('hidden');
+    }
 }
 
 document.addEventListener('DOMContentLoaded', () => {

@@ -122,6 +122,11 @@ SQLITE_SCHEMA = """
         data        TEXT NOT NULL,
         cached_at   TEXT NOT NULL DEFAULT (datetime('now'))
     );
+    CREATE TABLE IF NOT EXISTS news_cache (
+        cache_key  TEXT PRIMARY KEY,
+        articles   TEXT NOT NULL,
+        fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
 """
 
 POSTGRES_SCHEMA = """
@@ -181,6 +186,11 @@ POSTGRES_SCHEMA = """
         lng         REAL NOT NULL,
         data        TEXT NOT NULL,
         cached_at   TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS news_cache (
+        cache_key  TEXT PRIMARY KEY,
+        articles   TEXT NOT NULL,
+        fetched_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
 """
 
@@ -336,7 +346,7 @@ def fetch_onemap_transport(lat, lng, mrt_radius=2.0, bus_radius=0.6):
 
 
 def fetch_overpass_amenities(lat, lng):
-    """Fetch schools, parks, healthcare, hawker, community from Overpass (OSM)."""
+    """Fetch schools, parks, healthcare, hawker, community, and bus-stop fallback from Overpass."""
     query = f"""[out:json][timeout:25];(
         node["amenity"="school"](around:1500,{lat},{lng});
         way["amenity"="school"](around:1500,{lat},{lng});
@@ -353,9 +363,11 @@ def fetch_overpass_amenities(lat, lng):
         node["amenity"="food_court"](around:1000,{lat},{lng});
         node["amenity"="community_centre"](around:2000,{lat},{lng});
         node["amenity"="library"](around:2000,{lat},{lng});
+        node["highway"="bus_stop"](around:600,{lat},{lng});
+        node["public_transport"="stop_position"]["bus"="yes"](around:600,{lat},{lng});
     );out center body;"""
 
-    cats = {'school': [], 'park': [], 'health': [], 'hawker': [], 'community': []}
+    cats = {'school': [], 'park': [], 'health': [], 'hawker': [], 'community': [], '_bus': []}
     try:
         req = urllib.request.Request(
             'https://overpass-api.de/api/interpreter',
@@ -371,7 +383,7 @@ def fetch_overpass_amenities(lat, lng):
             if not elat or not elng:
                 continue
             t    = el.get('tags') or {}
-            name = t.get('name') or t.get('name:en')
+            name = t.get('name') or t.get('name:en') or t.get('ref')
             if not name:
                 continue
             d    = _haversine(lat, lng, float(elat), float(elng))
@@ -387,6 +399,9 @@ def fetch_overpass_amenities(lat, lng):
                 cats['hawker'].append(item)
             elif t.get('amenity') in ('community_centre', 'community_hall', 'library'):
                 cats['community'].append(item)
+            elif t.get('highway') == 'bus_stop' or (
+                    t.get('public_transport') == 'stop_position' and t.get('bus') == 'yes'):
+                cats['_bus'].append(item)
     except Exception as e:
         print(f'Overpass error: {e}')
 
@@ -394,6 +409,185 @@ def fetch_overpass_amenities(lat, lng):
         items.sort(key=lambda x: float(x['dist']))
         items[:] = items[:5]
     return cats
+
+
+# ---------------------------------------------------------------------------
+# Postal district → neighbourhood lookup
+# ---------------------------------------------------------------------------
+POSTAL_DISTRICTS = {
+    '01': 'Raffles Place', '02': 'Tanjong Pagar', '03': 'Queenstown',
+    '04': 'Telok Blangah', '05': 'Pasir Panjang', '06': 'City Hall',
+    '07': 'Bugis',         '08': 'Little India',  '09': 'Orchard',
+    '10': 'Tanglin',       '11': 'Newton',         '12': 'Balestier',
+    '13': 'Macpherson',    '14': 'Geylang',        '15': 'Katong',
+    '16': 'Bedok',         '17': 'Changi',         '18': 'Tampines',
+    '19': 'Serangoon',     '20': 'Bishan',         '21': 'Upper Bukit Timah',
+    '22': 'Clementi',      '23': 'Bukit Panjang',  '24': 'Lim Chu Kang',
+    '25': 'Kranji',        '26': 'Mandai',         '27': 'Upper Thomson',
+    '28': 'Bishan',        '29': 'Thomson',        '30': 'Toa Payoh',
+    '31': 'Balestier',     '32': 'Boon Keng',      '33': 'Potong Pasir',
+    '34': 'Serangoon',     '35': 'Hougang',        '36': 'Punggol',
+    '37': 'Pasir Ris',     '38': 'Geylang',        '39': 'Eunos',
+    '40': 'Paya Lebar',    '41': 'Tampines',       '42': 'Bedok',
+    '43': 'Telok Blangah', '44': 'Harbourfront',   '45': 'Buona Vista',
+    '46': 'Clementi',      '47': 'West Coast',     '48': 'Pandan',
+    '49': 'Jurong West',   '50': 'Jurong',         '51': 'Jurong East',
+    '52': 'Bukit Batok',   '53': 'Bukit Panjang',  '54': 'Choa Chu Kang',
+    '55': 'Woodlands',     '56': 'Ang Mo Kio',     '57': 'Ang Mo Kio',
+    '58': 'Upper Thomson', '59': 'Yio Chu Kang',   '60': 'Hougang',
+    '61': 'Hougang',       '62': 'Sengkang',       '63': 'Sengkang',
+    '64': 'Punggol',       '65': 'Tampines',       '66': 'Pasir Ris',
+    '67': 'Loyang',        '68': 'Changi',         '69': 'Jurong West',
+    '70': 'Jurong West',   '71': 'Boon Lay',       '72': 'Jurong East',
+    '73': 'Jurong East',   '75': 'Clementi',       '76': 'West Coast',
+    '77': 'Queenstown',    '78': 'Toa Payoh',      '79': 'Marine Parade',
+    '80': 'Paya Lebar',    '81': 'Pasir Ris',      '82': 'Tampines',
+}
+
+
+def postal_to_area(postal):
+    """Map 6-digit postal code to neighbourhood name via district prefix."""
+    return POSTAL_DISTRICTS.get(str(postal)[:2], 'Singapore')
+
+
+# ---------------------------------------------------------------------------
+# News fetching (Google News RSS — no API key, always fresh)
+# ---------------------------------------------------------------------------
+def fetch_news(query, limit=6, max_age_years=5):
+    """Fetch articles from Google News RSS. Returns list of article dicts."""
+    import xml.etree.ElementTree as ET
+    import urllib.parse
+    from email.utils import parsedate_to_datetime
+
+    url = (f'https://news.google.com/rss/search'
+           f'?q={urllib.parse.quote(query)}&hl=en-SG&gl=SG&ceid=SG:en')
+    articles = []
+    cutoff   = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=max_age_years * 365)
+
+    try:
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0 (compatible; PropAISG/1.0; RSS reader)'
+        })
+        with urllib.request.urlopen(req, timeout=12) as r:
+            xml_bytes = r.read()
+
+        root    = ET.fromstring(xml_bytes)
+        channel = root.find('channel')
+        if channel is None:
+            return articles
+
+        for item in channel.findall('item'):
+            title  = (item.findtext('title') or '').strip()
+            link   = (item.findtext('link') or item.findtext('guid') or '').strip()
+            pub    = (item.findtext('pubDate') or '').strip()
+            desc   = (item.findtext('description') or '').strip()
+            src_el = item.find('source')
+            source = (src_el.text or '').strip() if src_el is not None else ''
+
+            if not title or not link:
+                continue
+
+            # Strip source suffix appended by Google News: "Title - Source Name"
+            if not source and ' - ' in title:
+                title, source = title.rsplit(' - ', 1)
+                title  = title.strip()
+                source = source.strip()
+
+            # Filter by age
+            date_str = 'Recent'
+            try:
+                pub_dt = parsedate_to_datetime(pub)
+                if pub_dt < cutoff:
+                    continue
+                date_str = pub_dt.strftime('%b %Y')
+            except Exception:
+                pass
+
+            # Strip HTML from description
+            summary = re.sub(r'<[^>]+>', '', desc).strip()[:220]
+
+            articles.append({
+                'title':   title,
+                'url':     link,
+                'source':  source or 'News',
+                'date':    date_str,
+                'summary': summary,
+            })
+            if len(articles) >= limit:
+                break
+
+    except Exception as e:
+        print(f'News fetch error ({query[:40]}…): {e}')
+
+    return articles
+
+
+def _cache_age_hrs(raw_ts):
+    """Return age of a cached_at timestamp in hours."""
+    try:
+        if USE_POSTGRES and hasattr(raw_ts, 'tzinfo') and raw_ts.tzinfo:
+            return (datetime.datetime.now(datetime.timezone.utc) - raw_ts).total_seconds() / 3600
+        if USE_POSTGRES:
+            return (datetime.datetime.now() - raw_ts).total_seconds() / 3600
+        return (datetime.datetime.now() - datetime.datetime.fromisoformat(str(raw_ts))).total_seconds() / 3600
+    except Exception:
+        return 999
+
+
+@app.route('/api/news', methods=['GET'])
+def get_news():
+    neighbourhood = (request.args.get('neighbourhood') or '').strip()
+    postal        = (request.args.get('postal') or '').strip()
+    limit         = min(int(request.args.get('limit', 6)), 10)
+
+    if postal:
+        area      = postal_to_area(postal)
+        cache_key = f'postal:{postal}'
+        query     = f'singapore {area} HDB property resale BTO 2024 2025 2026'
+        ttl_hrs   = 4
+    elif neighbourhood:
+        cache_key = f'hood:{neighbourhood}'
+        query     = f'singapore {neighbourhood} HDB property resale 2024 2025 2026'
+        ttl_hrs   = 4
+    else:
+        cache_key = 'general'
+        query     = 'singapore property HDB resale BTO market 2025 2026'
+        ttl_hrs   = 2
+
+    # Check cache
+    conn = get_db()
+    cur  = _cursor(conn)
+    cur.execute(_q("SELECT articles, fetched_at FROM news_cache WHERE cache_key = ?"), (cache_key,))
+    row = _row(cur)
+    conn.close()
+
+    if row and _cache_age_hrs(row['fetched_at']) < ttl_hrs:
+        arts = json.loads(row['articles'])
+        return jsonify({'articles': arts[:limit], 'area': postal_to_area(postal) if postal else neighbourhood or 'Singapore', 'cached': True})
+
+    # Fetch fresh articles
+    articles = fetch_news(query, limit=limit)
+
+    if articles:
+        data_json = json.dumps(articles, ensure_ascii=False)
+        conn = get_db()
+        cur  = _cursor(conn)
+        if USE_POSTGRES:
+            cur.execute(
+                """INSERT INTO news_cache (cache_key, articles) VALUES (%s, %s)
+                   ON CONFLICT (cache_key) DO UPDATE SET articles=EXCLUDED.articles, fetched_at=NOW()""",
+                (cache_key, data_json)
+            )
+        else:
+            cur.execute(
+                """INSERT OR REPLACE INTO news_cache (cache_key, articles, fetched_at)
+                   VALUES (?, ?, datetime('now'))""",
+                (cache_key, data_json)
+            )
+        conn.commit()
+        conn.close()
+
+    return jsonify({'articles': articles, 'area': postal_to_area(postal) if postal else neighbourhood or 'Singapore', 'cached': False})
 
 
 def fetch_overpass_mrt_fallback(lat, lng):
@@ -449,19 +643,8 @@ def get_amenities():
     row = _row(cur)
     conn.close()
 
-    if row:
-        try:
-            raw_ts = row['cached_at']
-            if USE_POSTGRES and hasattr(raw_ts, 'tzinfo') and raw_ts.tzinfo:
-                age = (datetime.datetime.now(datetime.timezone.utc) - raw_ts).total_seconds()
-            elif USE_POSTGRES:
-                age = (datetime.datetime.now() - raw_ts).total_seconds()
-            else:
-                age = (datetime.datetime.now() - datetime.datetime.fromisoformat(str(raw_ts))).total_seconds()
-            if age < 7 * 86400:
-                return jsonify(json.loads(row['data']))
-        except Exception:
-            pass  # Re-fetch on cache error
+    if row and _cache_age_hrs(row['cached_at']) < 7 * 24:
+        return jsonify(json.loads(row['data']))
 
     # --- Resolve coordinates ---
     if lat_p and lng_p:
@@ -490,16 +673,20 @@ def get_amenities():
     # --- Fetch other amenities from Overpass ---
     others = fetch_overpass_amenities(lat, lng)
 
+    # Bus stops: OneMap preferred, Overpass fallback
+    bus_items = transport.get('bus') or others.pop('_bus', [])
+    others.pop('_bus', None)  # remove fallback key if unused
+
     payload = {
         'postal': postal, 'lat': lat, 'lng': lng,
         'categories': {
-            'mrt':       {'label': 'MRT / LRT Stations',     'color': '#8b5cf6', 'icon': '🚇', 'lucide': 'train-front', 'items': transport.get('mrt', [])},
-            'bus':       {'label': 'Bus Stops (≤600m)',      'color': '#6366f1', 'icon': '🚌', 'lucide': 'bus',          'items': transport.get('bus', [])},
-            'school':    {'label': 'Schools & Universities', 'color': '#10b981', 'icon': '🏫', 'lucide': 'graduation-cap', 'items': others.get('school', [])},
-            'park':      {'label': 'Parks & Green Spaces',   'color': '#14b8a6', 'icon': '🌳', 'lucide': 'trees',        'items': others.get('park', [])},
-            'health':    {'label': 'Healthcare',             'color': '#f43f5e', 'icon': '🏥', 'lucide': 'heart-pulse',  'items': others.get('health', [])},
-            'hawker':    {'label': 'Hawker / Food Centres',  'color': '#f97316', 'icon': '🍜', 'lucide': 'utensils',     'items': others.get('hawker', [])},
-            'community': {'label': 'Community & Library',    'color': '#3b82f6', 'icon': '🏛️', 'lucide': 'users',        'items': others.get('community', [])},
+            'mrt':       {'label': 'MRT / LRT Stations',     'color': '#8b5cf6', 'icon': '🚇', 'lucide': 'train-front',    'items': transport.get('mrt', [])},
+            'bus':       {'label': 'Bus Stops (≤600m)',      'color': '#6366f1', 'icon': '🚌', 'lucide': 'bus',             'items': bus_items},
+            'school':    {'label': 'Schools & Universities', 'color': '#10b981', 'icon': '🏫', 'lucide': 'graduation-cap',  'items': others.get('school', [])},
+            'park':      {'label': 'Parks & Green Spaces',   'color': '#14b8a6', 'icon': '🌳', 'lucide': 'trees',           'items': others.get('park', [])},
+            'health':    {'label': 'Healthcare',             'color': '#f43f5e', 'icon': '🏥', 'lucide': 'heart-pulse',     'items': others.get('health', [])},
+            'hawker':    {'label': 'Hawker / Food Centres',  'color': '#f97316', 'icon': '🍜', 'lucide': 'utensils',        'items': others.get('hawker', [])},
+            'community': {'label': 'Community & Library',    'color': '#3b82f6', 'icon': '🏛️', 'lucide': 'users',           'items': others.get('community', [])},
         }
     }
 
