@@ -709,10 +709,13 @@ async function handleSignIn(e) {
     const data = await res.json();
 
     if (data.error) {
-        alert(data.error);
+        const el = document.getElementById('signin-error');
+        el.textContent = data.error;
+        el.classList.remove('hidden');
         return;
     }
 
+    document.getElementById('signin-error').classList.add('hidden');
     currentUser = data.user;
     saveCurrentUser();
     updateAuthUI();
@@ -741,15 +744,20 @@ async function handleRegister(e) {
     try {
         data = JSON.parse(text);
     } catch (err) {
-        alert('Backend returned non-JSON response. Check Flask terminal for the real error.');
+        const el = document.getElementById('register-error');
+        el.textContent = 'Unexpected error. Please try again.';
+        el.classList.remove('hidden');
         return;
     }
 
     if (data.error) {
-        alert(data.error);
+        const el = document.getElementById('register-error');
+        el.textContent = data.error;
+        el.classList.remove('hidden');
         return;
     }
 
+    document.getElementById('register-error').classList.add('hidden');
     currentUser = data.user;
     saveCurrentUser();
     updateAuthUI();
