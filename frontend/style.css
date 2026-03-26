@@ -11,14 +11,14 @@
 }
 
 .dark {
-    --bg: #0B1120;
-    --ink: #E2E8F0;
-    --card-bg: #151F32;
-    --card-border: #1E2D45;
-    --input-bg: #1A2740;
+    --bg: #080E1A;
+    --ink: #F1F5F9;
+    --card-bg: #111827;
+    --card-border: #1F2D42;
+    --input-bg: #162033;
     --input-border: #243349;
     --muted: #94A3B8;
-    --subtle: #1A2740;
+    --subtle: #162033;
 }
 
 body {
@@ -39,16 +39,49 @@ body {
     border-color: var(--card-border) !important;
 }
 
-.dark .text-slate-900 { color: #E2E8F0 !important; }
-.dark .text-slate-700 { color: #CBD5E1 !important; }
-.dark .text-slate-600 { color: #94A3B8 !important; }
-.dark .text-slate-500 { color: #64748B !important; }
-.dark .text-slate-400 { color: #475569 !important; }
+/* Brighter text in dark mode for readability */
+.dark .text-slate-900 { color: #F1F5F9 !important; }
+.dark .text-slate-700 { color: #E2E8F0 !important; }
+.dark .text-slate-600 { color: #CBD5E1 !important; }
+.dark .text-slate-500 { color: #94A3B8 !important; }
+.dark .text-slate-400 { color: #64748B !important; }
 
 .dark .bg-slate-100,
-.dark .bg-slate-100\/50 { background-color: #1A2740 !important; }
+.dark .bg-slate-100\/50 { background-color: #162033 !important; }
 
-.dark .divide-slate-50 > * + * { border-color: #1E2D45 !important; }
+.dark .divide-slate-50 > * + * { border-color: #1F2D42 !important; }
+
+/* Quick-try placeholder buttons in dark */
+.dark #map-placeholder button {
+    background: #1F2D42 !important;
+    border-color: #2D4060 !important;
+    color: #93C5FD !important;
+}
+.dark #map-placeholder {
+    background: #111827 !important;
+    border-color: #1F2D42 !important;
+}
+
+/* Range buttons in dark */
+.dark .range-btn { color: #94A3B8 !important; }
+.dark .range-btn.bg-white { background: #1F2D42 !important; color: #F1F5F9 !important; }
+
+/* Neighbourhood buttons base */
+.dark .neighbourhood-btn:not([style*="background"]):not(.bg-blue-600) {
+    background: #1F2D42 !important;
+    color: #93C5FD !important;
+}
+
+/* News article cards in dark */
+.dark #news-list > div {
+    border-color: #1F2D42 !important;
+}
+.dark #news-list > div:hover { background: #162033 !important; }
+
+/* ABSD cards in dark */
+.dark #absd-result .bg-slate-50 { background: #162033 !important; }
+.dark #absd-result .border-slate-100 { border-color: #1F2D42 !important; }
+.dark #policy-alerts > div { border-color: #1F2D42 !important; }
 
 /* ── Nav ───────────────────────────────────────────────────── */
 .glass {

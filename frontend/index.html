@@ -438,10 +438,11 @@
                                 <p class="text-slate-600 font-semibold">Enter a postal code to explore</p>
                                 <p class="text-xs text-slate-400 mt-1">Powered by OpenStreetMap · Amenities via OpenStreetMap</p>
                             </div>
-                            <div class="flex gap-2 mt-2 flex-wrap justify-center">
-                                <button onclick="document.getElementById('map-postal-input').value='560123';loadMap()" class="px-3 py-1.5 text-xs font-bold bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">Hougang 560123</button>
-                                <button onclick="document.getElementById('map-postal-input').value='159088';loadMap()" class="px-3 py-1.5 text-xs font-bold bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">Queenstown 159088</button>
-                                <button onclick="document.getElementById('map-postal-input').value='238801';loadMap()" class="px-3 py-1.5 text-xs font-bold bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">Marina Bay 238801</button>
+                            <p class="text-xs text-slate-400 font-medium">Try a demo area:</p>
+                            <div class="flex gap-2 mt-1 flex-wrap justify-center">
+                                <button onclick="document.getElementById('map-postal-input').value='560123';loadMap()" class="px-4 py-2 text-xs font-bold bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-md">Hougang</button>
+                                <button onclick="document.getElementById('map-postal-input').value='159088';loadMap()" class="px-4 py-2 text-xs font-bold bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-md">Queenstown</button>
+                                <button onclick="document.getElementById('map-postal-input').value='238801';loadMap()" class="px-4 py-2 text-xs font-bold bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-md">Marina Bay</button>
                             </div>
                         </div>
                         <div id="leaflet-map" class="h-[580px] rounded-[28px] overflow-hidden hidden border border-slate-200 shadow-sm"></div>

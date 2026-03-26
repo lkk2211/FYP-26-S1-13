@@ -312,8 +312,7 @@ async function initMapForPostal(postal) {
     mapDiv.classList.add('hidden');
 
     try {
-        const geo = await fetch(`https://nominatim.openstreetmap.org/search?q=${postal}+Singapore&format=json&limit=1&countrycodes=sg`,
-            { headers: { 'Accept-Language': 'en', 'User-Agent': 'PropAISG/1.0' } });
+        const geo = await fetch(`https://nominatim.openstreetmap.org/search?q=${postal}+Singapore&format=json&limit=1&countrycodes=sg&accept-language=en`);
         const geoData = await geo.json();
 
         if (!geoData.length) throw new Error('Not found');
@@ -330,21 +329,23 @@ async function initMapForPostal(postal) {
         placeholder.classList.add('hidden');
         mapDiv.classList.remove('hidden');
 
+        const isDark = document.documentElement.classList.contains('dark');
+        const tileUrl = isDark
+            ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+            : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
+
         if (!mapInstance) {
-            mapInstance = L.map('leaflet-map', { zoomControl: true }).setView([lat, lng], 16);
-            const isDark = document.documentElement.classList.contains('dark');
-            const tileUrl = isDark
-                ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-                : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
+            mapInstance = L.map('leaflet-map', { zoomControl: true });
             L.tileLayer(tileUrl, {
-                attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>',
-                maxZoom: 19,
-                subdomains: 'abcd'
+                attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/">CARTO</a>',
+                maxZoom: 19, subdomains: 'abcd'
             }).addTo(mapInstance);
+            // Delay setView so the div has time to render with dimensions
+            setTimeout(() => { mapInstance.invalidateSize(); mapInstance.setView([lat, lng], 16); }, 200);
         } else {
             mapLayers.forEach(l => mapInstance.removeLayer(l));
             mapLayers = [];
-            mapInstance.setView([lat, lng], 16);
+            setTimeout(() => { mapInstance.invalidateSize(); mapInstance.setView([lat, lng], 16); }, 200);
         }
 
         // Property marker
@@ -757,6 +758,8 @@ async function initTrendChart(range = currentRange) {
 
 document.addEventListener('DOMContentLoaded', () => {
     initTrendChart();
+    renderTrendNews(currentNeighbourhood);
+    runABSDSimulation();
 });
 
 function changeRange(range, btn) {
