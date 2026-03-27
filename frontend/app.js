@@ -1125,7 +1125,7 @@ function toggleDarkMode() {
 }
 
 function loadTheme() {
-    const savedTheme = localStorage.getItem('theme') ?? 'dark';
+    const savedTheme = localStorage.getItem('theme') ?? 'light';
     const toggle = document.getElementById('darkModeToggle');
 
     if (savedTheme !== 'light') {
