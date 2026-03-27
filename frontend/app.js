@@ -4,7 +4,6 @@ function showView(viewId) {
     if (!target) return;
     localStorage.setItem('currentView', viewId);
 
-    // block admin page if user is not admin
     if (viewId === 'admin') {
         const isAdmin = currentUser && currentUser.role === 'admin';
         if (!isAdmin) {
@@ -14,25 +13,19 @@ function showView(viewId) {
         }
     }
 
-    // block settings page if not logged in
     if (viewId === 'setting' && !currentUser) {
         alert('Please sign in first.');
         showView('signin');
         return;
     }
 
-    // Hide all views
     document.querySelectorAll('.view-section').forEach(s => s.classList.remove('active'));
-    
-    // Show target view
     target.classList.add('active');
-    
-    // Update Navigation
+
     document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
     const activeLink = document.getElementById('nav-' + viewId);
     if (activeLink) activeLink.classList.add('active');
 
-    // View specific init
     if (viewId === 'trend') {
         setTimeout(() => { initTrendChart(); renderTrendNews(currentNeighbourhood); runABSDSimulation(); }, 100);
     }
@@ -91,12 +84,10 @@ async function handlePostalSearch() {
 
     const placeholder = document.getElementById('postal-placeholder');
     const details = document.getElementById('postal-details');
-    
-    // Mock search
+
     placeholder.classList.add('hidden');
     details.classList.remove('hidden');
-    
-    // Mock data based on postal
+
     if (postal === '238801') {
         document.getElementById('display-address').innerText = "1 St. Martin's Drive";
         document.getElementById('display-building').innerText = "The Sail @ Marina Bay";
@@ -125,7 +116,6 @@ async function handlePredict() {
     const floor = document.getElementById('range-floor').value;
 
     try {
-        // Point to local Python backend
         const response = await fetch('/api/predict', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -138,11 +128,9 @@ async function handlePredict() {
         });
         const data = await response.json();
 
-        // --- Main price ---
         document.getElementById('output-price').innerText = `S$${data.estimated_value.toLocaleString()}`;
         document.getElementById('output-confidence').innerText = `${data.confidence}%`;
 
-        // --- Trend badge ---
         const trendEl    = document.getElementById('output-trend');
         const trendBadge = document.getElementById('output-trend-badge');
         const trendIcon  = document.getElementById('output-trend-icon');
@@ -153,7 +141,6 @@ async function handlePredict() {
             trendIcon.setAttribute('data-lucide', isUp ? 'trending-up' : 'trending-down');
         }
 
-        // --- Market state & date ---
         const mktEl = document.getElementById('output-market-state');
         if (mktEl) mktEl.innerText = data.market_state || 'Active';
         const dateEl = document.getElementById('output-valuation-date');
@@ -162,17 +149,14 @@ async function handlePredict() {
             dateEl.innerText = now.toLocaleString('en-SG', { month: 'short', year: 'numeric' });
         }
 
-        // --- AI insight & recommendation ---
         const insightEl = document.getElementById('output-insight');
         if (insightEl) insightEl.innerText = data.insight || '';
         const recEl = document.getElementById('output-recommendation');
         if (recEl) recEl.innerText = data.recommendation || '';
 
-        // --- Map title ---
         const mapTitle = document.getElementById('map-title');
         if (mapTitle) mapTitle.innerText = document.getElementById('display-address').innerText;
 
-        // --- Factors ---
         const list = document.getElementById('factors-list');
         list.innerHTML = data.factors.map(f => `
             <div class="space-y-3">
@@ -192,7 +176,6 @@ async function handlePredict() {
         togglePredictView('output');
         renderPredictNews(postal);
 
-        // Animate bars + re-init icons after DOM update
         lucide.createIcons();
         setTimeout(() => {
             data.factors.forEach(f => {
@@ -204,7 +187,6 @@ async function handlePredict() {
 
     } catch (e) {
         console.error(e);
-        // Fallback for demo if backend is not running
         alert('Local backend not detected. Showing demo data.');
         showDemoResult();
     } finally {
@@ -313,7 +295,6 @@ async function initMapForPostal(postal) {
     mapDiv.classList.add('hidden');
 
     try {
-        // OneMap Singapore API — accurate postal code geocoding
         const geo = await fetch(`https://www.onemap.gov.sg/api/common/elastic/search?searchVal=${postal}&returnGeom=Y&getAddrDetails=Y&pageNum=1`);
         const geoData = await geo.json();
 
@@ -351,7 +332,6 @@ async function initMapForPostal(postal) {
         mapInstance.invalidateSize();
         mapInstance.setView([lat, lng], 16);
 
-        // Property marker
         const propIcon = L.divIcon({
             html: `<div style="width:20px;height:20px;background:#2563eb;border:3px solid white;border-radius:50%;box-shadow:0 2px 8px rgba(37,99,235,0.5)"></div>`,
             iconSize: [20, 20], iconAnchor: [10, 10], className: ''
@@ -361,7 +341,6 @@ async function initMapForPostal(postal) {
             .addTo(mapInstance);
         mapLayers.push(propMarker);
 
-        // Load amenities via backend (OneMap + Overpass, cached in DB)
         await loadAmenities(lat, lng, postal);
 
     } catch (err) {
@@ -384,7 +363,6 @@ async function loadAmenities(lat, lng, postal) {
         const data = await res.json();
         const cats = data.categories;
 
-        // Add markers to map
         Object.values(cats).forEach(cat => {
             cat.items.forEach(item => {
                 const marker = L.circleMarker([item.lat, item.lng], {
@@ -396,7 +374,6 @@ async function loadAmenities(lat, lng, postal) {
             });
         });
 
-        // Render sidebar cards
         const hasAny = Object.values(cats).some(c => c.items.length > 0);
         if (!hasAny) {
             amenityCards.innerHTML = `<div class="bg-white rounded-2xl border border-slate-200 p-6 text-center shadow-sm">
@@ -699,7 +676,8 @@ async function initTrendChart(range = currentRange) {
         const data = await res.json();
         if (data.trend_data && data.trend_data.length) {
             // Blend API data with neighbourhood scaling
-            const cfg = NEIGHBOURHOOD_BASE[currentNeighbourhood] || NEIGHBOURHOOD_BASE['Clementi'];
+            // Scale API data to neighbourhood base price
+        const cfg = NEIGHBOURHOOD_BASE[currentNeighbourhood] || NEIGHBOURHOOD_BASE['Clementi'];
             const apiAvg = data.trend_data.reduce((s, d) => s + d.price, 0) / data.trend_data.length;
             const scale = cfg.base / apiAvg;
             labels = data.trend_data.map(d => d.month);
@@ -713,7 +691,7 @@ async function initTrendChart(range = currentRange) {
         prices = gen.prices;
     }
 
-    const tickColor = isDark ? '#93C5FD' : '#64748B';
+    const tickColor  = isDark ? '#93C5FD' : '#64748B';
     const gridColor = isDark ? 'rgba(147,197,253,0.08)' : 'rgba(0,0,0,0.04)';
 
     trendChart = new Chart(ctx, {
@@ -909,8 +887,6 @@ async function initAdminTypeChart() {
 
     } catch (err) {
         console.error('Admin stats failed:', err);
-
-        // fallback
         labels = ['No Data'];
         dataValues = [0];
     }
@@ -1056,7 +1032,7 @@ async function deleteUser(id) {
 
 
 
-// Admin Stats
+// ── Admin ────────────────────────────────────────────────────
 async function fetchAdminStats() {
     try {
         const response = await fetch('/api/stats');
@@ -1101,7 +1077,7 @@ async function fetchAdminStats() {
     } catch (e) { console.error(e); }
 }
 
-// Auth Logic
+// ── Auth ─────────────────────────────────────────────────────
 let currentUser = null;
 
 function getProfilePhotoKey() {
@@ -1263,7 +1239,6 @@ function updateAuthUI() {
         const savedPhoto = photoKey ? localStorage.getItem(photoKey) : null;
         userAvatar.src = savedPhoto || "https://picsum.photos/seed/user/100/100";
 
-        // show admin buttons only if admin
         adminBtns.forEach(btn => {
             if (currentUser.role === 'admin') {
                 btn.classList.remove('hidden');
@@ -1367,10 +1342,7 @@ async function saveProfile() {
     showToast('Profile updated successfully');
 }
 
-// ===========================
-// Profile Photo Upload
-// ===========================
-
+// ── Profile Photo Upload ──────────────────────────────────────
 function handleProfilePhotoUpload(event) {
     if (!currentUser) {
         alert('Please login first');
@@ -1612,7 +1584,6 @@ function restoreLastView() {
     const savedSettingsTab = localStorage.getItem('currentSettingsTab') || 'profile';
     const savedAdminTab = localStorage.getItem('currentAdminTab') || 'overview';
 
-    // if saved page is settings but user is logged out, go signin
     if (savedView === 'setting' && !currentUser) {
         showView('signin');
         return;

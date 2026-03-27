@@ -21,18 +21,15 @@ app = Flask(__name__, static_folder='../frontend')
 CORS(app)
 
 DB_PATH      = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'propaisg.db')
-DATABASE_URL  = os.environ.get('DATABASE_URL')  
+DATABASE_URL  = os.environ.get('DATABASE_URL')
 USE_POSTGRES  = bool(DATABASE_URL)
 
-# Onemap integration
 ONEMAP_EMAIL    = os.environ.get('ONEMAP_EMAIL', '')
 ONEMAP_PASSWORD = os.environ.get('ONEMAP_PASSWORD', '')
 _om_token_cache = {'token': None, 'expiry': 0}
 _om_lock        = threading.Lock()
 
-# ---------------------------------------------------------------------------
-# Database helpers — transparently supports SQLite (local) and PostgreSQL (Supabase)
-# ---------------------------------------------------------------------------
+# Database helpers — supports SQLite (local) and PostgreSQL (Supabase)
 def get_db():
     if USE_POSTGRES:
         import psycopg2
@@ -44,24 +41,21 @@ def get_db():
     return conn
 
 def _cursor(conn):
-    """Return a dict-capable cursor regardless of DB backend."""
     if USE_POSTGRES:
         import psycopg2.extras
         return conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     return conn.cursor()
 
 def _rows(cur):
-    """Convert cursor results to plain dicts."""
     return [dict(r) for r in cur.fetchall()]
 
 def _row(cur):
     r = cur.fetchone()
     return dict(r) if r else None
 
-PH = '%s' if USE_POSTGRES else '?'   # SQL placeholder character
+PH = '%s' if USE_POSTGRES else '?'
 
 def _q(sql):
-    """Replace ? with %s for PostgreSQL if needed."""
     return sql.replace('?', PH) if USE_POSTGRES else sql
 
 SQLITE_SCHEMA = """
@@ -209,7 +203,6 @@ def init_db():
     conn.close()
 
 # OneMap API helpers
-
 def get_onemap_token():
     with _om_lock:
         if _om_token_cache['token'] and time.time() < _om_token_cache['expiry']:
@@ -258,11 +251,9 @@ def _bbox(lat, lng, radius_km):
 
 
 def _parse_om_coords(item):
-    """Handle multiple OneMap field name conventions for lat/lng."""
     for lk, lngk in [('LATITUDE', 'LONGITUDE'), ('Lat', 'Lng'), ('lat', 'lng')]:
         if lk in item and lngk in item:
             return float(item[lk]), float(item[lngk])
-    # Combined "lat,lng" string
     for key in ('LatLng', 'latlng', 'LATLNG'):
         if key in item:
             parts = str(item[key]).split(',')
@@ -272,7 +263,6 @@ def _parse_om_coords(item):
 
 
 def fetch_onemap_transport(lat, lng, mrt_radius=2.0, bus_radius=0.6):
-    """Fetch MRT stations (deduplicated) and nearby bus stops from OneMap Themes API."""
     token = get_onemap_token()
     if not token:
         return None
@@ -280,7 +270,7 @@ def fetch_onemap_transport(lat, lng, mrt_radius=2.0, bus_radius=0.6):
     results = {'mrt': [], 'bus': []}
     lo, lb, hi, hb = _bbox(lat, lng, mrt_radius)
 
-    # --- MRT station exits → deduplicate to unique stations ---
+    # MRT: deduplicate exits → unique stations
     try:
         url = (f'https://www.onemap.gov.sg/api/public/themesvc/retrieveTheme'
                f'?queryName=mrt_station_exit&extents={lo},{lb},{hi},{hb}')
@@ -312,7 +302,7 @@ def fetch_onemap_transport(lat, lng, mrt_radius=2.0, bus_radius=0.6):
     except Exception as e:
         print(f'OneMap MRT error: {e}')
 
-    # --- Bus stops (within bus_radius) ---
+    # Bus stops
     lo2, lb2, hi2, hb2 = _bbox(lat, lng, bus_radius)
     try:
         url = (f'https://www.onemap.gov.sg/api/public/themesvc/retrieveTheme'
@@ -343,7 +333,6 @@ def fetch_onemap_transport(lat, lng, mrt_radius=2.0, bus_radius=0.6):
 
 
 def fetch_overpass_amenities(lat, lng):
-    """Fetch schools, parks, healthcare, hawker, community, and bus-stop fallback from Overpass."""
     query = f"""[out:json][timeout:25];(
         node["amenity"="school"](around:1500,{lat},{lng});
         way["amenity"="school"](around:1500,{lat},{lng});
@@ -408,9 +397,7 @@ def fetch_overpass_amenities(lat, lng):
     return cats
 
 
-# ---------------------------------------------------------------------------
 # Postal district → neighbourhood lookup
-# ---------------------------------------------------------------------------
 POSTAL_DISTRICTS = {
     '01': 'Raffles Place', '02': 'Tanjong Pagar', '03': 'Queenstown',
     '04': 'Telok Blangah', '05': 'Pasir Panjang', '06': 'City Hall',
@@ -443,15 +430,11 @@ POSTAL_DISTRICTS = {
 
 
 def postal_to_area(postal):
-    """Map 6-digit postal code to neighbourhood name via district prefix."""
     return POSTAL_DISTRICTS.get(str(postal)[:2], 'Singapore')
 
 
-# ---------------------------------------------------------------------------
-# News fetching (Google News RSS — no API key, always fresh)
-# ---------------------------------------------------------------------------
+# News — Google News RSS, no API key required
 def fetch_news(query, limit=6, max_age_years=5):
-    """Fetch articles from Google News RSS. Returns list of article dicts."""
     import xml.etree.ElementTree as ET
     import urllib.parse
     from email.utils import parsedate_to_datetime
@@ -484,13 +467,12 @@ def fetch_news(query, limit=6, max_age_years=5):
             if not title or not link:
                 continue
 
-            # Strip source suffix appended by Google News: "Title - Source Name"
+            # Strip source suffix appended by Google ("Title - Source Name")
             if not source and ' - ' in title:
                 title, source = title.rsplit(' - ', 1)
                 title  = title.strip()
                 source = source.strip()
 
-            # Filter by age
             date_str = 'Recent'
             try:
                 pub_dt = parsedate_to_datetime(pub)
@@ -500,7 +482,6 @@ def fetch_news(query, limit=6, max_age_years=5):
             except Exception:
                 pass
 
-            # Strip HTML from description
             summary = re.sub(r'<[^>]+>', '', desc).strip()[:220]
 
             articles.append({
@@ -520,7 +501,6 @@ def fetch_news(query, limit=6, max_age_years=5):
 
 
 def _cache_age_hrs(raw_ts):
-    """Return age of a cached_at timestamp in hours."""
     try:
         if USE_POSTGRES and hasattr(raw_ts, 'tzinfo') and raw_ts.tzinfo:
             return (datetime.datetime.now(datetime.timezone.utc) - raw_ts).total_seconds() / 3600
@@ -551,7 +531,6 @@ def get_news():
         query     = 'singapore property HDB resale BTO market 2025 2026'
         ttl_hrs   = 2
 
-    # Check cache
     conn = get_db()
     cur  = _cursor(conn)
     cur.execute(_q("SELECT articles, fetched_at FROM news_cache WHERE cache_key = ?"), (cache_key,))
@@ -562,7 +541,6 @@ def get_news():
         arts = json.loads(row['articles'])
         return jsonify({'articles': arts[:limit], 'area': postal_to_area(postal) if postal else neighbourhood or 'Singapore', 'cached': True})
 
-    # Fetch fresh articles
     articles = fetch_news(query, limit=limit)
 
     if articles:
@@ -587,8 +565,8 @@ def get_news():
     return jsonify({'articles': articles, 'area': postal_to_area(postal) if postal else neighbourhood or 'Singapore', 'cached': False})
 
 
+# Overpass fallback for MRT when OneMap credentials are absent
 def fetch_overpass_mrt_fallback(lat, lng):
-    """Overpass fallback for MRT when OneMap credentials are not configured."""
     query = f"""[out:json][timeout:25];(
         node["railway"="station"](around:2000,{lat},{lng});
         way["railway"="station"](around:2000,{lat},{lng});
@@ -643,10 +621,9 @@ def get_amenities():
     if not postal and not (lat_p and lng_p):
         return jsonify({'error': 'postal or lat/lng required'}), 400
 
-    # v3 prefix invalidates pre-MRT-fix cache entries
+    # v3: invalidates stale cache entries missing MRT data
     cache_key = f'v3:{postal}' if postal else f'v3:{float(lat_p):.4f},{float(lng_p):.4f}'
 
-    # --- Cache check ---
     conn = get_db()
     cur  = _cursor(conn)
     cur.execute(_q("SELECT lat, lng, data, cached_at FROM amenity_cache WHERE postal_code = ?"), (cache_key,))
@@ -656,7 +633,6 @@ def get_amenities():
     if row and _cache_age_hrs(row['cached_at']) < 7 * 24:
         return jsonify(json.loads(row['data']))
 
-    # --- Resolve coordinates ---
     if lat_p and lng_p:
         lat, lng = float(lat_p), float(lng_p)
     else:
@@ -671,7 +647,7 @@ def get_amenities():
         except Exception:
             return jsonify({'error': 'Geocoding failed'}), 400
 
-    # --- Fetch transport (OneMap preferred, Overpass fallback) ---
+    # Transport: OneMap preferred, Overpass fallback
     transport = fetch_onemap_transport(lat, lng)
     if not transport or not transport.get('mrt'):
         mrt_fallback = fetch_overpass_mrt_fallback(lat, lng)
@@ -680,12 +656,11 @@ def get_amenities():
         else:
             transport['mrt'] = mrt_fallback
 
-    # --- Fetch other amenities from Overpass ---
     others = fetch_overpass_amenities(lat, lng)
 
     # Bus stops: OneMap preferred, Overpass fallback
     bus_items = transport.get('bus') or others.pop('_bus', [])
-    others.pop('_bus', None)  # remove fallback key if unused
+    others.pop('_bus', None)
 
     payload = {
         'postal': postal, 'lat': lat, 'lng': lng,
@@ -700,7 +675,6 @@ def get_amenities():
         }
     }
 
-    # --- Cache result ---
     data_json = json.dumps(payload, ensure_ascii=False)
     conn = get_db()
     cur  = _cursor(conn)
@@ -725,7 +699,7 @@ def get_amenities():
     return jsonify(payload)
 
 
-# Serve Frontend
+# Static frontend
 @app.route('/')
 def index():
     return send_from_directory(app.static_folder, 'index.html')
@@ -734,13 +708,10 @@ def index():
 def static_proxy(path):
     return send_from_directory(app.static_folder, path)
 
-# API Endpoints
+# API routes
 @app.route('/api/predict', methods=['POST'])
 def predict():
     data = request.json
-    # Extract features from request
-    # In a real app, you'd process postal, area, etc.
-    # For now, we use the predict_price function from predict.py
     result = predict_price(data)
     return jsonify(result)
 
