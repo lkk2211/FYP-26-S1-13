@@ -12,7 +12,7 @@ import time
 import threading
 import urllib.request
 
-# Add current directory to path for imports
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from predict import predict_price
@@ -21,10 +21,10 @@ app = Flask(__name__, static_folder='../frontend')
 CORS(app)
 
 DB_PATH      = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'propaisg.db')
-DATABASE_URL  = os.environ.get('DATABASE_URL')  # Set on Render to point at Supabase
+DATABASE_URL  = os.environ.get('DATABASE_URL')  
 USE_POSTGRES  = bool(DATABASE_URL)
 
-# OneMap credentials (set ONEMAP_EMAIL + ONEMAP_PASSWORD env vars on Render)
+# Onemap integration
 ONEMAP_EMAIL    = os.environ.get('ONEMAP_EMAIL', '')
 ONEMAP_PASSWORD = os.environ.get('ONEMAP_PASSWORD', '')
 _om_token_cache = {'token': None, 'expiry': 0}
@@ -208,12 +208,9 @@ def init_db():
         conn.commit()
     conn.close()
 
+# OneMap API helpers
 
-# ---------------------------------------------------------------------------
-# OneMap helpers
-# ---------------------------------------------------------------------------
 def get_onemap_token():
-    """Return a cached OneMap JWT, refreshing if near expiry. None if unconfigured."""
     with _om_lock:
         if _om_token_cache['token'] and time.time() < _om_token_cache['expiry']:
             return _om_token_cache['token']
@@ -223,9 +220,9 @@ def get_onemap_token():
             payload = json.dumps({'email': ONEMAP_EMAIL, 'password': ONEMAP_PASSWORD}).encode()
             req = urllib.request.Request(
                 'https://www.onemap.gov.sg/api/auth/post/getToken',
-                data=payload,
+                data = payload,
                 headers={'Content-Type': 'application/json'},
-                method='POST'
+                method = 'POST'
             )
             with urllib.request.urlopen(req, timeout=10) as r:
                 data = json.loads(r.read())
@@ -592,37 +589,49 @@ def get_news():
 
 def fetch_overpass_mrt_fallback(lat, lng):
     """Overpass fallback for MRT when OneMap credentials are not configured."""
-    query = f"""[out:json][timeout:20];(
+    query = f"""[out:json][timeout:25];(
         node["railway"="station"](around:2000,{lat},{lng});
         way["railway"="station"](around:2000,{lat},{lng});
+        relation["railway"="station"](around:2000,{lat},{lng});
         node["station"="subway"](around:2000,{lat},{lng});
+        node["station"="light_rail"](around:2000,{lat},{lng});
         node["public_transport"="station"]["subway"="yes"](around:2000,{lat},{lng});
         node["public_transport"="station"]["train"="yes"](around:2000,{lat},{lng});
-    );out center body;"""
-    items = []
+        node["network"~"MRT|LRT|SMRT|SBS Transit"](around:2000,{lat},{lng});
+    );out center tags;"""
+    seen = {}
     try:
         req = urllib.request.Request(
             'https://overpass-api.de/api/interpreter',
             data=query.encode(),
             method='POST'
         )
-        with urllib.request.urlopen(req, timeout=20) as r:
+        with urllib.request.urlopen(req, timeout=25) as r:
             data = json.loads(r.read())
         for el in data.get('elements', []):
             elat = el.get('lat') or (el.get('center') or {}).get('lat')
             elng = el.get('lon') or (el.get('center') or {}).get('lon')
             if not elat or not elng:
                 continue
-            name = (el.get('tags') or {}).get('name') or (el.get('tags') or {}).get('name:en')
+            tags = el.get('tags') or {}
+            name = tags.get('name:en') or tags.get('name')
             if not name:
                 continue
+            # Skip non-station nodes (bus interchanges, etc.)
+            rtype = tags.get('railway', '')
+            ptype = tags.get('public_transport', '')
+            if rtype not in ('station', '') and ptype not in ('station', 'stop_area', ''):
+                continue
+            # Clean up name — strip "MRT Station" suffix for dedup key
+            clean = re.sub(r'\s+(MRT|LRT)\s+Station$', '', name, flags=re.IGNORECASE).strip()
             d = _haversine(lat, lng, float(elat), float(elng))
-            items.append({'name': name, 'dist': f'{d:.2f}', 'travel': _travel_label(d),
-                          'lat': float(elat), 'lng': float(elng)})
+            if clean not in seen or d < float(seen[clean]['dist']):
+                seen[clean] = {'name': name, 'dist': f'{d:.2f}', 'travel': _travel_label(d),
+                               'lat': float(elat), 'lng': float(elng)}
     except Exception as e:
         print(f'Overpass MRT fallback error: {e}')
-    items.sort(key=lambda x: float(x['dist']))
-    return items[:5]
+    items = sorted(seen.values(), key=lambda x: float(x['dist']))
+    return items[:6]
 
 
 @app.route('/api/amenities', methods=['GET'])
@@ -634,8 +643,8 @@ def get_amenities():
     if not postal and not (lat_p and lng_p):
         return jsonify({'error': 'postal or lat/lng required'}), 400
 
-    # v2 prefix invalidates pre-bus-stop cache entries
-    cache_key = f'v2:{postal}' if postal else f'v2:{float(lat_p):.4f},{float(lng_p):.4f}'
+    # v3 prefix invalidates pre-MRT-fix cache entries
+    cache_key = f'v3:{postal}' if postal else f'v3:{float(lat_p):.4f},{float(lng_p):.4f}'
 
     # --- Cache check ---
     conn = get_db()

@@ -661,11 +661,17 @@ const NEIGHBOURHOOD_BASE = {
 
 function generateNeighbourhoodPrices(neighbourhood, range) {
     const cfg = NEIGHBOURHOOD_BASE[neighbourhood] || NEIGHBOURHOOD_BASE['Clementi'];
-    const months = range === '6m' ? 6 : range === '1y' ? 12 : 24;
+    const months = range === '6m' ? 6 : range === '1y' ? 12 : range === '3y' ? 36 : range === '5y' ? 60 : 24;
+    // Use quarterly step for longer ranges to keep labels readable
+    const step = months >= 36 ? 3 : 1;
     const labels = [], prices = [];
     const now = new Date();
     let p = cfg.base * Math.pow(1 - cfg.growth / 12, months);
     for (let i = months; i >= 0; i--) {
+        if (i % step !== 0) {
+            p = p * (1 + cfg.growth / 12 + (Math.sin(i * 0.7) * 0.002));
+            continue;
+        }
         const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
         labels.push(d.toLocaleString('en-SG', { month: 'short', year: '2-digit' }));
         p = p * (1 + cfg.growth / 12 + (Math.sin(i * 0.7) * 0.002));
