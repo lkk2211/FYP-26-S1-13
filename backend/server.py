@@ -634,7 +634,8 @@ def get_amenities():
     if not postal and not (lat_p and lng_p):
         return jsonify({'error': 'postal or lat/lng required'}), 400
 
-    cache_key = postal if postal else f'{float(lat_p):.4f},{float(lng_p):.4f}'
+    # v2 prefix invalidates pre-bus-stop cache entries
+    cache_key = f'v2:{postal}' if postal else f'v2:{float(lat_p):.4f},{float(lng_p):.4f}'
 
     # --- Cache check ---
     conn = get_db()
