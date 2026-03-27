@@ -76,29 +76,44 @@ function updateSlider(id) {
 }
 
 async function handlePostalSearch() {
-    const postal = document.getElementById('input-postal').value;
-    if (!postal || postal.length < 6) {
-        alert('Please enter a valid 6-digit postal code');
+    const raw = document.getElementById('input-postal').value.trim().replace(/\s/g, '');
+    const errorEl = document.getElementById('postal-error');
+
+    if (!/^\d{6}$/.test(raw)) {
+        errorEl.textContent = 'Please enter a valid 6-digit postal code.';
+        errorEl.classList.remove('hidden');
         return;
     }
 
-    const placeholder = document.getElementById('postal-placeholder');
-    const details = document.getElementById('postal-details');
+    errorEl.classList.add('hidden');
 
-    placeholder.classList.add('hidden');
-    details.classList.remove('hidden');
+    try {
+        const geo = await fetch(`https://www.onemap.gov.sg/api/common/elastic/search?searchVal=${raw}&returnGeom=Y&getAddrDetails=Y&pageNum=1`);
+        const geoData = await geo.json();
+        const result = geoData.results?.[0];
 
-    if (postal === '238801') {
-        document.getElementById('display-address').innerText = "1 St. Martin's Drive";
-        document.getElementById('display-building').innerText = "The Sail @ Marina Bay";
-    } else if (postal === '560123') {
-        document.getElementById('display-address').innerText = "123 Ang Mo Kio Ave 3";
-        document.getElementById('display-building').innerText = "AMK Hub Residences";
-    } else {
-        document.getElementById('display-address').innerText = "342 Clementi Ave 5";
-        document.getElementById('display-building').innerText = "Clementi Heights";
+        if (!result || result.POSTAL !== raw) {
+            errorEl.textContent = 'Postal code not found. Please check and try again.';
+            errorEl.classList.remove('hidden');
+            return;
+        }
+
+        const address = result.ADDRESS || result.BLK_NO + ' ' + result.ROAD_NAME;
+        const building = result.BUILDING !== 'NIL' ? result.BUILDING : address;
+
+        document.getElementById('display-address').innerText = address;
+        document.getElementById('display-building').innerText = building;
+        document.getElementById('input-postal').value = raw;
+
+        const placeholder = document.getElementById('postal-placeholder');
+        const details = document.getElementById('postal-details');
+        placeholder.classList.add('hidden');
+        details.classList.remove('hidden');
+    } catch {
+        errorEl.textContent = 'Unable to verify postal code. Please try again.';
+        errorEl.classList.remove('hidden');
     }
-    
+
     lucide.createIcons();
 }
 
@@ -1158,6 +1173,18 @@ async function handleRegister(e) {
     const full_name = inputs[0].value.trim();
     const email = inputs[1].value.trim();
     const password = inputs[2].value.trim();
+    const errEl = document.getElementById('register-error');
+
+    if (!full_name || !email || !password) {
+        errEl.textContent = 'All fields are required.';
+        errEl.classList.remove('hidden');
+        return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        errEl.textContent = 'Please enter a valid email address.';
+        errEl.classList.remove('hidden');
+        return;
+    }
 
     const res = await fetch('/api/register', {
         method: 'POST',
@@ -1193,9 +1220,47 @@ async function handleRegister(e) {
     showView('home');
 }
 
+async function handleForgotPassword() {
+    const email = document.getElementById('forgot-email').value.trim();
+    const errEl = document.getElementById('forgot-error');
+    const successEl = document.getElementById('forgot-success');
+
+    errEl.classList.add('hidden');
+    successEl.classList.add('hidden');
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        errEl.textContent = 'Please enter a valid email address.';
+        errEl.classList.remove('hidden');
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/forgot-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email })
+        });
+        const data = await res.json();
+
+        if (data.error) {
+            errEl.textContent = data.error;
+            errEl.classList.remove('hidden');
+        } else {
+            successEl.classList.remove('hidden');
+        }
+    } catch {
+        errEl.textContent = 'Something went wrong. Please try again.';
+        errEl.classList.remove('hidden');
+    }
+}
+
 function clearAuthForms() {
-    document.querySelectorAll('#view-signin input, #view-register input').forEach(input => {
+    document.querySelectorAll('#view-signin input, #view-register input, #view-forgot input').forEach(input => {
         input.value = '';
+    });
+    ['signin-error', 'register-error', 'forgot-error', 'forgot-success'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.add('hidden');
     });
 }
 

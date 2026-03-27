@@ -888,6 +888,21 @@ def update_user_role(user_id):
     return jsonify({"user": updated})
 
 
+@app.route('/api/forgot-password', methods=['POST'])
+def forgot_password():
+    email = (request.json.get('email') or '').strip().lower()
+    if not email:
+        return jsonify({'error': 'Email is required'}), 400
+    conn = get_db()
+    cur  = _cursor(conn)
+    cur.execute(_q("SELECT id FROM users WHERE email = ?"), (email,))
+    user = _row(cur)
+    conn.close()
+    if not user:
+        return jsonify({'error': 'No account is associated with that email address.'}), 404
+    return jsonify({'message': 'Account found'})
+
+
 @app.route('/api/profile/<int:user_id>', methods=['PUT'])
 def update_profile(user_id):
     data      = request.json
