@@ -270,7 +270,6 @@ def fetch_onemap_transport(lat, lng, mrt_radius=2.0, bus_radius=0.6):
     results = {'mrt': [], 'bus': []}
     lo, lb, hi, hb = _bbox(lat, lng, mrt_radius)
 
-    # MRT: deduplicate exits → unique stations
     try:
         url = (f'https://www.onemap.gov.sg/api/public/themesvc/retrieveTheme'
                f'?queryName=mrt_station_exit&extents={lo},{lb},{hi},{hb}')
@@ -286,7 +285,6 @@ def fetch_onemap_transport(lat, lng, mrt_radius=2.0, bus_radius=0.6):
             name = (ex.get('NAME') or ex.get('name') or ex.get('SEARCHVAL') or '').strip()
             if not name:
                 continue
-            # "HOUGANG MRT STATION EXIT A" → "Hougang Mrt Station"
             station = re.sub(r'\s+EXIT\s+[A-Z\d]+$', '', name, flags=re.IGNORECASE)
             station = re.sub(r'\s+\(.*?\)$', '', station).strip().title()
             d = _haversine(lat, lng, elat, elng)
@@ -302,7 +300,6 @@ def fetch_onemap_transport(lat, lng, mrt_radius=2.0, bus_radius=0.6):
     except Exception as e:
         print(f'OneMap MRT error: {e}')
 
-    # Bus stops
     lo2, lb2, hi2, hb2 = _bbox(lat, lng, bus_radius)
     try:
         url = (f'https://www.onemap.gov.sg/api/public/themesvc/retrieveTheme'
@@ -467,7 +464,6 @@ def fetch_news(query, limit=6, max_age_years=5):
             if not title or not link:
                 continue
 
-            # Strip source suffix appended by Google ("Title - Source Name")
             if not source and ' - ' in title:
                 title, source = title.rsplit(' - ', 1)
                 title  = title.strip()
@@ -565,7 +561,6 @@ def get_news():
     return jsonify({'articles': articles, 'area': postal_to_area(postal) if postal else neighbourhood or 'Singapore', 'cached': False})
 
 
-# Overpass fallback for MRT when OneMap credentials are absent
 def fetch_overpass_mrt_fallback(lat, lng):
     query = f"""[out:json][timeout:25];(
         node["railway"="station"](around:2000,{lat},{lng});
@@ -595,12 +590,10 @@ def fetch_overpass_mrt_fallback(lat, lng):
             name = tags.get('name:en') or tags.get('name')
             if not name:
                 continue
-            # Skip non-station nodes (bus interchanges, etc.)
             rtype = tags.get('railway', '')
             ptype = tags.get('public_transport', '')
             if rtype not in ('station', '') and ptype not in ('station', 'stop_area', ''):
                 continue
-            # Clean up name — strip "MRT Station" suffix for dedup key
             clean = re.sub(r'\s+(MRT|LRT)\s+Station$', '', name, flags=re.IGNORECASE).strip()
             d = _haversine(lat, lng, float(elat), float(elng))
             if clean not in seen or d < float(seen[clean]['dist']):
@@ -621,7 +614,6 @@ def get_amenities():
     if not postal and not (lat_p and lng_p):
         return jsonify({'error': 'postal or lat/lng required'}), 400
 
-    # v3: invalidates stale cache entries missing MRT data
     cache_key = f'v3:{postal}' if postal else f'v3:{float(lat_p):.4f},{float(lng_p):.4f}'
 
     conn = get_db()
@@ -647,7 +639,6 @@ def get_amenities():
         except Exception:
             return jsonify({'error': 'Geocoding failed'}), 400
 
-    # Transport: OneMap preferred, Overpass fallback
     transport = fetch_onemap_transport(lat, lng)
     if not transport or not transport.get('mrt'):
         mrt_fallback = fetch_overpass_mrt_fallback(lat, lng)
@@ -658,7 +649,6 @@ def get_amenities():
 
     others = fetch_overpass_amenities(lat, lng)
 
-    # Bus stops: OneMap preferred, Overpass fallback
     bus_items = transport.get('bus') or others.pop('_bus', [])
     others.pop('_bus', None)
 

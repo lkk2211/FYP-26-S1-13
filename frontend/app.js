@@ -313,13 +313,10 @@ async function initMapForPostal(postal) {
         placeholder.classList.add('hidden');
         mapDiv.classList.remove('hidden');
 
-        // Wait one frame for the browser to give the div real dimensions before
-        // Leaflet reads them — fixes the blank-map / grey-tile issue
         await new Promise(r => setTimeout(r, 300));
 
         if (!mapInstance) {
             mapInstance = L.map('leaflet-map', { zoomControl: true });
-            // CartoDB Voyager — CORS-friendly, works in all browsers
             L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
                 attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/">CARTO</a> | Data: <a href="https://www.onemap.gov.sg/">OneMap SG</a>',
                 maxZoom: 19, subdomains: 'abcd'
@@ -520,7 +517,6 @@ async function renderTrendNews(neighbourhood) {
         list.innerHTML = articles.map(_newsCardHTML).join('');
         lucide.createIcons();
     } catch {
-        // Fall back to static data
         const fallback = NEIGHBOURHOOD_NEWS[neighbourhood] || [];
         if (fallback.length) {
             list.innerHTML = fallback.map(a => _newsCardHTML({
@@ -582,7 +578,6 @@ function runABSDSimulation() {
 }
 
 function calcBSD(value) {
-    // Singapore Buyer's Stamp Duty (2023 revised)
     let bsd = 0;
     const brackets = [
         [180000, 0.01],
@@ -623,11 +618,10 @@ function getPolicyAlerts(profile, value, rate) {
     return alerts;
 }
 
-// Charts
+// ── Trend Chart ───────────────────────────────────────────────
 let trendChart;
 let currentRange = '6m';
 
-// Neighbourhood base prices for chart simulation
 const NEIGHBOURHOOD_BASE = {
     'Clementi':   { base: 430000, growth: 0.018 },
     'Queenstown': { base: 520000, growth: 0.022 },
@@ -639,7 +633,6 @@ const NEIGHBOURHOOD_BASE = {
 function generateNeighbourhoodPrices(neighbourhood, range) {
     const cfg = NEIGHBOURHOOD_BASE[neighbourhood] || NEIGHBOURHOOD_BASE['Clementi'];
     const months = range === '6m' ? 6 : range === '1y' ? 12 : range === '3y' ? 36 : range === '5y' ? 60 : 24;
-    // Use quarterly step for longer ranges to keep labels readable
     const step = months >= 36 ? 3 : 1;
     const labels = [], prices = [];
     const now = new Date();
@@ -675,9 +668,7 @@ async function initTrendChart(range = currentRange) {
         if (!res.ok) throw new Error();
         const data = await res.json();
         if (data.trend_data && data.trend_data.length) {
-            // Blend API data with neighbourhood scaling
-            // Scale API data to neighbourhood base price
-        const cfg = NEIGHBOURHOOD_BASE[currentNeighbourhood] || NEIGHBOURHOOD_BASE['Clementi'];
+            const cfg = NEIGHBOURHOOD_BASE[currentNeighbourhood] || NEIGHBOURHOOD_BASE['Clementi'];
             const apiAvg = data.trend_data.reduce((s, d) => s + d.price, 0) / data.trend_data.length;
             const scale = cfg.base / apiAvg;
             labels = data.trend_data.map(d => d.month);
