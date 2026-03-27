@@ -332,21 +332,24 @@ async function initMapForPostal(postal) {
         placeholder.classList.add('hidden');
         mapDiv.classList.remove('hidden');
 
+        // Wait one frame for the browser to give the div real dimensions before
+        // Leaflet reads them — fixes the blank-map / grey-tile issue
+        await new Promise(r => setTimeout(r, 300));
+
         if (!mapInstance) {
             mapInstance = L.map('leaflet-map', { zoomControl: true });
-            // CartoDB Voyager tiles — CORS-friendly, bright, works in all browsers
-            // (OneMap tile server blocks direct browser requests; geocoding + amenities still use OneMap API)
+            // CartoDB Voyager — CORS-friendly, works in all browsers
             L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-                attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/">CARTO</a> | Geocoding & amenities: <a href="https://www.onemap.gov.sg/">OneMap SG</a>',
+                attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/">CARTO</a> | Data: <a href="https://www.onemap.gov.sg/">OneMap SG</a>',
                 maxZoom: 19, subdomains: 'abcd'
             }).addTo(mapInstance);
-            // Delay setView so the div has time to render with dimensions
-            setTimeout(() => { mapInstance.invalidateSize(); mapInstance.setView([lat, lng], 16); }, 200);
         } else {
             mapLayers.forEach(l => mapInstance.removeLayer(l));
             mapLayers = [];
-            setTimeout(() => { mapInstance.invalidateSize(); mapInstance.setView([lat, lng], 16); }, 200);
         }
+
+        mapInstance.invalidateSize();
+        mapInstance.setView([lat, lng], 16);
 
         // Property marker
         const propIcon = L.divIcon({
