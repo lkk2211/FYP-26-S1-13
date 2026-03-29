@@ -27,7 +27,7 @@ function showView(viewId) {
     if (activeLink) activeLink.classList.add('active');
 
     if (viewId === 'trend') {
-        setTimeout(() => { initTrendChart(); renderTrendNews(currentNeighbourhood); runABSDSimulation(); }, 100);
+        setTimeout(() => { loadMarketWatch(); initTrendChart(); renderTrendNews(currentNeighbourhood); runABSDSimulation(); }, 100);
     }
     if (viewId === 'map') {
         if (lastMapPostal) {
@@ -420,7 +420,7 @@ async function initMapFromResult(result, postalHint) {
         .addTo(mapInstance);
     mapLayers.push(propMarker);
 
-    showMapDragHint();
+    showMapWithPin(lat, lng);
     await loadAmenities(lat, lng, postal);
 }
 
@@ -503,6 +503,60 @@ function getDistKm(lat1, lng1, lat2, lng2) {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
+// ── Market Watch ─────────────────────────────────────────────
+async function loadMarketWatch() {
+    try {
+        const res = await fetch('/api/market-watch');
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+
+        const periodEl = document.getElementById('market-watch-period');
+        if (periodEl) periodEl.innerText = `${data.period.current} vs ${data.period.previous} · Source: URA / HDB`;
+
+        const liveEl = document.getElementById('market-watch-live');
+        if (liveEl && data.live_hdb) {
+            liveEl.classList.remove('hidden');
+            liveEl.classList.add('flex');
+        }
+
+        const container = document.getElementById('market-watch-cards');
+        if (!container) return;
+
+        container.innerHTML = data.segments.map(seg => {
+            const pUp = seg.price_change >= 0;
+            const vUp = seg.volume_change >= 0;
+            const pColor  = pUp ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500 dark:text-red-400';
+            const vColor  = vUp ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500 dark:text-red-400';
+            const pArrow  = pUp ? '↑' : '↓';
+            const vArrow  = vUp ? '↑' : '↓';
+            const pSign   = pUp ? '+' : '';
+            const vSign   = vUp ? '+' : '';
+            return `
+            <div class="bg-white dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm text-center card-shadow">
+                <p class="font-bold text-slate-800 dark:text-white text-sm mb-1">${seg.label}</p>
+                <p class="text-[11px] font-semibold text-slate-400 mb-4">${data.period.current} vs ${data.period.previous}</p>
+                <div class="flex justify-center gap-6 mb-4">
+                    <div>
+                        <p class="text-2xl font-bold ${pColor}">${pSign}${seg.price_change}% <span class="text-base">${pArrow}</span></p>
+                        <p class="text-xs text-slate-400 mt-0.5 font-medium">Price</p>
+                    </div>
+                    <div>
+                        <p class="text-2xl font-bold ${vColor}">${vSign}${seg.volume_change}% <span class="text-base">${vArrow}</span></p>
+                        <p class="text-xs text-slate-400 mt-0.5 font-medium">Volume</p>
+                    </div>
+                </div>
+                <p class="text-[10px] text-slate-300 dark:text-slate-600 flex items-center justify-center gap-1">
+                    <i data-lucide="clock" class="w-3 h-3"></i> Last updated: ${data.last_updated}
+                </p>
+            </div>`;
+        }).join('');
+        lucide.createIcons();
+    } catch {
+        const container = document.getElementById('market-watch-cards');
+        if (container) container.innerHTML = '<p class="text-xs text-slate-400 col-span-4 text-center py-4">Could not load market data.</p>';
+    }
+}
+
 // ── Default Singapore Map ────────────────────────────────────
 function initDefaultSingaporeMap() {
     const placeholder = document.getElementById('map-placeholder');
@@ -526,50 +580,96 @@ function initDefaultSingaporeMap() {
     }
     mapInstance.invalidateSize();
     mapInstance.setView([1.3521, 103.8198], 12);
-    showMapDragHint();
+    showMapWithPin(1.3521, 103.8198);
 }
 
 // ── Map Click → Reverse Geocode ──────────────────────────────
+let _draggablePin = null;
+
 function attachMapClickHandler() {
     if (!mapInstance) return;
     mapInstance.on('click', async (e) => {
         const { lat, lng } = e.latlng;
-        try {
-            const res = await fetch(
-                `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&addressdetails=1`,
-                { headers: { 'Accept-Language': 'en' } }
-            );
-            const data = await res.json();
-            const postal = data.address?.postcode;
-            const displayName = data.display_name || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-
-            const popupHtml = `<div class="map-postal-popup">
-                ${postal ? `<h4>📮 ${postal}</h4>` : '<h4>📍 Location</h4>'}
-                <p>${displayName.split(',').slice(0,3).join(', ')}</p>
-                ${postal && /^\d{6}$/.test(postal) ? `
-                    <button class="use-btn" onclick="usePostalFromMap('${postal}')">Use for Prediction</button>
-                    <button class="use-btn" style="background:#0F172A;margin-top:4px" onclick="loadMapFromPostal('${postal}')">Load Amenities Here</button>
-                ` : ''}
-            </div>`;
-
-            L.popup({ maxWidth: 240 })
-                .setLatLng(e.latlng)
-                .setContent(popupHtml)
-                .openOn(mapInstance);
-        } catch {
-            L.popup()
-                .setLatLng(e.latlng)
-                .setContent(`<div class="map-postal-popup"><h4>📍 Location</h4><p>${lat.toFixed(5)}, ${lng.toFixed(5)}</p></div>`)
-                .openOn(mapInstance);
-        }
+        await reverseGeocodeAndShow(lat, lng);
     });
+}
+
+async function reverseGeocodeAndShow(lat, lng) {
+    try {
+        const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&addressdetails=1`,
+            { headers: { 'Accept-Language': 'en' } }
+        );
+        const data = await res.json();
+        const postal = data.address?.postcode;
+        const displayName = data.display_name || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+        const shortAddr = displayName.split(',').slice(0, 3).join(', ');
+
+        if (postal && /^\d{6}$/.test(postal)) {
+            showPinResultBar(postal, shortAddr);
+        } else {
+            const popupHtml = `<div class="map-postal-popup"><h4>📍 Location</h4><p>${shortAddr}</p></div>`;
+            L.popup({ maxWidth: 240 }).setLatLng([lat, lng]).setContent(popupHtml).openOn(mapInstance);
+        }
+    } catch {
+        L.popup().setLatLng([lat, lng])
+            .setContent(`<div class="map-postal-popup"><h4>📍 Location</h4><p>${lat.toFixed(5)}, ${lng.toFixed(5)}</p></div>`)
+            .openOn(mapInstance);
+    }
+}
+
+function showPinResultBar(postal, address) {
+    const bar = document.getElementById('pin-result-bar');
+    const postalEl = document.getElementById('pin-postal-label');
+    const addrEl = document.getElementById('pin-address-label');
+    const predictBtn = document.getElementById('pin-predict-btn');
+    if (!bar) return;
+    if (postalEl) postalEl.innerText = `📮 Postal Code: ${postal}`;
+    if (addrEl) addrEl.innerText = address;
+    if (predictBtn) {
+        predictBtn.onclick = () => usePostalFromMap(postal);
+    }
+    bar.classList.remove('hidden');
+    lucide.createIcons();
+}
+
+function addDraggablePin(centerLat, centerLng) {
+    if (_draggablePin) {
+        mapInstance.removeLayer(_draggablePin);
+    }
+    const pinIcon = L.divIcon({
+        html: `<div style="
+            width:28px;height:28px;
+            background:linear-gradient(135deg,#f97316,#fb923c);
+            border:3px solid white;border-radius:50% 50% 50% 0;
+            transform:rotate(-45deg);
+            box-shadow:0 3px 12px rgba(249,115,22,0.5);
+            cursor:grab">
+        </div>`,
+        iconSize: [28, 28], iconAnchor: [14, 28], className: ''
+    });
+    _draggablePin = L.marker([centerLat, centerLng], { icon: pinIcon, draggable: true, zIndexOffset: 1000 })
+        .addTo(mapInstance)
+        .bindTooltip('Drag me to explore', { permanent: false, direction: 'top', offset: [0, -30] });
+
+    _draggablePin.on('dragend', async (e) => {
+        const { lat, lng } = e.target.getLatLng();
+        await reverseGeocodeAndShow(lat, lng);
+    });
+
+    mapLayers.push(_draggablePin);
 }
 
 function showMapDragHint() {
     const hint = document.getElementById('map-drag-hint');
     if (!hint) return;
     hint.classList.remove('hidden');
-    setTimeout(() => hint.classList.add('hidden'), 5000);
+    setTimeout(() => hint.classList.add('hidden'), 6000);
+}
+
+function showMapWithPin(lat, lng) {
+    showMapDragHint();
+    addDraggablePin(lat, lng);
 }
 
 function usePostalFromMap(postal) {
@@ -1129,6 +1229,7 @@ document.addEventListener('DOMContentLoaded', () => {
     renderTrendNews(currentNeighbourhood);
     runABSDSimulation();
     renderHomeNews();
+    loadMarketWatch();
 });
 
 function changeRange(range, btn) {

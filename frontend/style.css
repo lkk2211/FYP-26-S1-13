@@ -762,6 +762,15 @@ input:checked + .toggle-slider:before { transform: translateX(20px); }
 .dark .bg-blue-50 p.text-blue-700 { color: #93C5FD !important; }
 .dark .border-blue-100 { border-color: rgba(37,99,235,0.28) !important; }
 
+/* ── Pin result bar ─────────────────────────────────────────── */
+#pin-result-bar {
+    position: absolute;
+    bottom: 16px;
+    left: 16px;
+    right: 16px;
+    z-index: 1000;
+}
+
 /* ── Map drag hint ──────────────────────────────────────────── */
 .map-drag-hint {
     position: absolute;
