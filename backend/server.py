@@ -330,7 +330,7 @@ def fetch_onemap_transport(lat, lng, mrt_radius=2.0, bus_radius=0.6):
 
 
 def fetch_overpass_amenities(lat, lng):
-    query = f"""[out:json][timeout:25];(
+    query = f"""[out:json][timeout:30];(
         node["amenity"="school"](around:1500,{lat},{lng});
         way["amenity"="school"](around:1500,{lat},{lng});
         node["amenity"="university"](around:1500,{lat},{lng});
@@ -348,16 +348,22 @@ def fetch_overpass_amenities(lat, lng):
         node["amenity"="library"](around:2000,{lat},{lng});
         node["highway"="bus_stop"](around:600,{lat},{lng});
         node["public_transport"="stop_position"]["bus"="yes"](around:600,{lat},{lng});
+        node["railway"="station"](around:2000,{lat},{lng});
+        way["railway"="station"](around:2000,{lat},{lng});
+        relation["railway"="station"](around:2000,{lat},{lng});
+        node["station"="subway"](around:2000,{lat},{lng});
+        node["station"="light_rail"](around:2000,{lat},{lng});
     );out center body;"""
 
-    cats = {'school': [], 'park': [], 'health': [], 'hawker': [], 'community': [], '_bus': []}
+    cats = {'school': [], 'park': [], 'health': [], 'hawker': [], 'community': [], '_bus': [], '_mrt': []}
+    mrt_seen = {}
     try:
         req = urllib.request.Request(
             'https://overpass-api.de/api/interpreter',
             data=query.encode(),
             method='POST'
         )
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with urllib.request.urlopen(req, timeout=35) as r:
             data = json.loads(r.read())
 
         for el in data.get('elements', []):
@@ -366,6 +372,20 @@ def fetch_overpass_amenities(lat, lng):
             if not elat or not elng:
                 continue
             t    = el.get('tags') or {}
+            rtype = t.get('railway', '')
+            stype = t.get('station', '')
+            is_mrt = rtype == 'station' or stype in ('subway', 'light_rail')
+            if is_mrt:
+                name = t.get('name:en') or t.get('name') or t.get('ref')
+                if not name:
+                    continue
+                clean = re.sub(r'\s+(MRT|LRT)\s+Station$', '', name, flags=re.IGNORECASE).strip()
+                d = _haversine(lat, lng, float(elat), float(elng))
+                if clean not in mrt_seen or d < float(mrt_seen[clean]['dist']):
+                    mrt_seen[clean] = {'name': name, 'dist': f'{d:.2f}',
+                                       'travel': _travel_label(d),
+                                       'lat': float(elat), 'lng': float(elng)}
+                continue
             name = t.get('name') or t.get('name:en') or t.get('ref')
             if not name:
                 continue
@@ -388,9 +408,10 @@ def fetch_overpass_amenities(lat, lng):
     except Exception as e:
         print(f'Overpass error: {e}')
 
-    for items in cats.values():
-        items.sort(key=lambda x: float(x['dist']))
-        items[:] = items[:5]
+    cats['_mrt'] = sorted(mrt_seen.values(), key=lambda x: float(x['dist']))[:6]
+    for key in ('school', 'park', 'health', 'hawker', 'community', '_bus'):
+        cats[key].sort(key=lambda x: float(x['dist']))
+        cats[key][:] = cats[key][:5]
     return cats
 
 
@@ -643,19 +664,19 @@ def get_amenities():
     if transport is None:
         transport = {'mrt': [], 'bus': []}
 
-    # Always merge Overpass MRT results so stations like Clementi MRT aren't missed
-    mrt_fallback = fetch_overpass_mrt_fallback(lat, lng)
+    others = fetch_overpass_amenities(lat, lng)
+
+    # Merge OneMap MRT + Overpass MRT (single Overpass call now covers both)
     def _norm(name):
         n = re.sub(r'\s+(MRT|LRT)\s+Station$', '', name, flags=re.IGNORECASE)
         return re.sub(r'\s+(MRT|LRT)$', '', n, flags=re.IGNORECASE).strip().lower()
+    overpass_mrt = others.pop('_mrt', [])
     existing_names = {_norm(it['name']) for it in transport['mrt']}
-    for item in mrt_fallback:
+    for item in overpass_mrt:
         if _norm(item['name']) not in existing_names:
             transport['mrt'].append(item)
             existing_names.add(_norm(item['name']))
     transport['mrt'] = sorted(transport['mrt'], key=lambda x: float(x['dist']))[:6]
-
-    others = fetch_overpass_amenities(lat, lng)
 
     bus_items = transport.get('bus') or others.pop('_bus', [])
     others.pop('_bus', None)

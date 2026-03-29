@@ -437,6 +437,11 @@ async function loadAmenities(lat, lng, postal) {
         const data = await res.json();
         const cats = data.categories;
 
+        // Clear old amenity markers from map before adding new ones
+        const oldAmenityMarkers = Object.values(amenityMarkersByCategory).flat();
+        oldAmenityMarkers.forEach(m => { try { mapInstance.removeLayer(m); } catch(_) {} });
+        mapLayers = mapLayers.filter(l => !oldAmenityMarkers.includes(l));
+
         // Store markers by category for filter toggling
         amenityMarkersByCategory = {};
         Object.entries(cats).forEach(([key, cat]) => {
@@ -588,7 +593,9 @@ let _draggablePin = null;
 
 function attachMapClickHandler() {
     if (!mapInstance) return;
-    mapInstance.on('click', async (e) => {
+    mapInstance.doubleClickZoom.disable();
+    mapInstance.on('dblclick', async (e) => {
+        e.originalEvent.preventDefault();
         const { lat, lng } = e.latlng;
         await reverseGeocodeAndShow(lat, lng);
     });
