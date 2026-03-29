@@ -553,7 +553,7 @@ async function loadMarketWatch() {
         lucide.createIcons();
     } catch {
         const container = document.getElementById('market-watch-cards');
-        if (container) container.innerHTML = '<p class="text-xs text-slate-400 col-span-4 text-center py-4">Could not load market data.</p>';
+        if (container) container.innerHTML = '<p class="text-xs text-slate-400 col-span-2 text-center py-4">Could not load market data.</p>';
     }
 }
 
