@@ -33,6 +33,8 @@ function showView(viewId) {
         if (lastMapPostal) {
             document.getElementById('map-postal-input').value = lastMapPostal;
             setTimeout(() => initMapForPostal(lastMapPostal), 100);
+        } else {
+            setTimeout(() => initDefaultSingaporeMap(), 150);
         }
     }
 
@@ -48,9 +50,10 @@ function showView(viewId) {
         loadPreferencesForm();
         loadNotificationsForm();
     }
-    
+
     window.scrollTo({ top: 0, behavior: 'smooth' });
     lucide.createIcons();
+    updateDarkModeNavIcon();
 }
 
 // Predict Logic
@@ -76,41 +79,42 @@ function updateSlider(id) {
 }
 
 async function handlePostalSearch() {
-    const raw = document.getElementById('input-postal').value.trim().replace(/\s/g, '');
+    const raw = document.getElementById('input-postal').value.trim();
     const errorEl = document.getElementById('postal-error');
-
-    if (!/^\d{6}$/.test(raw)) {
-        errorEl.textContent = 'Please enter a valid 6-digit postal code.';
+    if (!raw) {
+        errorEl.textContent = 'Please enter a postal code, building name, or area.';
         errorEl.classList.remove('hidden');
         return;
     }
-
     errorEl.classList.add('hidden');
+    closeAllDropdowns();
 
+    const searchVal = raw.replace(/\s+/g, ' ').trim();
     try {
-        const geo = await fetch(`https://www.onemap.gov.sg/api/common/elastic/search?searchVal=${raw}&returnGeom=Y&getAddrDetails=Y&pageNum=1`);
+        const geo = await fetch(`https://www.onemap.gov.sg/api/common/elastic/search?searchVal=${encodeURIComponent(searchVal)}&returnGeom=Y&getAddrDetails=Y&pageNum=1`);
         const geoData = await geo.json();
         const result = geoData.results?.[0];
 
-        if (!result || result.POSTAL !== raw) {
-            errorEl.textContent = 'Postal code not found. Please check and try again.';
+        if (!result) {
+            errorEl.textContent = 'No results found. Try a different postal code, building name, or area.';
             errorEl.classList.remove('hidden');
             return;
         }
 
-        const address = result.ADDRESS || result.BLK_NO + ' ' + result.ROAD_NAME;
-        const building = result.BUILDING !== 'NIL' ? result.BUILDING : address;
+        const address = result.ADDRESS || (result.BLK_NO + ' ' + result.ROAD_NAME);
+        const building = result.BUILDING && result.BUILDING !== 'NIL' ? result.BUILDING : address;
+        const postal = result.POSTAL && result.POSTAL !== 'NIL' ? result.POSTAL : searchVal;
 
         document.getElementById('display-address').innerText = address;
         document.getElementById('display-building').innerText = building;
-        document.getElementById('input-postal').value = raw;
+        document.getElementById('input-postal').value = postal;
 
         const placeholder = document.getElementById('postal-placeholder');
         const details = document.getElementById('postal-details');
         placeholder.classList.add('hidden');
         details.classList.remove('hidden');
     } catch {
-        errorEl.textContent = 'Unable to verify postal code. Please try again.';
+        errorEl.textContent = 'Unable to search. Please try again.';
         errorEl.classList.remove('hidden');
     }
 
@@ -287,15 +291,48 @@ let currentNeighbourhood = 'Clementi';
 // ── Map ──────────────────────────────────────────────────────
 let mapInstance = null;
 let mapLayers   = [];
+let amenityMarkersByCategory = {};  // { mrt: [markers], school: [markers], ... }
+let amenityFilterState = { all: true, mrt: true, bus: true, school: true, health: true, park: true, community: true, hawker: true };
 
-function loadMap() {
-    const postal = document.getElementById('map-postal-input').value.trim().replace(/\s/g,'').padStart(6,'0');
-    if (!postal || postal.length < 6 || !/^\d{6}$/.test(postal)) {
-        alert('Please enter a valid 6-digit Singapore postal code.');
+async function loadMap() {
+    const raw = document.getElementById('map-postal-input').value.trim();
+    if (!raw) return;
+    closeAllDropdowns();
+
+    // If 6-digit number → treat as postal code directly
+    if (/^\d{6}$/.test(raw.replace(/\s/g,''))) {
+        lastMapPostal = raw.replace(/\s/g,'');
+        initMapForPostal(lastMapPostal);
         return;
     }
-    lastMapPostal = postal;
-    initMapForPostal(postal);
+
+    // Otherwise → smart search via OneMap elastic search
+    const placeholder = document.getElementById('map-placeholder');
+    const mapDiv = document.getElementById('leaflet-map');
+    placeholder.classList.remove('hidden');
+    placeholder.innerHTML = `<div class="flex flex-col items-center gap-3 text-slate-400">
+        <svg class="w-8 h-8 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
+        <p class="text-sm font-medium">Searching for "${raw}"…</p></div>`;
+    mapDiv.classList.add('hidden');
+
+    try {
+        const geo = await fetch(`https://www.onemap.gov.sg/api/common/elastic/search?searchVal=${encodeURIComponent(raw)}&returnGeom=Y&getAddrDetails=Y&pageNum=1`);
+        const geoData = await geo.json();
+        const result = geoData.results?.[0];
+        if (!result) throw new Error('Not found');
+
+        const postal = result.POSTAL && result.POSTAL !== 'NIL' ? result.POSTAL : null;
+        document.getElementById('map-postal-input').value = postal || raw;
+        if (postal) lastMapPostal = postal;
+        initMapFromResult(result);
+    } catch {
+        placeholder.innerHTML = `<div class="text-center space-y-2 text-slate-400">
+            <p class="font-semibold text-sm">No results for "${raw}"</p>
+            <p class="text-xs">Try a postal code, MRT station name, or area (e.g. "Bishan", "560123")</p>
+        </div>`;
+        placeholder.classList.remove('hidden');
+        mapDiv.classList.add('hidden');
+    }
 }
 
 async function initMapForPostal(postal) {
@@ -305,7 +342,7 @@ async function initMapForPostal(postal) {
 
     placeholder.innerHTML = `<div class="flex flex-col items-center gap-3 text-slate-400">
         <svg class="w-8 h-8 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
-        <p class="text-sm font-medium">Geocoding postal code...</p></div>`;
+        <p class="text-sm font-medium">Locating postal code…</p></div>`;
     placeholder.classList.remove('hidden');
     mapDiv.classList.add('hidden');
 
@@ -316,56 +353,81 @@ async function initMapForPostal(postal) {
         if (!geoData.results || !geoData.results.length) throw new Error('Not found');
 
         const result = geoData.results[0];
-        const lat = parseFloat(result.LATITUDE);
-        const lng = parseFloat(result.LONGITUDE);
-        const displayName = result.ADDRESS || result.BUILDING || postal;
-
-        document.getElementById('map-address-text').innerText = displayName;
-        document.getElementById('map-district-text').innerText = `Postal Code: ${postal} · Singapore`;
-        addrBar.classList.remove('hidden');
-        addrBar.classList.add('flex');
-
-        placeholder.classList.add('hidden');
-        mapDiv.classList.remove('hidden');
-
-        await new Promise(r => setTimeout(r, 300));
-
-        if (!mapInstance) {
-            mapInstance = L.map('leaflet-map', { zoomControl: true });
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-                attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/">CARTO</a> | Data: <a href="https://www.onemap.gov.sg/">OneMap SG</a>',
-                maxZoom: 19, subdomains: 'abcd'
-            }).addTo(mapInstance);
-        } else {
-            mapLayers.forEach(l => mapInstance.removeLayer(l));
-            mapLayers = [];
-        }
-
-        mapInstance.invalidateSize();
-        mapInstance.setView([lat, lng], 16);
-
-        const propIcon = L.divIcon({
-            html: `<div style="width:20px;height:20px;background:#2563eb;border:3px solid white;border-radius:50%;box-shadow:0 2px 8px rgba(37,99,235,0.5)"></div>`,
-            iconSize: [20, 20], iconAnchor: [10, 10], className: ''
-        });
-        const propMarker = L.marker([lat, lng], { icon: propIcon })
-            .bindPopup(`<b>📍 Subject Property</b><br>${displayName}`)
-            .addTo(mapInstance);
-        mapLayers.push(propMarker);
-
-        await loadAmenities(lat, lng, postal);
+        initMapFromResult(result, postal);
 
     } catch (err) {
-        placeholder.innerHTML = `<div class="text-center text-slate-400 text-sm"><p class="font-medium">Could not locate postal code</p><p class="text-xs mt-1">Try a different postal code</p></div>`;
+        placeholder.innerHTML = `<div class="text-center text-slate-400 text-sm space-y-2">
+            <p class="font-semibold">Could not locate postal code</p>
+            <p class="text-xs">Try a different postal code or search term</p></div>`;
         placeholder.classList.remove('hidden');
         mapDiv.classList.add('hidden');
     }
 }
 
+async function initMapFromResult(result, postalHint) {
+    const placeholder = document.getElementById('map-placeholder');
+    const mapDiv      = document.getElementById('leaflet-map');
+    const addrBar     = document.getElementById('map-address-bar');
+
+    const lat = parseFloat(result.LATITUDE);
+    const lng = parseFloat(result.LONGITUDE);
+    const postal = (result.POSTAL && result.POSTAL !== 'NIL') ? result.POSTAL : (postalHint || '');
+    const displayName = result.ADDRESS || result.BUILDING || postal;
+
+    document.getElementById('map-address-text').innerText = displayName;
+    document.getElementById('map-district-text').innerText = postal ? `Postal Code: ${postal} · Singapore` : 'Singapore';
+    addrBar.classList.remove('hidden');
+    addrBar.classList.add('flex');
+
+    const predictBtn = document.getElementById('map-predict-btn');
+    if (predictBtn && postal) {
+        predictBtn.classList.remove('hidden');
+        predictBtn.classList.add('flex');
+        predictBtn._postal = postal;
+    }
+
+    placeholder.classList.add('hidden');
+    mapDiv.classList.remove('hidden');
+
+    await new Promise(r => setTimeout(r, 300));
+
+    if (!mapInstance) {
+        const isDark = document.documentElement.classList.contains('dark');
+        mapInstance = L.map('leaflet-map', { zoomControl: true });
+        const tileUrl = isDark
+            ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+            : 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
+        L.tileLayer(tileUrl, {
+            attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/">CARTO</a>',
+            maxZoom: 19, subdomains: 'abcd'
+        }).addTo(mapInstance);
+        attachMapClickHandler();
+    } else {
+        mapLayers.forEach(l => mapInstance.removeLayer(l));
+        mapLayers = [];
+        amenityMarkersByCategory = {};
+    }
+
+    mapInstance.invalidateSize();
+    mapInstance.setView([lat, lng], 16);
+
+    const propIcon = L.divIcon({
+        html: `<div style="width:22px;height:22px;background:linear-gradient(135deg,#2563eb,#7c3aed);border:3px solid white;border-radius:50%;box-shadow:0 2px 10px rgba(37,99,235,0.55)"></div>`,
+        iconSize: [22, 22], iconAnchor: [11, 11], className: ''
+    });
+    const propMarker = L.marker([lat, lng], { icon: propIcon })
+        .bindPopup(`<b>📍 Subject Property</b><br>${displayName}`)
+        .addTo(mapInstance);
+    mapLayers.push(propMarker);
+
+    showMapDragHint();
+    await loadAmenities(lat, lng, postal);
+}
+
 async function loadAmenities(lat, lng, postal) {
     const amenityCards = document.getElementById('amenity-cards');
-    amenityCards.innerHTML = `<div class="bg-white rounded-2xl border border-slate-200 p-6 text-center text-slate-400 text-sm shadow-sm">
-        <p class="font-medium">Loading nearby amenities...</p></div>`;
+    amenityCards.innerHTML = `<div class="bg-white dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700 p-6 text-center text-slate-400 text-sm shadow-sm">
+        <div class="flex items-center justify-center gap-2"><svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>Loading amenities…</div></div>`;
 
     try {
         const params = new URLSearchParams({ lat, lng });
@@ -375,50 +437,61 @@ async function loadAmenities(lat, lng, postal) {
         const data = await res.json();
         const cats = data.categories;
 
-        Object.values(cats).forEach(cat => {
+        // Store markers by category for filter toggling
+        amenityMarkersByCategory = {};
+        Object.entries(cats).forEach(([key, cat]) => {
+            amenityMarkersByCategory[key] = [];
             cat.items.forEach(item => {
                 const marker = L.circleMarker([item.lat, item.lng], {
                     radius: 7, fillColor: cat.color, color: '#fff',
                     weight: 2, opacity: 1, fillOpacity: 0.9
                 }).bindPopup(`<b>${cat.icon} ${item.name}</b><br>${item.dist} km · ${item.travel}`);
-                marker.addTo(mapInstance);
+                // Only add if filter is active
+                if (amenityFilterState[key] !== false) {
+                    marker.addTo(mapInstance);
+                }
+                amenityMarkersByCategory[key].push(marker);
                 mapLayers.push(marker);
             });
         });
 
         const hasAny = Object.values(cats).some(c => c.items.length > 0);
         if (!hasAny) {
-            amenityCards.innerHTML = `<div class="bg-white rounded-2xl border border-slate-200 p-6 text-center shadow-sm">
+            amenityCards.innerHTML = `<div class="bg-white dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700 p-6 text-center shadow-sm">
                 <p class="text-slate-400 text-sm">No amenities found nearby</p></div>`;
             return;
         }
 
-        amenityCards.innerHTML = Object.values(cats).filter(c => c.items.length > 0).map(cat => `
-            <div class="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
-                <div class="flex items-center gap-3 mb-4">
-                    <div class="w-8 h-8 rounded-xl flex items-center justify-center" style="background:${cat.color}22">
-                        <i data-lucide="${cat.lucide}" class="w-4 h-4" style="color:${cat.color}"></i>
+        amenityCards.innerHTML = Object.entries(cats).filter(([,c]) => c.items.length > 0).map(([key, cat]) => `
+            <div class="bg-white dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm amenity-cat-card" data-cat="${key}">
+                <div class="flex items-center justify-between gap-3 mb-4">
+                    <div class="flex items-center gap-3">
+                        <div class="w-8 h-8 rounded-xl flex items-center justify-center" style="background:${cat.color}22">
+                            <i data-lucide="${cat.lucide}" class="w-4 h-4" style="color:${cat.color}"></i>
+                        </div>
+                        <h3 class="text-sm font-bold">${cat.label}</h3>
                     </div>
-                    <h3 class="text-sm font-bold">${cat.label}</h3>
+                    <span class="text-[10px] font-bold text-slate-400">${cat.items.length}</span>
                 </div>
-                <div class="space-y-3">
-                    ${cat.items.map(item => `
+                <div class="space-y-2.5">
+                    ${cat.items.slice(0,4).map(item => `
                         <div class="flex justify-between items-start gap-2">
                             <div>
                                 <p class="text-xs font-semibold leading-snug">${item.name}</p>
                                 <p class="text-[10px] text-slate-400 mt-0.5">${item.travel}</p>
                             </div>
-                            <span class="text-[10px] font-bold text-slate-400 shrink-0">${item.dist} km</span>
+                            <span class="text-[10px] font-bold px-1.5 py-0.5 rounded-md" style="background:${cat.color}18;color:${cat.color}">${item.dist} km</span>
                         </div>
                     `).join('')}
+                    ${cat.items.length > 4 ? `<p class="text-[10px] text-slate-400 font-medium">+${cat.items.length - 4} more on map</p>` : ''}
                 </div>
             </div>
         `).join('');
 
         lucide.createIcons();
     } catch (err) {
-        amenityCards.innerHTML = `<div class="bg-white rounded-2xl border border-slate-200 p-6 text-center shadow-sm">
-            <p class="text-slate-400 text-sm">Could not load amenities</p></div>`;
+        amenityCards.innerHTML = `<div class="bg-white dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700 p-6 text-center shadow-sm">
+            <p class="text-slate-400 text-sm">Could not load amenities. Check backend connection.</p></div>`;
     }
 }
 
@@ -428,6 +501,256 @@ function getDistKm(lat1, lng1, lat2, lng2) {
     const dLng = (lng2 - lng1) * Math.PI / 180;
     const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+// ── Default Singapore Map ────────────────────────────────────
+function initDefaultSingaporeMap() {
+    const placeholder = document.getElementById('map-placeholder');
+    const mapDiv = document.getElementById('leaflet-map');
+    if (!placeholder || !mapDiv) return;
+
+    placeholder.classList.add('hidden');
+    mapDiv.classList.remove('hidden');
+
+    if (!mapInstance) {
+        const isDark = document.documentElement.classList.contains('dark');
+        mapInstance = L.map('leaflet-map', { zoomControl: true });
+        const tileUrl = isDark
+            ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+            : 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
+        L.tileLayer(tileUrl, {
+            attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/">CARTO</a>',
+            maxZoom: 19, subdomains: 'abcd'
+        }).addTo(mapInstance);
+        attachMapClickHandler();
+    }
+    mapInstance.invalidateSize();
+    mapInstance.setView([1.3521, 103.8198], 12);
+    showMapDragHint();
+}
+
+// ── Map Click → Reverse Geocode ──────────────────────────────
+function attachMapClickHandler() {
+    if (!mapInstance) return;
+    mapInstance.on('click', async (e) => {
+        const { lat, lng } = e.latlng;
+        try {
+            const res = await fetch(
+                `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&addressdetails=1`,
+                { headers: { 'Accept-Language': 'en' } }
+            );
+            const data = await res.json();
+            const postal = data.address?.postcode;
+            const displayName = data.display_name || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+
+            const popupHtml = `<div class="map-postal-popup">
+                ${postal ? `<h4>📮 ${postal}</h4>` : '<h4>📍 Location</h4>'}
+                <p>${displayName.split(',').slice(0,3).join(', ')}</p>
+                ${postal && /^\d{6}$/.test(postal) ? `
+                    <button class="use-btn" onclick="usePostalFromMap('${postal}')">Use for Prediction</button>
+                    <button class="use-btn" style="background:#0F172A;margin-top:4px" onclick="loadMapFromPostal('${postal}')">Load Amenities Here</button>
+                ` : ''}
+            </div>`;
+
+            L.popup({ maxWidth: 240 })
+                .setLatLng(e.latlng)
+                .setContent(popupHtml)
+                .openOn(mapInstance);
+        } catch {
+            L.popup()
+                .setLatLng(e.latlng)
+                .setContent(`<div class="map-postal-popup"><h4>📍 Location</h4><p>${lat.toFixed(5)}, ${lng.toFixed(5)}</p></div>`)
+                .openOn(mapInstance);
+        }
+    });
+}
+
+function showMapDragHint() {
+    const hint = document.getElementById('map-drag-hint');
+    if (!hint) return;
+    hint.classList.remove('hidden');
+    setTimeout(() => hint.classList.add('hidden'), 5000);
+}
+
+function usePostalFromMap(postal) {
+    mapInstance && mapInstance.closePopup();
+    document.getElementById('input-postal').value = postal;
+    showView('predict');
+    setTimeout(() => handlePostalSearch(), 200);
+}
+
+function loadMapFromPostal(postal) {
+    mapInstance && mapInstance.closePopup();
+    document.getElementById('map-postal-input').value = postal;
+    lastMapPostal = postal;
+    initMapForPostal(postal);
+}
+
+function useMapAddressForPredict() {
+    const btn = document.getElementById('map-predict-btn');
+    const postal = btn && btn._postal;
+    if (!postal) return;
+    document.getElementById('input-postal').value = postal;
+    showView('predict');
+    setTimeout(() => handlePostalSearch(), 200);
+}
+
+// ── Amenity Filter Toggles ───────────────────────────────────
+function toggleAmenityFilter(category, btn) {
+    if (category === 'all') {
+        // Toggle all on/off
+        const allOn = amenityFilterState.all;
+        const newState = !allOn;
+        Object.keys(amenityFilterState).forEach(k => amenityFilterState[k] = newState);
+        // Update all pill buttons
+        document.querySelectorAll('.filter-pill').forEach(b => {
+            b.classList.toggle('active', newState);
+        });
+        // Show/hide all markers
+        Object.values(amenityMarkersByCategory).forEach(markers => {
+            markers.forEach(m => {
+                if (newState) { if (!mapInstance.hasLayer(m)) m.addTo(mapInstance); }
+                else { if (mapInstance.hasLayer(m)) mapInstance.removeLayer(m); }
+            });
+        });
+        return;
+    }
+
+    // Toggle single category
+    const wasActive = amenityFilterState[category];
+    amenityFilterState[category] = !wasActive;
+    btn.classList.toggle('active', !wasActive);
+
+    const markers = amenityMarkersByCategory[category] || [];
+    markers.forEach(m => {
+        if (!wasActive) { if (!mapInstance.hasLayer(m)) m.addTo(mapInstance); }
+        else { if (mapInstance.hasLayer(m)) mapInstance.removeLayer(m); }
+    });
+
+    // Update "All" pill state
+    const anyOff = Object.entries(amenityFilterState).some(([k,v]) => k !== 'all' && !v);
+    const allOn  = !anyOff;
+    amenityFilterState.all = allOn;
+    const allBtn = document.querySelector('.filter-pill.filter-all');
+    if (allBtn) allBtn.classList.toggle('active', allOn);
+}
+
+// ── Smart Search Autocomplete ────────────────────────────────
+let _autocompleteDebounce = null;
+
+async function fetchSearchSuggestions(query) {
+    if (!query || query.length < 2) return [];
+    try {
+        const res = await fetch(`https://www.onemap.gov.sg/api/common/elastic/search?searchVal=${encodeURIComponent(query)}&returnGeom=N&getAddrDetails=Y&pageNum=1`);
+        const data = await res.json();
+        return (data.results || []).slice(0, 6);
+    } catch { return []; }
+}
+
+function renderAutocomplete(containerId, results, onSelect) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    if (!results.length) { el.classList.remove('visible'); return; }
+
+    el.innerHTML = results.map((r, i) => {
+        const name = r.BUILDING && r.BUILDING !== 'NIL' ? r.BUILDING : r.ADDRESS;
+        const sub  = r.POSTAL && r.POSTAL !== 'NIL' ? `Postal: ${r.POSTAL}` : (r.ROAD_NAME || '');
+        const icon = r.POSTAL && r.POSTAL !== 'NIL' ? '📍' : '🗺️';
+        return `<div class="autocomplete-item" data-idx="${i}">
+            <div class="autocomplete-item-icon">${icon}</div>
+            <div>
+                <p class="autocomplete-item-name">${name || r.ADDRESS}</p>
+                <p class="autocomplete-item-sub">${sub}</p>
+            </div>
+        </div>`;
+    }).join('');
+
+    el.querySelectorAll('.autocomplete-item').forEach((item, i) => {
+        item.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            onSelect(results[i]);
+            el.classList.remove('visible');
+        });
+    });
+    el.classList.add('visible');
+}
+
+function closeAllDropdowns() {
+    document.querySelectorAll('.autocomplete-dropdown').forEach(d => d.classList.remove('visible'));
+}
+
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.autocomplete-wrap') && !e.target.closest('.hero-search')) {
+        closeAllDropdowns();
+    }
+});
+
+// Hero search autocomplete
+function onHeroSearchInput(val) {
+    clearTimeout(_autocompleteDebounce);
+    if (!val.trim()) { closeAllDropdowns(); return; }
+    _autocompleteDebounce = setTimeout(async () => {
+        const results = await fetchSearchSuggestions(val);
+        renderAutocomplete('hero-autocomplete', results, (r) => {
+            const postal = r.POSTAL && r.POSTAL !== 'NIL' ? r.POSTAL : null;
+            document.getElementById('hero-search-input').value = postal || r.ADDRESS;
+            heroSearch();
+        });
+    }, 280);
+}
+
+function heroSearch() {
+    closeAllDropdowns();
+    const val = document.getElementById('hero-search-input').value.trim();
+    if (!val) return;
+    document.getElementById('input-postal').value = val;
+    showView('predict');
+    setTimeout(() => handlePostalSearch(), 200);
+}
+
+// Map search autocomplete
+function onMapSearchInput(val) {
+    clearTimeout(_autocompleteDebounce);
+    if (!val.trim()) { closeAllDropdowns(); return; }
+    _autocompleteDebounce = setTimeout(async () => {
+        const results = await fetchSearchSuggestions(val);
+        renderAutocomplete('map-autocomplete', results, (r) => {
+            const postal = r.POSTAL && r.POSTAL !== 'NIL' ? r.POSTAL : null;
+            document.getElementById('map-postal-input').value = postal || r.ADDRESS;
+            loadMap();
+        });
+    }, 280);
+}
+
+// Predict search autocomplete
+function onPredictSearchInput(val) {
+    clearTimeout(_autocompleteDebounce);
+    if (!val.trim()) { closeAllDropdowns(); return; }
+    _autocompleteDebounce = setTimeout(async () => {
+        const results = await fetchSearchSuggestions(val);
+        renderAutocomplete('predict-autocomplete', results, (r) => {
+            const postal = r.POSTAL && r.POSTAL !== 'NIL' ? r.POSTAL : null;
+            document.getElementById('input-postal').value = postal || r.ADDRESS;
+            handlePostalSearch();
+        });
+    }, 280);
+}
+
+// ── Dark Mode Nav Toggle ─────────────────────────────────────
+function toggleDarkModeNav() {
+    const html = document.documentElement;
+    const isDark = html.classList.toggle('dark');
+    localStorage.setItem('theme', isDark ? 'dark' : 'light');
+    updateDarkModeNavIcon();
+    // Also sync settings toggle if it exists
+    const settingsToggle = document.getElementById('darkModeToggle');
+    if (settingsToggle) settingsToggle.checked = isDark;
+}
+
+function updateDarkModeNavIcon() {
+    const isDark = document.documentElement.classList.contains('dark');
+    document.querySelectorAll('.dark-icon-sun').forEach(el => el.classList.toggle('hidden', !isDark));
+    document.querySelectorAll('.dark-icon-moon').forEach(el => el.classList.toggle('hidden', isDark));
 }
 
 // ── Trend / Neighbourhood ────────────────────────────────────
@@ -1117,6 +1440,7 @@ function loadTheme() {
         document.documentElement.classList.remove('dark');
         if (toggle) toggle.checked = false;
     }
+    updateDarkModeNavIcon();
 }
 
 function saveCurrentUser() {

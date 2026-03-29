@@ -16,3 +16,4 @@ backend/model.pkl
 
 # Environment variables
 .env
+.claude/

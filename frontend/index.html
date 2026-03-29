@@ -35,9 +35,15 @@
                 <button onclick="showView('trend')" class="nav-link px-4 py-1.5 rounded-lg text-sm font-medium text-slate-500 dark:text-slate-400 transition-all hover:text-slate-900 dark:hover:text-white" id="nav-trend">Trend</button>
             </div>
             
-            <div class="flex items-center gap-3" id="nav-auth-buttons">
-                <button onclick="showView('signin')" class="hidden sm:block px-4 py-2 text-sm font-semibold text-slate-600 hover:text-slate-900 transition-colors">Sign in</button>
-                <button onclick="showView('register')" class="px-5 py-2.5 text-sm font-bold text-white bg-slate-900 rounded-xl hover:bg-black transition-all shadow-lg shadow-slate-200">Get Started</button>
+            <!-- Dark mode toggle: always visible -->
+            <button onclick="toggleDarkModeNav()" class="dark-toggle-btn" id="nav-dark-toggle" title="Toggle dark mode">
+                <i data-lucide="sun" class="w-4 h-4 hidden dark-icon-sun"></i>
+                <i data-lucide="moon" class="w-4 h-4 dark-icon-moon"></i>
+            </button>
+
+            <div class="flex items-center gap-2" id="nav-auth-buttons">
+                <button onclick="showView('signin')" class="hidden sm:block px-4 py-2 text-sm font-semibold text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white transition-colors">Sign in</button>
+                <button onclick="showView('register')" class="px-5 py-2.5 text-sm font-bold text-white rounded-xl transition-all btn-gradient">Get Started</button>
             </div>
 
             <div class="hidden items-center gap-3 relative group" id="nav-user-profile">
@@ -73,57 +79,128 @@
         <!-- Home View -->
         <section id="view-home" class="view-section active">
             <main class="max-w-7xl mx-auto px-6">
-                <div class="flex flex-col items-center text-center py-20">
-                    <div class="inline-flex items-center gap-2 px-4 py-1.5 bg-blue-50 text-blue-700 rounded-full border border-blue-100 mb-8 animate-fade-in">
-                        <span class="relative flex h-2 w-2">
-                            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-                            <span class="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
-                        </span>
-                        <span class="text-xs font-bold uppercase tracking-wider">Market Intelligence v2.4</span>
-                    </div>
-                    
-                    <h1 class="text-5xl md:text-7xl font-bold tracking-tight mb-8 leading-[1.1] animate-fade-in" style="animation-delay: 0.1s">
-                        Predict Property Value <br />
-                        <span class="text-slate-400">With AI Precision.</span>
-                    </h1>
-                    
-                    <p class="text-lg md:text-xl text-slate-500 max-w-2xl mb-12 leading-relaxed animate-fade-in" style="animation-delay: 0.2s">
-                        PropAI uses advanced neural networks trained on 15+ years of Singapore property data to give you instant, bank-grade valuations.
-                    </p>
-                    
-                    <div class="flex flex-col sm:flex-row gap-4 animate-fade-in" style="animation-delay: 0.3s">
-                        <button onclick="showView('predict')" class="px-8 py-4 bg-slate-900 text-white rounded-2xl text-lg font-bold hover:bg-black transition-all transform hover:-translate-y-1 shadow-xl shadow-slate-200 flex items-center gap-3">
-                            Start Valuation
-                            <i data-lucide="arrow-right" class="w-5 h-5"></i>
-                        </button>
-                        <button onclick="showView('trend')" class="px-8 py-4 bg-white text-slate-900 border border-slate-200 rounded-2xl text-lg font-bold hover:bg-slate-50 transition-all flex items-center gap-3">
-                            View Trends
-                        </button>
+
+                <!-- Hero: Split Layout -->
+                <div class="hero-section hero-content py-14 md:py-20">
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-10 lg:gap-16 items-center">
+
+                        <!-- Left: Text + Hero Search -->
+                        <div class="space-y-7 animate-fade-in">
+                            <div class="inline-flex items-center gap-2 px-4 py-1.5 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 rounded-full border border-blue-100 dark:border-blue-800/50">
+                                <span class="relative flex h-2 w-2">
+                                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                                    <span class="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
+                                </span>
+                                <span class="text-xs font-bold uppercase tracking-wider">Live Market Data · Singapore</span>
+                            </div>
+
+                            <h1 class="text-5xl md:text-6xl font-bold tracking-tight leading-[1.08]">
+                                Singapore's<br>
+                                Smartest <span class="text-gradient">Property AI</span>
+                            </h1>
+
+                            <p class="text-lg text-slate-500 dark:text-slate-400 leading-relaxed max-w-lg">
+                                Instant valuations backed by 15+ years of resale data. Search any condo, HDB, or area — results in under 2 seconds.
+                            </p>
+
+                            <!-- Hero Search Bar -->
+                            <div class="hero-search-wrap">
+                                <div class="hero-search">
+                                    <div class="autocomplete-wrap">
+                                        <div class="flex items-center gap-2 pl-4">
+                                            <i data-lucide="search" class="w-4 h-4 text-slate-400 shrink-0"></i>
+                                            <input id="hero-search-input" type="text"
+                                                placeholder="Postal code, condo name, MRT, or area…"
+                                                class="hero-search-input flex-1 py-4 pr-2 text-sm outline-none bg-transparent"
+                                                oninput="onHeroSearchInput(this.value)"
+                                                onkeydown="if(event.key==='Enter') heroSearch()"
+                                                autocomplete="off" />
+                                        </div>
+                                        <div id="hero-autocomplete" class="autocomplete-dropdown"></div>
+                                    </div>
+                                    <button onclick="heroSearch()" class="hero-search-btn btn-gradient mr-1 flex items-center gap-2">
+                                        <span>Search</span>
+                                        <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                                    </button>
+                                </div>
+                                <p class="text-xs text-slate-400 dark:text-slate-500 mt-2 pl-1">Try: "238801", "Novena MRT", "Clementi", "The Sail"</p>
+                            </div>
+
+                            <!-- Quick Stats -->
+                            <div class="stat-row pt-2">
+                                <div class="stat-item">
+                                    <span class="stat-number">98%</span>
+                                    <span class="stat-label">Accuracy</span>
+                                </div>
+                                <div class="w-px bg-slate-200 dark:bg-slate-700 self-stretch"></div>
+                                <div class="stat-item">
+                                    <span class="stat-number">&lt;2s</span>
+                                    <span class="stat-label">Response</span>
+                                </div>
+                                <div class="w-px bg-slate-200 dark:bg-slate-700 self-stretch"></div>
+                                <div class="stat-item">
+                                    <span class="stat-number">15yr</span>
+                                    <span class="stat-label">Data</span>
+                                </div>
+                                <div class="w-px bg-slate-200 dark:bg-slate-700 self-stretch"></div>
+                                <div class="stat-item">
+                                    <span class="stat-number">3</span>
+                                    <span class="stat-label">Property Types</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Right: Property Images Grid -->
+                        <div class="relative animate-fade-in hidden lg:block" style="animation-delay:0.2s">
+                            <div class="prop-img-grid">
+                                <div class="prop-img-wrap">
+                                    <img src="https://picsum.photos/seed/sg-arch-1/480/300" alt="Singapore Property" loading="lazy" class="w-full h-full object-cover" />
+                                </div>
+                                <div class="prop-img-wrap">
+                                    <img src="https://picsum.photos/seed/sg-arch-2/480/300" alt="Singapore Property" loading="lazy" class="w-full h-full object-cover" />
+                                </div>
+                                <div class="prop-img-wrap">
+                                    <img src="https://picsum.photos/seed/sg-arch-3/480/300" alt="Singapore Property" loading="lazy" class="w-full h-full object-cover" />
+                                </div>
+                                <div class="prop-img-wrap">
+                                    <img src="https://picsum.photos/seed/sg-arch-4/480/300" alt="Singapore Property" loading="lazy" class="w-full h-full object-cover" />
+                                </div>
+                            </div>
+                            <!-- Floating price badge -->
+                            <div class="floating-price-badge animate-fade-in" style="animation-delay:0.4s">
+                                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Avg CCR Condo PSF</p>
+                                <p class="text-xl font-bold text-slate-900 dark:text-white">S$2,142 <span class="text-sm font-normal text-emerald-500">↑ 3.1%</span></p>
+                                <p class="text-[10px] text-slate-400 mt-0.5">Q1 2026 · Marina / Orchard</p>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
                 <!-- Feature Grid -->
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-8 mt-12 animate-fade-in" style="animation-delay: 0.4s">
-                    <div class="bg-white dark:bg-slate-800 p-8 rounded-[32px] border border-slate-100 dark:border-slate-700 card-shadow">
-                        <div class="w-12 h-12 bg-blue-50 dark:bg-blue-900/30 rounded-2xl flex items-center justify-center mb-6">
-                            <i data-lucide="zap" class="w-6 h-6 text-blue-600 dark:text-blue-400"></i>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8 animate-fade-in" style="animation-delay: 0.4s">
+                    <div class="bg-white dark:bg-slate-800/80 p-7 rounded-[28px] border border-slate-100 dark:border-slate-700/60 card-shadow card-hover cursor-pointer" onclick="showView('predict')">
+                        <div class="w-11 h-11 bg-blue-50 dark:bg-blue-900/30 rounded-xl flex items-center justify-center mb-5">
+                            <i data-lucide="zap" class="w-5 h-5 text-blue-600 dark:text-blue-400"></i>
                         </div>
-                        <h3 class="text-xl font-bold mb-3 dark:text-white">Instant Results</h3>
-                        <p class="text-slate-500 dark:text-slate-400 text-sm leading-relaxed">Get your property valuation in under 2 seconds with our optimized inference engine.</p>
+                        <h3 class="text-lg font-bold mb-2 dark:text-white">Instant Valuation</h3>
+                        <p class="text-slate-500 dark:text-slate-400 text-sm leading-relaxed mb-4">Get your property valuation in under 2 seconds. Search by postal code or address.</p>
+                        <span class="text-xs font-bold text-blue-600 dark:text-blue-400 flex items-center gap-1">Try it now <i data-lucide="arrow-right" class="w-3 h-3"></i></span>
                     </div>
-                    <div class="bg-white dark:bg-slate-800 p-8 rounded-[32px] border border-slate-100 dark:border-slate-700 card-shadow">
-                        <div class="w-12 h-12 bg-emerald-50 dark:bg-emerald-900/30 rounded-2xl flex items-center justify-center mb-6">
-                            <i data-lucide="shield-check" class="w-6 h-6 text-emerald-600 dark:text-emerald-400"></i>
+                    <div class="bg-white dark:bg-slate-800/80 p-7 rounded-[28px] border border-slate-100 dark:border-slate-700/60 card-shadow card-hover cursor-pointer" onclick="showView('map')">
+                        <div class="w-11 h-11 bg-emerald-50 dark:bg-emerald-900/30 rounded-xl flex items-center justify-center mb-5">
+                            <i data-lucide="map-pin" class="w-5 h-5 text-emerald-600 dark:text-emerald-400"></i>
                         </div>
-                        <h3 class="text-xl font-bold mb-3 dark:text-white">98% Accuracy</h3>
-                        <p class="text-slate-500 dark:text-slate-400 text-sm leading-relaxed">Our models are back-tested against actual resale prices with industry-leading precision.</p>
+                        <h3 class="text-lg font-bold mb-2 dark:text-white">Smart Map Explorer</h3>
+                        <p class="text-slate-500 dark:text-slate-400 text-sm leading-relaxed mb-4">Explore any area with live amenity data — MRT, schools, parks, hawker centres, and more.</p>
+                        <span class="text-xs font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">Open map <i data-lucide="arrow-right" class="w-3 h-3"></i></span>
                     </div>
-                    <div class="bg-white dark:bg-slate-800 p-8 rounded-[32px] border border-slate-100 dark:border-slate-700 card-shadow">
-                        <div class="w-12 h-12 bg-purple-50 dark:bg-purple-900/30 rounded-2xl flex items-center justify-center mb-6">
-                            <i data-lucide="layers" class="w-6 h-6 text-purple-600 dark:text-purple-400"></i>
+                    <div class="bg-white dark:bg-slate-800/80 p-7 rounded-[28px] border border-slate-100 dark:border-slate-700/60 card-shadow card-hover cursor-pointer" onclick="showView('trend')">
+                        <div class="w-11 h-11 bg-purple-50 dark:bg-purple-900/30 rounded-xl flex items-center justify-center mb-5">
+                            <i data-lucide="trending-up" class="w-5 h-5 text-purple-600 dark:text-purple-400"></i>
                         </div>
-                        <h3 class="text-xl font-bold mb-3 dark:text-white">Deep Insights</h3>
-                        <p class="text-slate-500 dark:text-slate-400 text-sm leading-relaxed">Analyze location factors, amenities, and market trends in one unified dashboard.</p>
+                        <h3 class="text-lg font-bold mb-2 dark:text-white">Market Trends</h3>
+                        <p class="text-slate-500 dark:text-slate-400 text-sm leading-relaxed mb-4">Track price trends by neighbourhood, run ABSD simulations, and read the latest property news.</p>
+                        <span class="text-xs font-bold text-purple-600 dark:text-purple-400 flex items-center gap-1">View trends <i data-lucide="arrow-right" class="w-3 h-3"></i></span>
                     </div>
                 </div>
 
@@ -159,26 +236,38 @@
                                 </div>
                                 
                                 <div class="space-y-2">
-                                    <label class="text-xs font-bold text-slate-500 uppercase">Postal Code</label>
-                                    <div class="flex gap-2">
-                                        <div class="relative flex-1">
-                                            <input id="input-postal" type="text" placeholder="e.g., 238801" maxlength="6" class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white transition-all font-medium" />
+                                    <label class="text-xs font-bold text-slate-500 uppercase">Search Property</label>
+                                    <div class="relative">
+                                        <div class="flex gap-2">
+                                            <div class="autocomplete-wrap flex-1 relative">
+                                                <div class="flex items-center bg-slate-50 border border-slate-200 rounded-xl focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:bg-white transition-all overflow-visible">
+                                                    <i data-lucide="search" class="w-4 h-4 text-slate-400 ml-3 shrink-0"></i>
+                                                    <input id="input-postal" type="text"
+                                                        placeholder="Postal code, building name, or area…"
+                                                        class="flex-1 px-3 py-3 bg-transparent outline-none font-medium text-sm"
+                                                        oninput="onPredictSearchInput(this.value)"
+                                                        onkeydown="if(event.key==='Enter') handlePostalSearch()"
+                                                        autocomplete="off" />
+                                                </div>
+                                                <div id="predict-autocomplete" class="autocomplete-dropdown"></div>
+                                            </div>
+                                            <button onclick="handlePostalSearch()" class="px-4 py-3 btn-gradient rounded-xl flex items-center gap-2 text-sm font-bold">
+                                                <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                                            </button>
                                         </div>
-                                        <button onclick="handlePostalSearch()" class="p-3 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors">
-                                            <i data-lucide="search" class="w-5 h-5 text-slate-400"></i>
-                                        </button>
+                                        <p class="text-xs text-slate-400 mt-1.5">Try: "238801", "Bishan MRT", "The Sail", "Clementi"</p>
                                     </div>
                                     <p id="postal-error" class="hidden text-xs text-red-500 font-medium mt-1"></p>
                                 </div>
 
                                 <!-- Initial State Placeholder -->
-                                <div id="postal-placeholder" class="py-12 flex flex-col items-center text-center space-y-4">
-                                    <div class="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center">
-                                        <i data-lucide="search" class="w-8 h-8 text-slate-300"></i>
+                                <div id="postal-placeholder" class="py-10 flex flex-col items-center text-center space-y-4">
+                                    <div class="w-16 h-16 rounded-2xl flex items-center justify-center" style="background:linear-gradient(135deg,#EFF6FF,#EDE9FE)">
+                                        <i data-lucide="building-2" class="w-8 h-8 text-blue-500"></i>
                                     </div>
                                     <div>
-                                        <p class="text-slate-500 font-medium">Enter a postal code to get started</p>
-                                        <p class="text-xs text-slate-400">Try: 238801, 560123, or 159088</p>
+                                        <p class="text-slate-600 dark:text-slate-300 font-semibold">Search any Singapore property</p>
+                                        <p class="text-xs text-slate-400 mt-1">Postal code · Condo name · Area · MRT station</p>
                                     </div>
                                 </div>
 
@@ -425,17 +514,36 @@
 
         <!-- Map View -->
         <section id="view-map" class="view-section">
-            <main class="max-w-7xl mx-auto px-6 space-y-6">
-                <!-- Search bar -->
-                <div class="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col sm:flex-row items-center gap-3 shadow-sm">
-                    <div class="flex flex-1 items-center gap-3 w-full px-2">
+            <main class="max-w-7xl mx-auto px-6 space-y-4">
+
+                <!-- Smart Search bar -->
+                <div class="bg-white dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700 p-3 flex flex-col sm:flex-row items-center gap-3 shadow-sm">
+                    <div class="relative flex flex-1 items-center gap-3 w-full px-2">
                         <i data-lucide="search" class="w-5 h-5 text-slate-400 shrink-0"></i>
-                        <input id="map-postal-input" type="text" placeholder="Enter postal code (e.g. 560123, 238801, 159088)" maxlength="6"
-                            class="flex-1 bg-transparent outline-none font-medium text-slate-900 placeholder:text-slate-400 text-sm" />
+                        <input id="map-postal-input" type="text"
+                            placeholder="Postal code, MRT station, area name, or project… (e.g. 'Bishan', 'Novena MRT', '238801', 'The Sail')"
+                            class="flex-1 bg-transparent outline-none font-medium text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 text-sm"
+                            oninput="onMapSearchInput(this.value)"
+                            onkeydown="if(event.key==='Enter') loadMap()"
+                            autocomplete="off" />
+                        <div id="map-autocomplete" class="autocomplete-dropdown" style="top:calc(100% + 10px); left:-40px; right:0;"></div>
                     </div>
-                    <button onclick="loadMap()" class="w-full sm:w-auto px-6 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 transition-colors shrink-0 flex items-center justify-center gap-2">
+                    <button onclick="loadMap()" class="w-full sm:w-auto px-5 py-2.5 rounded-xl font-bold text-sm shrink-0 flex items-center justify-center gap-2 btn-gradient">
                         <i data-lucide="map-pin" class="w-4 h-4"></i> Show on Map
                     </button>
+                </div>
+
+                <!-- Amenity Filter Pills -->
+                <div class="flex flex-wrap gap-2 items-center">
+                    <span class="text-xs font-bold text-slate-400 mr-1 shrink-0">Show:</span>
+                    <button onclick="toggleAmenityFilter('all', this)" class="filter-pill filter-all active" data-filter="all">All</button>
+                    <button onclick="toggleAmenityFilter('mrt', this)" class="filter-pill active" data-filter="mrt">🚇 MRT / LRT</button>
+                    <button onclick="toggleAmenityFilter('bus', this)" class="filter-pill active" data-filter="bus">🚌 Bus Stops</button>
+                    <button onclick="toggleAmenityFilter('school', this)" class="filter-pill active" data-filter="school">🏫 Schools</button>
+                    <button onclick="toggleAmenityFilter('health', this)" class="filter-pill active" data-filter="health">🏥 Healthcare</button>
+                    <button onclick="toggleAmenityFilter('park', this)" class="filter-pill active" data-filter="park">🌳 Parks</button>
+                    <button onclick="toggleAmenityFilter('community', this)" class="filter-pill active" data-filter="community">📚 Libraries</button>
+                    <button onclick="toggleAmenityFilter('hawker', this)" class="filter-pill active" data-filter="hawker">🍜 Hawker</button>
                 </div>
 
                 <!-- Address bar (shown after search) -->
@@ -444,52 +552,50 @@
                         <i data-lucide="map-pin" class="w-4 h-4 text-white"></i>
                     </div>
                     <div>
-                        <p id="map-address-text" class="font-bold text-slate-900 text-sm"></p>
+                        <p id="map-address-text" class="font-bold text-slate-900 dark:text-white text-sm"></p>
                         <p id="map-district-text" class="text-xs text-slate-400"></p>
                     </div>
+                    <button onclick="useMapAddressForPredict()" id="map-predict-btn" class="hidden ml-auto px-4 py-1.5 btn-gradient rounded-lg text-xs font-bold flex items-center gap-1.5">
+                        <i data-lucide="cpu" class="w-3 h-3"></i> Predict Value
+                    </button>
                 </div>
 
                 <!-- Map + Sidebar -->
-                <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
                     <!-- Map -->
-                    <div class="lg:col-span-8">
-                        <div id="map-placeholder" class="h-[580px] bg-slate-100 rounded-[28px] flex flex-col items-center justify-center gap-4 border border-slate-200">
-                            <div class="w-16 h-16 bg-slate-200 rounded-full flex items-center justify-center">
-                                <i data-lucide="map" class="w-8 h-8 text-slate-400"></i>
+                    <div class="lg:col-span-8 relative">
+                        <div id="map-placeholder" class="h-[580px] bg-slate-100 dark:bg-slate-800/60 rounded-[24px] flex flex-col items-center justify-center gap-4 border border-slate-200 dark:border-slate-700">
+                            <div class="w-14 h-14 bg-slate-200 dark:bg-slate-700 rounded-full flex items-center justify-center">
+                                <i data-lucide="map" class="w-7 h-7 text-slate-400"></i>
                             </div>
                             <div class="text-center">
-                                <p class="text-slate-600 font-semibold">Enter a postal code to explore</p>
-                                <p class="text-xs text-slate-400 mt-1">Powered by OpenStreetMap · Amenities via OpenStreetMap</p>
+                                <p class="text-slate-600 dark:text-slate-300 font-semibold">Search any area to explore</p>
+                                <p class="text-xs text-slate-400 mt-1">Postal code · MRT station · Area name · Project name</p>
                             </div>
-                            <p class="text-xs text-slate-400 font-medium">Try a demo area:</p>
+                            <p class="text-xs text-slate-400 font-semibold uppercase tracking-wider">Quick demo:</p>
                             <div class="flex gap-2 mt-1 flex-wrap justify-center">
                                 <button onclick="document.getElementById('map-postal-input').value='560123';loadMap()" class="px-4 py-2 text-xs font-bold bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-md">Hougang</button>
+                                <button onclick="document.getElementById('map-postal-input').value='Clementi MRT';loadMap()" class="px-4 py-2 text-xs font-bold bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-md">Clementi MRT</button>
                                 <button onclick="document.getElementById('map-postal-input').value='159088';loadMap()" class="px-4 py-2 text-xs font-bold bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-md">Queenstown</button>
                                 <button onclick="document.getElementById('map-postal-input').value='238801';loadMap()" class="px-4 py-2 text-xs font-bold bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-md">Marina Bay</button>
                             </div>
                         </div>
-                        <div id="leaflet-map" class="h-[580px] rounded-[28px] overflow-hidden hidden border border-slate-200 shadow-sm"></div>
+                        <!-- Map hint overlay (click to get postal) -->
+                        <div id="map-drag-hint" class="map-drag-hint hidden">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+                            Click anywhere on the map to get the postal code
+                        </div>
+                        <div id="leaflet-map" class="h-[580px] rounded-[24px] overflow-hidden hidden border border-slate-200 dark:border-slate-700 shadow-sm"></div>
                     </div>
 
                     <!-- Sidebar -->
                     <div class="lg:col-span-4 space-y-4">
-                        <!-- Legend -->
-                        <div class="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
-                            <h3 class="font-bold text-sm mb-4">Amenity Legend</h3>
-                            <div class="grid grid-cols-2 gap-2">
-                                <div class="flex items-center gap-2 text-xs text-slate-500"><span class="w-3 h-3 rounded-full bg-purple-500 shrink-0"></span>MRT / LRT</div>
-                                <div class="flex items-center gap-2 text-xs text-slate-500"><span class="w-3 h-3 rounded-full bg-indigo-500 shrink-0"></span>Bus Stops</div>
-                                <div class="flex items-center gap-2 text-xs text-slate-500"><span class="w-3 h-3 rounded-full bg-emerald-500 shrink-0"></span>Schools</div>
-                                <div class="flex items-center gap-2 text-xs text-slate-500"><span class="w-3 h-3 rounded-full bg-teal-500 shrink-0"></span>Parks</div>
-                                <div class="flex items-center gap-2 text-xs text-slate-500"><span class="w-3 h-3 rounded-full bg-rose-500 shrink-0"></span>Healthcare</div>
-                                <div class="flex items-center gap-2 text-xs text-slate-500"><span class="w-3 h-3 rounded-full bg-orange-500 shrink-0"></span>Hawker / Food</div>
-                                <div class="flex items-center gap-2 text-xs text-slate-500"><span class="w-3 h-3 rounded-full bg-blue-500 shrink-0"></span>Community</div>
-                            </div>
-                        </div>
                         <!-- Amenity list (populated by JS) -->
                         <div id="amenity-cards">
-                            <div class="bg-white rounded-2xl border border-slate-200 p-6 text-center shadow-sm">
-                                <p class="text-slate-400 text-sm">Search a postal code to see nearby amenities</p>
+                            <div class="bg-white dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700 p-6 text-center shadow-sm">
+                                <i data-lucide="layers" class="w-8 h-8 text-slate-300 dark:text-slate-600 mx-auto mb-3"></i>
+                                <p class="text-slate-400 dark:text-slate-500 text-sm font-medium">Search an area to see nearby amenities</p>
+                                <p class="text-xs text-slate-300 dark:text-slate-600 mt-1">MRT · Schools · Parks · Healthcare · Hawker</p>
                             </div>
                         </div>
                     </div>
