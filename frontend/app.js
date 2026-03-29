@@ -606,30 +606,36 @@ async function reverseGeocodeAndShow(lat, lng) {
         const shortAddr = displayName.split(',').slice(0, 3).join(', ');
 
         addDraggablePin(lat, lng);
-        if (postal && /^\d{6}$/.test(postal)) {
-            showPinResultBar(postal, shortAddr);
-        } else {
-            const popupHtml = `<div class="map-postal-popup"><h4>📍 Location</h4><p>${shortAddr}</p></div>`;
-            L.popup({ maxWidth: 240 }).setLatLng([lat, lng]).setContent(popupHtml).openOn(mapInstance);
-        }
+        const validPostal = (postal && /^\d{6}$/.test(postal)) ? postal : null;
+        showPinResultBar(validPostal, shortAddr, lat, lng);
     } catch {
         addDraggablePin(lat, lng);
-        L.popup().setLatLng([lat, lng])
-            .setContent(`<div class="map-postal-popup"><h4>📍 Location</h4><p>${lat.toFixed(5)}, ${lng.toFixed(5)}</p></div>`)
-            .openOn(mapInstance);
+        showPinResultBar(null, `${lat.toFixed(5)}, ${lng.toFixed(5)}`, lat, lng);
     }
 }
 
-function showPinResultBar(postal, address) {
+function showPinResultBar(postal, address, lat, lng) {
     const bar = document.getElementById('pin-result-bar');
     const postalEl = document.getElementById('pin-postal-label');
     const addrEl = document.getElementById('pin-address-label');
     const predictBtn = document.getElementById('pin-predict-btn');
+    const exploreBtn = document.getElementById('pin-explore-btn');
     if (!bar) return;
-    if (postalEl) postalEl.innerText = `📮 Postal Code: ${postal}`;
+    if (postalEl) postalEl.innerText = postal ? `📮 Postal Code: ${postal}` : '📍 Location';
     if (addrEl) addrEl.innerText = address;
     if (predictBtn) {
-        predictBtn.onclick = () => usePostalFromMap(postal);
+        if (postal) {
+            predictBtn.classList.remove('hidden');
+            predictBtn.onclick = () => usePostalFromMap(postal);
+        } else {
+            predictBtn.classList.add('hidden');
+        }
+    }
+    if (exploreBtn) {
+        exploreBtn.onclick = () => {
+            bar.classList.add('hidden');
+            loadAmenities(lat, lng, postal || '');
+        };
     }
     bar.classList.remove('hidden');
     lucide.createIcons();

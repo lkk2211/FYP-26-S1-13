@@ -614,7 +614,7 @@ def get_amenities():
     if not postal and not (lat_p and lng_p):
         return jsonify({'error': 'postal or lat/lng required'}), 400
 
-    cache_key = f'v3:{postal}' if postal else f'v3:{float(lat_p):.4f},{float(lng_p):.4f}'
+    cache_key = f'v4:{postal}' if postal else f'v4:{float(lat_p):.4f},{float(lng_p):.4f}'
 
     conn = get_db()
     cur  = _cursor(conn)
@@ -640,12 +640,20 @@ def get_amenities():
             return jsonify({'error': 'Geocoding failed'}), 400
 
     transport = fetch_onemap_transport(lat, lng)
-    if not transport or not transport.get('mrt'):
-        mrt_fallback = fetch_overpass_mrt_fallback(lat, lng)
-        if transport is None:
-            transport = {'mrt': mrt_fallback, 'bus': []}
-        else:
-            transport['mrt'] = mrt_fallback
+    if transport is None:
+        transport = {'mrt': [], 'bus': []}
+
+    # Always merge Overpass MRT results so stations like Clementi MRT aren't missed
+    mrt_fallback = fetch_overpass_mrt_fallback(lat, lng)
+    def _norm(name):
+        n = re.sub(r'\s+(MRT|LRT)\s+Station$', '', name, flags=re.IGNORECASE)
+        return re.sub(r'\s+(MRT|LRT)$', '', n, flags=re.IGNORECASE).strip().lower()
+    existing_names = {_norm(it['name']) for it in transport['mrt']}
+    for item in mrt_fallback:
+        if _norm(item['name']) not in existing_names:
+            transport['mrt'].append(item)
+            existing_names.add(_norm(item['name']))
+    transport['mrt'] = sorted(transport['mrt'], key=lambda x: float(x['dist']))[:6]
 
     others = fetch_overpass_amenities(lat, lng)
 
