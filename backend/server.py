@@ -747,8 +747,6 @@ def market_watch():
         'segments': [
             {'id': 'hdb_resale',   'label': 'HDB Resale',       'price_change': hdb_price_chg, 'volume_change': hdb_vol_chg, 'source': 'data.gov.sg'},
             {'id': 'condo_resale', 'label': 'Condo/Apt Resale', 'price_change': 1.4,           'volume_change': 6.8,         'source': 'URA'},
-            {'id': 'hdb_rent',     'label': 'HDB Rent',         'price_change': 0.3,           'volume_change': -20.1,       'source': 'HDB'},
-            {'id': 'condo_rent',   'label': 'Condo/Apt Rent',   'price_change': -0.2,          'volume_change': -25.5,       'source': 'URA'},
         ]
     }
     return jsonify(payload)

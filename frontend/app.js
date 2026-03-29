@@ -605,6 +605,7 @@ async function reverseGeocodeAndShow(lat, lng) {
         const displayName = data.display_name || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
         const shortAddr = displayName.split(',').slice(0, 3).join(', ');
 
+        addDraggablePin(lat, lng);
         if (postal && /^\d{6}$/.test(postal)) {
             showPinResultBar(postal, shortAddr);
         } else {
@@ -612,6 +613,7 @@ async function reverseGeocodeAndShow(lat, lng) {
             L.popup({ maxWidth: 240 }).setLatLng([lat, lng]).setContent(popupHtml).openOn(mapInstance);
         }
     } catch {
+        addDraggablePin(lat, lng);
         L.popup().setLatLng([lat, lng])
             .setContent(`<div class="map-postal-popup"><h4>📍 Location</h4><p>${lat.toFixed(5)}, ${lng.toFixed(5)}</p></div>`)
             .openOn(mapInstance);
