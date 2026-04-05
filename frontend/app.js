@@ -1117,7 +1117,7 @@ async function initTrendChart(range = currentRange) {
     let labels = [], prices = [];
 
     try {
-        const res = await fetch(`/api/trend`);
+        const res = await fetch(`/api/trend?town=${currentNeighbourhood}`);
         if (!res.ok) throw new Error();
         const data = await res.json();
         if (data.trend_data && data.trend_data.length) {
