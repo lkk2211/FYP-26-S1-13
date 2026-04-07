@@ -660,50 +660,86 @@
                     </div>
                 </div>
 
-                <!-- Market Chart -->
-                <div class="bg-white p-8 rounded-[32px] border border-slate-100 card-shadow">
-                    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-8">
-                        <div>
-                            <h2 class="text-2xl font-bold mb-1">Market Performance</h2>
-                            <p id="trend-chart-subtitle" class="text-slate-400 text-sm font-medium">Historical price index — Clementi</p>
-                        </div>
-                        <div class="flex bg-slate-100 p-1 rounded-xl border border-slate-200/50">
-                            <button onclick="changeRange('6m', this)" class="range-btn px-4 py-1.5 rounded-lg text-xs font-bold bg-white shadow-sm">6M</button>
-                            <button onclick="changeRange('1y', this)" class="range-btn px-4 py-1.5 rounded-lg text-xs font-bold text-slate-500">1Y</button>
-                            <button onclick="changeRange('3y', this)" class="range-btn px-4 py-1.5 rounded-lg text-xs font-bold text-slate-500">3Y</button>
-                            <button onclick="changeRange('5y', this)" class="range-btn px-4 py-1.5 rounded-lg text-xs font-bold text-slate-500">5Y</button>
-                        </div>
-                    </div>
-                    <div class="h-[380px]">
-                        <canvas id="trendChart"></canvas>
-                    </div>
-                </div>
+                <!-- ── HDB Resale Price Trend ─────────────────────────────────────────── -->
+            <div class="bg-white dark:bg-slate-800/80 p-8 rounded-[32px] border border-slate-100 dark:border-slate-700 card-shadow space-y-6">
 
-                <!-- Comparable Sales -->
-                <div class="bg-white p-8 rounded-[32px] border border-slate-100 card-shadow">
-                    <h2 class="text-xl font-bold mb-6">Recent Comparable Sales</h2>
-                    <div class="mb-6 p-4 bg-slate-50 rounded-xl border border-slate-100">
-                        <p class="text-sm text-slate-500">
-                            <span id="nearest-price" class="font-bold text-slate-900">-</span>
-                            <span id="nearest-address" class="text-slate-600">-</span>
-                        </p>
-                    </div>
-                    
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-left">
-                            <thead>
-                                <tr class="text-slate-400 text-xs font-bold uppercase tracking-widest border-b border-slate-100">
-                                    <th class="pb-4 pl-2">Address</th>
-                                    <th class="pb-4">Flat Type</th>
-                                    <th class="pb-4">Sale Price</th>
-                                    <th class="pb-4">Floor</th>
-                                    <th class="pb-4 pr-2 text-right">Date</th>
-                                </tr>
-                            </thead>
-                            <tbody id="comparable-body" class="divide-y divide-slate-50"></tbody>
-                        </table>
-                    </div>
+            <!-- Header row -->
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div>
+                <h2 class="text-2xl font-bold dark:text-white">HDB Resale Price Trend</h2>
+                <p id="hdb-chart-subtitle" class="text-slate-400 text-sm font-medium mt-1">Search a town or street above</p>
                 </div>
+                <!-- Range buttons -->
+                <div class="flex bg-slate-100 dark:bg-slate-700 p-1 rounded-xl border border-slate-200/50 dark:border-slate-600/50">
+                <button onclick="setHDBRange('6m', this)"  class="hdb-range-btn px-3 py-1.5 rounded-lg text-xs font-bold text-slate-500">6M</button>
+                <button onclick="setHDBRange('1y', this)"  class="hdb-range-btn px-3 py-1.5 rounded-lg text-xs font-bold text-slate-500">1Y</button>
+                <button onclick="setHDBRange('2y', this)"  class="hdb-range-btn px-3 py-1.5 rounded-lg text-xs font-bold text-slate-500">2Y</button>
+                <button onclick="setHDBRange('3y', this)"  class="hdb-range-btn px-3 py-1.5 rounded-lg text-xs font-bold text-slate-500">3Y</button>
+                <button onclick="setHDBRange('5y', this)"  class="hdb-range-btn px-3 py-1.5 rounded-lg text-xs font-bold bg-white dark:bg-slate-600 shadow-sm text-slate-900 dark:text-white">5Y</button>
+                <button onclick="setHDBRange('all', this)" class="hdb-range-btn px-3 py-1.5 rounded-lg text-xs font-bold text-slate-500">All</button>
+                </div>
+            </div>
+
+            <!-- Search bar -->
+            <div id="hdb-search-wrap" class="relative">
+                <div class="flex items-center gap-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl px-4 py-3 focus-within:ring-2 focus-within:ring-blue-500/20">
+                <i data-lucide="search" class="w-4 h-4 text-slate-400 shrink-0"></i>
+                <input id="hdb-search-input" type="text"
+                    placeholder="Search town or street… e.g. Tampines, Bedok North Ave 4"
+                    class="flex-1 bg-transparent outline-none text-sm font-medium dark:text-white placeholder:text-slate-400"
+                    oninput="onHDBSearchInput(this.value)"
+                    autocomplete="off" />
+                </div>
+                <div id="hdb-autocomplete" class="autocomplete-dropdown"></div>
+            </div>
+
+            <!-- Flat type filter -->
+            <div id="hdb-flat-type-wrap" class="flex flex-wrap gap-2"></div>
+
+            <!-- Summary badges -->
+            <div id="hdb-summary-row" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
+
+            <!-- Chart -->
+            <div class="relative">
+                <div id="hdb-chart-spinner" class="hidden absolute inset-0 flex items-center justify-center z-10">
+                <svg class="w-8 h-8 animate-spin text-blue-500" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                </svg>
+                </div>
+                <div id="hdb-chart-wrap" class="h-[380px] transition-opacity">
+                <canvas id="hdbTrendChart"></canvas>
+                </div>
+            </div>
+            </div>
+
+
+            <!-- ── Recent Comparable Sales ──────────────────────────────────────────── -->
+            <div class="bg-white dark:bg-slate-800/80 p-8 rounded-[32px] border border-slate-100 dark:border-slate-700 card-shadow">
+            <h2 class="text-xl font-bold mb-6 dark:text-white">Recent Comparable Sales</h2>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left">
+                <thead>
+                    <tr class="text-slate-400 text-xs font-bold uppercase tracking-widest border-b border-slate-100 dark:border-slate-700">
+                    <th class="pb-4 pl-2">Address</th>
+                    <th class="pb-4">Flat Type</th>
+                    <th class="pb-4">Price</th>
+                    <th class="pb-4">PSF</th>
+                    <th class="pb-4 pr-2 text-right">Month</th>
+                    </tr>
+                </thead>
+                <tbody id="hdb-comparable-body" class="divide-y divide-slate-50 dark:divide-slate-700">
+                    <tr>
+                    <td colspan="5" class="py-8 text-center text-sm text-slate-400">
+                        Search a town or street to see recent transactions
+                    </td>
+                    </tr>
+                </tbody>
+                </table>
+            </div>
+            </div>
+
+        
 
                 <!-- Property News -->
                 <div class="bg-white p-8 rounded-[32px] border border-slate-100 card-shadow">

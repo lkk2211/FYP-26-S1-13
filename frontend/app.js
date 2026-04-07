@@ -27,7 +27,7 @@ function showView(viewId) {
     if (activeLink) activeLink.classList.add('active');
 
     if (viewId === 'trend') {
-        setTimeout(() => { loadMarketWatch(); initTrendChart(); renderTrendNews(currentNeighbourhood); runABSDSimulation(); }, 100);
+        setTimeout(() => { loadMarketWatch(); initHDBTrend(); renderTrendNews(currentNeighbourhood); runABSDSimulation(); }, 100);
     }
     if (viewId === 'map') {
         if (lastMapPostal) {
@@ -931,7 +931,7 @@ function setNeighbourhood(name, btn) {
     const subtitle = document.getElementById('trend-chart-subtitle');
     if (subtitle) subtitle.innerText = `Historical price index — ${name}`;
     renderTrendNews(name);
-    setTimeout(() => initTrendChart(currentRange), 50);
+    setTimeout(() => initHDBTrend(currentRange), 50);
 }
 
 function _newsCardHTML(a) {
@@ -1240,7 +1240,7 @@ async function renderPredictNews(postal) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    initTrendChart();
+    initHDBTrend();
     renderTrendNews(currentNeighbourhood);
     runABSDSimulation();
     renderHomeNews();
@@ -1258,7 +1258,7 @@ function changeRange(range, btn) {
     btn.classList.add('bg-white', 'shadow-sm');
     btn.classList.remove('text-slate-500');
 
-    initTrendChart(range);
+    setHDBRange(range, btn);
 }
 
 function loadNearestSale(data) {
@@ -2115,5 +2115,367 @@ loadPreferencesForm();
 restoreLastView();
 lucide.createIcons();
 
+// ─────────────────────────────────────────────────────────────────────────────
+// HDB RESALE TREND  —  paste this entire block at the bottom of frontend/app.js
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── State ────────────────────────────────────────────────────────────────────
+const hdb = {
+  town:      null,   // e.g. "TAMPINES"
+  street:    null,   // e.g. "BEDOK NORTH RD"
+  label:     null,   // display label
+  flatType:  '',
+  months:    60,
+  chart:     null,
+  debounce:  null,
+};
+
+// ── Month window map ─────────────────────────────────────────────────────────
+const HDB_RANGES = { '6m': 6, '1y': 12, '2y': 24, '3y': 36, '5y': 60, 'all': 420 };
+
+// ── Called when user opens Trend view ────────────────────────────────────────
+function initHDBTrend() {
+  // Load default if nothing selected yet
+  if (!hdb.town && !hdb.street) {
+    hdb.town  = 'TAMPINES';
+    hdb.label = 'Tampines';
+    const input = document.getElementById('hdb-search-input');
+    if (input) input.value = 'Tampines';
+  }
+  fetchHDBTrend();
+}
+
+// ── Search autocomplete ───────────────────────────────────────────────────────
+function onHDBSearchInput(val) {
+  clearTimeout(hdb.debounce);
+  const dropdown = document.getElementById('hdb-autocomplete');
+  if (!val || val.length < 2) {
+    if (dropdown) dropdown.classList.remove('visible');
+    return;
+  }
+  hdb.debounce = setTimeout(async () => {
+    try {
+      const res  = await fetch(`/api/hdb/search?q=${encodeURIComponent(val)}`);
+      const data = await res.json();
+      renderHDBAutocomplete(data);
+    } catch { /* ignore */ }
+  }, 280);
+}
+
+function renderHDBAutocomplete(results) {
+  const dropdown = document.getElementById('hdb-autocomplete');
+  if (!dropdown) return;
+  if (!results.length) { dropdown.classList.remove('visible'); return; }
+
+  dropdown.innerHTML = results.map((r, i) => `
+    <div class="autocomplete-item" data-idx="${i}">
+      <div class="autocomplete-item-icon">${r.type === 'town' ? '🏘️' : '🏠'}</div>
+      <div>
+        <p class="autocomplete-item-name">${r.label}</p>
+        <p class="autocomplete-item-sub">${r.type === 'town' ? 'Town' : 'Street'}</p>
+      </div>
+    </div>`).join('');
+
+  dropdown.querySelectorAll('.autocomplete-item').forEach((el, i) => {
+    el.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const r = results[i];
+      const input = document.getElementById('hdb-search-input');
+      if (input) input.value = r.label;
+      dropdown.classList.remove('visible');
+      hdb.flatType = '';
+      if (r.type === 'town') {
+        hdb.town   = r.value;
+        hdb.street = null;
+        hdb.label  = r.label;
+      } else {
+        hdb.street = r.value;
+        hdb.town   = r.town || null;
+        hdb.label  = r.label;
+      }
+      fetchHDBTrend();
+    });
+  });
+  dropdown.classList.add('visible');
+}
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#hdb-search-wrap')) {
+    const d = document.getElementById('hdb-autocomplete');
+    if (d) d.classList.remove('visible');
+  }
+});
+
+// ── Range buttons ─────────────────────────────────────────────────────────────
+function setHDBRange(range, btn) {
+  hdb.months = HDB_RANGES[range] || 60;
+  document.querySelectorAll('.hdb-range-btn').forEach(b => {
+    b.classList.remove('bg-white', 'shadow-sm', 'text-slate-900');
+    b.classList.add('text-slate-500');
+  });
+  btn.classList.add('bg-white', 'shadow-sm', 'text-slate-900');
+  btn.classList.remove('text-slate-500');
+  fetchHDBTrend();
+}
+
+// ── Flat type filter ──────────────────────────────────────────────────────────
+function setHDBFlatType(ft) {
+  hdb.flatType = ft === hdb.flatType ? '' : ft;
+  document.querySelectorAll('.hdb-ft-btn').forEach(b => {
+    const active = b.dataset.ft === hdb.flatType;
+    b.classList.toggle('bg-blue-600',  active);
+    b.classList.toggle('text-white',   active);
+    b.classList.toggle('bg-slate-100', !active);
+    b.classList.toggle('text-slate-600', !active);
+  });
+  fetchHDBTrend();
+}
+
+// ── Main fetch + render ───────────────────────────────────────────────────────
+async function fetchHDBTrend() {
+  if (!hdb.town && !hdb.street) return;
+
+  // Show loading state
+  setHDBLoading(true);
+
+  const params = new URLSearchParams({ months: hdb.months });
+  if (hdb.town)     params.set('town',      hdb.town);
+  if (hdb.street)   params.set('street',    hdb.street);
+  if (hdb.flatType) params.set('flat_type', hdb.flatType);
+
+  try {
+    const res  = await fetch(`/api/hdb/trend?${params}`);
+    if (!res.ok) throw new Error('API error');
+    const data = await res.json();
+
+    renderHDBChart(data);
+    renderHDBSummary(data);
+    renderHDBFlatTypeButtons(data.flat_types || []);
+    renderHDBComparables(data.comparables || []);
+    updateHDBSubtitle(data);
+  } catch (err) {
+    console.error('HDB trend error:', err);
+    setHDBError('Could not load HDB data. Make sure hdb.db is in the backend folder.');
+  } finally {
+    setHDBLoading(false);
+  }
+}
+
+// ── Chart ─────────────────────────────────────────────────────────────────────
+function renderHDBChart(data) {
+  const canvas = document.getElementById('hdbTrendChart');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  if (hdb.chart) hdb.chart.destroy();
+
+  const isDark   = document.documentElement.classList.contains('dark');
+  const gradient = ctx.createLinearGradient(0, 0, 0, 380);
+  gradient.addColorStop(0, 'rgba(99,179,237,0.35)');
+  gradient.addColorStop(1, 'rgba(99,179,237,0.0)');
+
+  const labels  = data.trend.map(d => d.month.slice(0, 7));
+  const avgs    = data.trend.map(d => d.avg_price);
+  const medians = data.trend.map(d => d.median_price);
+  const vols    = data.trend.map(d => d.transactions);
+
+  const tickColor = isDark ? '#93C5FD' : '#64748B';
+  const gridColor = isDark ? 'rgba(147,197,253,0.08)' : 'rgba(0,0,0,0.04)';
+
+  hdb.chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Avg Price (S$)',
+          data: avgs,
+          borderColor: '#3B82F6',
+          borderWidth: 3,
+          fill: true,
+          backgroundColor: gradient,
+          tension: 0.4,
+          pointRadius: labels.length > 60 ? 0 : 3,
+          pointBackgroundColor: '#3B82F6',
+          pointBorderColor: isDark ? '#1E3A5F' : '#fff',
+          pointBorderWidth: 2,
+          pointHoverRadius: 7,
+          yAxisID: 'y',
+        },
+        {
+          label: 'Median Price (S$)',
+          data: medians,
+          borderColor: '#8B5CF6',
+          borderWidth: 2,
+          borderDash: [5, 4],
+          fill: false,
+          tension: 0.4,
+          pointRadius: 0,
+          pointHoverRadius: 5,
+          yAxisID: 'y',
+        },
+        {
+          label: 'Transactions',
+          data: vols,
+          type: 'bar',
+          backgroundColor: 'rgba(148,163,184,0.18)',
+          yAxisID: 'y2',
+          order: 10,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { intersect: false, mode: 'index' },
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top',
+          labels: { font: { size: 11, weight: '600' }, color: tickColor, boxWidth: 14, padding: 16 },
+        },
+        tooltip: {
+          backgroundColor: isDark ? '#1E3A5F' : '#1E293B',
+          titleColor: '#93C5FD',
+          bodyColor: '#E2E8F0',
+          padding: 14,
+          cornerRadius: 10,
+          callbacks: {
+            label: ctx => {
+              if (ctx.dataset.label === 'Transactions')
+                return `  Transactions: ${ctx.parsed.y.toLocaleString()}`;
+              return `  ${ctx.dataset.label}: S$${ctx.parsed.y.toLocaleString()}`;
+            },
+          },
+        },
+      },
+      scales: {
+        y: {
+          position: 'left',
+          beginAtZero: false,
+          grid: { color: gridColor, drawBorder: false },
+          ticks: {
+            font: { size: 11, weight: '600' }, color: tickColor,
+            callback: v => v >= 1e6 ? `${(v/1e6).toFixed(1)}M` : `${(v/1e3).toFixed(0)}K`,
+          },
+        },
+        y2: {
+          position: 'right',
+          grid: { display: false },
+          ticks: { font: { size: 10 }, color: tickColor,
+                   callback: v => v >= 1000 ? `${(v/1000).toFixed(1)}k` : v },
+        },
+        x: {
+          grid: { display: false },
+          ticks: {
+            font: { size: 11, weight: '600' }, color: tickColor,
+            maxTicksLimit: 14,
+          },
+        },
+      },
+    },
+  });
+}
+
+// ── Summary badges ────────────────────────────────────────────────────────────
+function renderHDBSummary(data) {
+  const s = data.summary;
+  const trend = data.trend;
+  const el = document.getElementById('hdb-summary-row');
+  if (!el) return;
+
+  // Price change over period
+  let changePct = null, changeHtml = '';
+  if (trend.length >= 2) {
+    const first = trend[0].avg_price, last = trend[trend.length-1].avg_price;
+    changePct = ((last - first) / first * 100).toFixed(1);
+    const up = changePct >= 0;
+    changeHtml = `<span class="font-bold ${up ? 'text-emerald-600' : 'text-rose-500'}">${up ? '↑' : '↓'} ${Math.abs(changePct)}%</span>`;
+  }
+
+  el.innerHTML = `
+    <div class="bg-white dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700 p-5 text-center shadow-sm">
+      <p class="text-xs font-bold text-slate-400 uppercase mb-1">Avg Price</p>
+      <p class="text-xl font-bold">S$${(s.avg_price||0).toLocaleString()}</p>
+      ${changePct !== null ? `<p class="text-xs mt-1">${changeHtml} over period</p>` : ''}
+    </div>
+    <div class="bg-white dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700 p-5 text-center shadow-sm">
+      <p class="text-xs font-bold text-slate-400 uppercase mb-1">Lowest</p>
+      <p class="text-xl font-bold">S$${(s.min_price||0).toLocaleString()}</p>
+    </div>
+    <div class="bg-white dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700 p-5 text-center shadow-sm">
+      <p class="text-xs font-bold text-slate-400 uppercase mb-1">Highest</p>
+      <p class="text-xl font-bold">S$${(s.max_price||0).toLocaleString()}</p>
+    </div>
+    <div class="bg-white dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700 p-5 text-center shadow-sm">
+      <p class="text-xs font-bold text-slate-400 uppercase mb-1">Transactions</p>
+      <p class="text-xl font-bold">${(s.total||0).toLocaleString()}</p>
+    </div>`;
+}
+
+// ── Flat type filter buttons ───────────────────────────────────────────────────
+function renderHDBFlatTypeButtons(flatTypes) {
+  const wrap = document.getElementById('hdb-flat-type-wrap');
+  if (!wrap) return;
+  if (!flatTypes.length) { wrap.innerHTML = ''; return; }
+
+  wrap.innerHTML = ['', ...flatTypes].map(ft => {
+    const label   = ft || 'All Types';
+    const active  = hdb.flatType === ft;
+    const cls     = active
+      ? 'bg-blue-600 text-white'
+      : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600';
+    return `<button class="hdb-ft-btn px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${cls}"
+              data-ft="${ft}" onclick="setHDBFlatType('${ft}')">${label}</button>`;
+  }).join('');
+}
+
+// ── Comparable sales table ────────────────────────────────────────────────────
+function renderHDBComparables(rows) {
+  const tbody = document.getElementById('hdb-comparable-body');
+  if (!tbody) return;
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="py-6 text-center text-sm text-slate-400">No recent transactions found</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(r => `
+    <tr class="hover:bg-slate-50/50 dark:hover:bg-slate-800/50 transition-colors">
+      <td class="py-4 pl-2">
+        <p class="font-bold text-sm text-slate-900 dark:text-white">${r.address}</p>
+        <p class="text-xs text-slate-400">${r.storey_range} · ${r.floor_area} sqm</p>
+      </td>
+      <td class="py-4 text-sm text-slate-600 dark:text-slate-300">${r.flat_type}</td>
+      <td class="py-4 font-bold text-slate-900 dark:text-white">S$${r.price.toLocaleString()}</td>
+      <td class="py-4 text-sm text-slate-500">${(r.price / r.floor_area / 10.764).toFixed(0)} psf</td>
+      <td class="py-4 pr-2 text-right">
+        <span class="px-2 py-1 bg-slate-100 dark:bg-slate-700 rounded-lg text-[10px] font-bold">${r.month}</span>
+      </td>
+    </tr>`).join('');
+}
+
+function updateHDBSubtitle(data) {
+  const el = document.getElementById('hdb-chart-subtitle');
+  if (!el) return;
+  const scope = data.meta.street
+    ? data.meta.street.toLowerCase().replace(/\b\w/g, c => c.toUpperCase())
+    : (data.meta.town||'').toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+  const ft = data.meta.flat_type ? ` · ${data.meta.flat_type}` : '';
+  el.innerText = `Resale prices — ${scope}${ft}`;
+}
+
+function setHDBLoading(on) {
+  const spinner = document.getElementById('hdb-chart-spinner');
+  const chart   = document.getElementById('hdb-chart-wrap');
+  if (spinner) spinner.classList.toggle('hidden', !on);
+  if (chart)   chart.classList.toggle('opacity-30', on);
+}
+
+function setHDBError(msg) {
+  const el = document.getElementById('hdb-chart-wrap');
+  if (el) el.innerHTML = `<p class="text-center text-sm text-slate-400 py-20">${msg}</p>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// END HDB TREND BLOCK
+// ─────────────────────────────────────────────────────────────────────────────
 
 
