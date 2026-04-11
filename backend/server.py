@@ -125,6 +125,42 @@ SQLITE_SCHEMA = """
         articles   TEXT NOT NULL,
         fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+    CREATE TABLE IF NOT EXISTS hdb_resale (
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        month               TEXT NOT NULL,
+        town                TEXT NOT NULL,
+        flat_type           TEXT NOT NULL,
+        block               TEXT,
+        street_name         TEXT,
+        storey_range        TEXT,
+        floor_area_sqm      REAL,
+        flat_model          TEXT,
+        lease_commence_date INTEGER,
+        remaining_lease     TEXT,
+        resale_price        REAL NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS ura_transactions (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        project        TEXT,
+        street         TEXT,
+        district       INTEGER,
+        market_segment TEXT,
+        property_type  TEXT,
+        type_of_sale   TEXT,
+        tenure         TEXT,
+        floor_range    TEXT,
+        area_sqm       REAL,
+        price          REAL NOT NULL,
+        no_of_units    INTEGER DEFAULT 1,
+        contract_date  TEXT,
+        contract_year  INTEGER,
+        contract_month INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS sync_log (
+        source    TEXT PRIMARY KEY,
+        last_sync TEXT NOT NULL,
+        records   INTEGER DEFAULT 0
+    );
 """
 
 POSTGRES_SCHEMA = """
@@ -190,7 +226,52 @@ POSTGRES_SCHEMA = """
         articles   TEXT NOT NULL,
         fetched_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS hdb_resale (
+        id                  SERIAL PRIMARY KEY,
+        month               TEXT NOT NULL,
+        town                TEXT NOT NULL,
+        flat_type           TEXT NOT NULL,
+        block               TEXT,
+        street_name         TEXT,
+        storey_range        TEXT,
+        floor_area_sqm      REAL,
+        flat_model          TEXT,
+        lease_commence_date INTEGER,
+        remaining_lease     TEXT,
+        resale_price        REAL NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS ura_transactions (
+        id             SERIAL PRIMARY KEY,
+        project        TEXT,
+        street         TEXT,
+        district       INTEGER,
+        market_segment TEXT,
+        property_type  TEXT,
+        type_of_sale   TEXT,
+        tenure         TEXT,
+        floor_range    TEXT,
+        area_sqm       REAL,
+        price          REAL NOT NULL,
+        no_of_units    INTEGER DEFAULT 1,
+        contract_date  TEXT,
+        contract_year  INTEGER,
+        contract_month INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS sync_log (
+        source    TEXT PRIMARY KEY,
+        last_sync TIMESTAMP NOT NULL DEFAULT NOW(),
+        records   INTEGER DEFAULT 0
+    );
 """
+
+_DB_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_hdb_resale_town      ON hdb_resale(town)",
+    "CREATE INDEX IF NOT EXISTS idx_hdb_resale_month     ON hdb_resale(month)",
+    "CREATE INDEX IF NOT EXISTS idx_hdb_resale_flat_type ON hdb_resale(flat_type)",
+    "CREATE INDEX IF NOT EXISTS idx_ura_district         ON ura_transactions(district)",
+    "CREATE INDEX IF NOT EXISTS idx_ura_year             ON ura_transactions(contract_year)",
+    "CREATE INDEX IF NOT EXISTS idx_ura_segment          ON ura_transactions(market_segment)",
+]
 
 def init_db():
     conn = get_db()
@@ -200,9 +281,13 @@ def init_db():
             s = statement.strip()
             if s:
                 cur.execute(s)
+        for idx in _DB_INDEXES:
+            cur.execute(idx)
         conn.commit()
     else:
         conn.executescript(SQLITE_SCHEMA)
+        for idx in _DB_INDEXES:
+            conn.execute(idx)
         conn.commit()
     conn.close()
 
@@ -820,32 +905,70 @@ def market_watch():
     hdb_vol_chg   = -29.0
     live = False
 
+    # ── Try DB first (hdb_resale table) ──────────────────────
     try:
-        def _fetch_hdb(month_str):
-            params = urllib.parse.urlencode({
-                'resource_id': 'f1765b54-a209-4718-8d38-a39237f502b3',
-                'filters': json.dumps({'month': month_str}),
-                'limit': 5000
-            })
-            url = f'https://data.gov.sg/api/action/datastore_search?{params}'
-            req = urllib.request.Request(url, headers={'User-Agent': 'PropAI/1.0'})
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                data = json.loads(resp.read())
-            records = data.get('result', {}).get('records', [])
-            prices = [float(r['resale_price']) for r in records if r.get('resale_price')]
-            return (sum(prices) / len(prices), len(prices)) if prices else (None, 0)
-
-        avg_c, vol_c = _fetch_hdb(m_curr)
-        avg_p, vol_p = _fetch_hdb(m_prev)
-
-        if avg_c and avg_p and vol_p:
-            hdb_price_chg = round((avg_c - avg_p) / avg_p * 100, 1)
-            hdb_vol_chg   = round((vol_c - vol_p) / vol_p * 100, 1)
+        conn = get_db(); cur = _cursor(conn)
+        cur.execute(_q('SELECT AVG(resale_price) AS avg, COUNT(*) AS cnt '
+                       'FROM hdb_resale WHERE month = ?'), (m_curr,))
+        r_curr = _row(cur)
+        cur.execute(_q('SELECT AVG(resale_price) AS avg, COUNT(*) AS cnt '
+                       'FROM hdb_resale WHERE month = ?'), (m_prev,))
+        r_prev = _row(cur)
+        conn.close()
+        if r_curr and r_prev and r_curr.get('avg') and r_prev.get('avg'):
+            hdb_price_chg = round((r_curr['avg'] - r_prev['avg']) / r_prev['avg'] * 100, 1)
+            hdb_vol_chg   = round((r_curr['cnt'] - r_prev['cnt']) / max(r_prev['cnt'], 1) * 100, 1)
             live = True
     except Exception:
-        pass  # fall back to curated figures
+        pass
 
-    ura_price_chg, ura_vol_chg, live_ura = fetch_ura_private_stats()
+    # ── Fall back to live data.gov.sg API if DB has no data ──
+    if not live:
+        try:
+            def _fetch_hdb_api(month_str):
+                params = urllib.parse.urlencode({
+                    'resource_id': 'f1765b54-a209-4718-8d38-a39237f502b3',
+                    'filters': json.dumps({'month': month_str}),
+                    'limit': 5000
+                })
+                url = f'https://data.gov.sg/api/action/datastore_search?{params}'
+                req = urllib.request.Request(url, headers={'User-Agent': 'PropAI/1.0'})
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    data = json.loads(resp.read())
+                records = data.get('result', {}).get('records', [])
+                prices  = [float(r['resale_price']) for r in records if r.get('resale_price')]
+                return (sum(prices) / len(prices), len(prices)) if prices else (None, 0)
+            avg_c, vol_c = _fetch_hdb_api(m_curr)
+            avg_p, vol_p = _fetch_hdb_api(m_prev)
+            if avg_c and avg_p and vol_p:
+                hdb_price_chg = round((avg_c - avg_p) / avg_p * 100, 1)
+                hdb_vol_chg   = round((vol_c - vol_p) / vol_p * 100, 1)
+                live = True
+        except Exception:
+            pass
+
+    # ── Try ura_transactions table first ─────────────────────
+    ura_price_chg, ura_vol_chg, live_ura = 1.4, 6.8, False
+    try:
+        conn = get_db(); cur = _cursor(conn)
+        cur.execute(_q('SELECT AVG(price) AS avg, COUNT(*) AS cnt FROM ura_transactions '
+                       'WHERE contract_year = ? AND contract_month = ?'),
+                    (m_curr_dt.year, m_curr_dt.month))
+        u_curr = _row(cur)
+        cur.execute(_q('SELECT AVG(price) AS avg, COUNT(*) AS cnt FROM ura_transactions '
+                       'WHERE contract_year = ? AND contract_month = ?'),
+                    (m_prev_dt.year, m_prev_dt.month))
+        u_prev = _row(cur)
+        conn.close()
+        if u_curr and u_prev and u_curr.get('avg') and u_prev.get('avg'):
+            ura_price_chg = round((u_curr['avg'] - u_prev['avg']) / u_prev['avg'] * 100, 1)
+            ura_vol_chg   = round((u_curr['cnt'] - u_prev['cnt']) / max(u_prev['cnt'], 1) * 100, 1)
+            live_ura = True
+    except Exception:
+        pass
+
+    if not live_ura:
+        ura_price_chg, ura_vol_chg, live_ura = fetch_ura_private_stats()
 
     payload = {
         'period': {'current': m_curr_label, 'previous': m_prev_label},
@@ -1103,13 +1226,8 @@ def update_profile(user_id):
     return jsonify({"user": user})
 
 # ─────────────────────────────────────────────────────────────────────────────
-# HDB RESALE TREND  —  paste this block into backend/server.py
-# (add near the bottom, just before   init_db()   )
+# DATA SYNC  +  HDB / URA QUERY ENDPOINTS
 # ─────────────────────────────────────────────────────────────────────────────
-import sqlite3 as _sq          # already imported above as sqlite3 — safe alias
-import re as _re               # already imported — safe alias
-
-HDB_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'hdb.db')
 
 _HDB_ABBREV = {
     r"\bNTH\b":"NORTH",  r"\bSTH\b":"SOUTH",   r"\bUPP\b":"UPPER",
@@ -1123,201 +1241,422 @@ _HDB_ABBREV = {
 
 def _hdb_expand(s):
     for p, r in _HDB_ABBREV.items():
-        s = _re.sub(p, r, s)
+        s = re.sub(p, r, s)
     return s
 
-def _hdb_con():
-    con = _sq.connect(HDB_DB_PATH)
-    con.row_factory = _sq.Row
-    return con
+
+# ── Sync helpers ──────────────────────────────────────────────────────────────
+_sync_lock = threading.Lock()
+
+def _db_count(table):
+    try:
+        conn = get_db(); cur = _cursor(conn)
+        cur.execute(f'SELECT COUNT(*) AS n FROM {table}')
+        row = _row(cur); conn.close()
+        return (row or {}).get('n', 0)
+    except Exception:
+        return 0
+
+def _last_sync_age_days(source):
+    """Days since last sync, or 9999 if never synced."""
+    try:
+        conn = get_db(); cur = _cursor(conn)
+        cur.execute(_q('SELECT last_sync FROM sync_log WHERE source = ?'), (source,))
+        row = _row(cur); conn.close()
+        if not row:
+            return 9999
+        last = str(row['last_sync'])
+        dt = datetime.datetime.fromisoformat(last[:19])
+        return (datetime.datetime.now() - dt).days
+    except Exception:
+        return 9999
+
+def _update_sync_log(source, records):
+    try:
+        conn = get_db(); cur = _cursor(conn)
+        if USE_POSTGRES:
+            cur.execute(
+                'INSERT INTO sync_log (source, last_sync, records) VALUES (%s, NOW(), %s) '
+                'ON CONFLICT (source) DO UPDATE SET last_sync = NOW(), records = EXCLUDED.records',
+                (source, records))
+        else:
+            cur.execute(
+                "INSERT OR REPLACE INTO sync_log (source, last_sync, records) "
+                "VALUES (?, datetime('now'), ?)", (source, records))
+        conn.commit(); conn.close()
+    except Exception as e:
+        print(f'[sync] sync_log update error: {e}')
+
+def _needs_sync(source, stale_days=30):
+    tbl = 'hdb_resale' if source == 'hdb' else 'ura_transactions'
+    return _db_count(tbl) == 0 or _last_sync_age_days(source) >= stale_days
+
+
+def _sync_hdb(full=False):
+    """Fetch HDB resale transactions from data.gov.sg → hdb_resale table."""
+    print('[sync] HDB starting...')
+    RESOURCE_ID = 'f1765b54-a209-4718-8d38-a39237f502b3'
+    BASE_URL    = 'https://data.gov.sg/api/action/datastore_search'
+
+    conn = get_db(); cur = _cursor(conn)
+    if full:
+        cur.execute('DELETE FROM hdb_resale')
+        conn.commit()
+        existing_months = set()
+    else:
+        cur.execute('SELECT DISTINCT month FROM hdb_resale')
+        existing_months = {r['month'] for r in _rows(cur)}
+    conn.close()
+
+    import urllib.parse as _up
+    offset, limit, total_inserted = 0, 5000, 0
+
+    while True:
+        try:
+            url = BASE_URL + '?' + _up.urlencode(
+                {'resource_id': RESOURCE_ID, 'limit': limit, 'offset': offset})
+            req = urllib.request.Request(url, headers={'User-Agent': 'PropAI/1.0'})
+            with urllib.request.urlopen(req, timeout=60) as r:
+                data = json.loads(r.read())
+            result  = data.get('result', {})
+            records = result.get('records', [])
+            total   = result.get('total', 0)
+            if not records:
+                break
+
+            batch = []
+            for rec in records:
+                if rec.get('month') in existing_months:
+                    continue
+                try:
+                    batch.append((
+                        str(rec.get('month', '')),
+                        str(rec.get('town', '')).strip().upper(),
+                        str(rec.get('flat_type', '')).strip().upper(),
+                        (str(rec.get('block') or '')).strip().upper() or None,
+                        (str(rec.get('street_name') or '')).strip().upper() or None,
+                        str(rec.get('storey_range') or '') or None,
+                        float(rec['floor_area_sqm']) if rec.get('floor_area_sqm') else None,
+                        (str(rec.get('flat_model') or '')).strip().upper() or None,
+                        int(rec['lease_commence_date']) if rec.get('lease_commence_date') else None,
+                        str(rec.get('remaining_lease') or '') or None,
+                        float(rec['resale_price']),
+                    ))
+                except (ValueError, TypeError):
+                    continue
+
+            if batch:
+                conn = get_db(); cur = _cursor(conn)
+                sql = (
+                    'INSERT INTO hdb_resale (month,town,flat_type,block,street_name,'
+                    'storey_range,floor_area_sqm,flat_model,lease_commence_date,'
+                    'remaining_lease,resale_price) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)'
+                ) if USE_POSTGRES else (
+                    'INSERT OR IGNORE INTO hdb_resale (month,town,flat_type,block,street_name,'
+                    'storey_range,floor_area_sqm,flat_model,lease_commence_date,'
+                    'remaining_lease,resale_price) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
+                )
+                cur.executemany(sql, batch)
+                total_inserted += len(batch)
+                conn.commit(); conn.close()
+
+            offset += len(records)
+            print(f'[sync] HDB {offset:,}/{total:,}', end='\r')
+            if offset >= total:
+                break
+            time.sleep(0.2)
+        except Exception as e:
+            print(f'[sync] HDB error at offset {offset}: {e}')
+            break
+
+    _update_sync_log('hdb', total_inserted)
+    print(f'\n[sync] HDB done — {total_inserted:,} rows inserted')
+
+
+def _sync_ura(full=False):
+    """Fetch URA private residential transactions → ura_transactions table."""
+    print('[sync] URA starting...')
+    token = get_ura_token()
+    if not token:
+        print('[sync] URA skipped — no URA_ACCESS_KEY')
+        return
+
+    conn = get_db(); cur = _cursor(conn)
+    if full:
+        cur.execute('DELETE FROM ura_transactions')
+        conn.commit()
+        existing_pairs = set()
+    else:
+        cur.execute('SELECT DISTINCT contract_year, contract_month FROM ura_transactions')
+        existing_pairs = {(r['contract_year'], r['contract_month']) for r in _rows(cur)}
+    conn.close()
+
+    total_inserted = 0
+    for batch_num in (range(1, 5) if full else range(1, 2)):
+        try:
+            url = (f'https://www.ura.gov.sg/uraDataService/invokeUraDS'
+                   f'?service=PMI_Resi_Transaction&batch={batch_num}')
+            req = urllib.request.Request(
+                url, headers={'AccessKey': URA_ACCESS_KEY, 'Token': token,
+                              'User-Agent': 'PropAI/1.0'})
+            with urllib.request.urlopen(req, timeout=90) as r:
+                data = json.loads(r.read())
+            if data.get('Status') != 'Success':
+                continue
+
+            rows = []
+            for proj in data.get('Result', []):
+                for txn in proj.get('transaction', []):
+                    cd = str(txn.get('contractDate') or '').zfill(4)
+                    try:
+                        mm = int(cd[:2]); yy = int(cd[2:])
+                        yr = 2000 + yy if yy <= 99 else yy
+                    except ValueError:
+                        continue
+                    if (yr, mm) in existing_pairs:
+                        continue
+                    try:
+                        price = float(txn.get('price') or 0)
+                        if price <= 0:
+                            continue
+                        area = txn.get('area')
+                        rows.append((
+                            (proj.get('project') or '').strip() or None,
+                            (proj.get('street')  or '').strip() or None,
+                            int(proj['district']) if proj.get('district') else None,
+                            proj.get('marketSegment') or None,
+                            (txn.get('propertyType') or '').strip().upper() or None,
+                            (txn.get('typeOfSale')   or '').strip().upper() or None,
+                            (txn.get('tenure')       or '').strip() or None,
+                            (txn.get('floorRange')   or '').strip() or None,
+                            float(area) if area else None,
+                            price,
+                            int(txn.get('noOfUnits') or 1),
+                            cd, yr, mm,
+                        ))
+                    except (ValueError, TypeError):
+                        continue
+
+            if rows:
+                conn = get_db(); cur = _cursor(conn)
+                sql = (
+                    'INSERT INTO ura_transactions (project,street,district,market_segment,'
+                    'property_type,type_of_sale,tenure,floor_range,area_sqm,price,'
+                    'no_of_units,contract_date,contract_year,contract_month) '
+                    'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)'
+                ) if USE_POSTGRES else (
+                    'INSERT OR IGNORE INTO ura_transactions (project,street,district,market_segment,'
+                    'property_type,type_of_sale,tenure,floor_range,area_sqm,price,'
+                    'no_of_units,contract_date,contract_year,contract_month) '
+                    'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+                )
+                cur.executemany(sql, rows)
+                total_inserted += len(rows)
+                conn.commit(); conn.close()
+
+            print(f'[sync] URA batch {batch_num}: {len(rows)} rows')
+            time.sleep(1)
+        except Exception as e:
+            print(f'[sync] URA batch {batch_num} error: {e}')
+
+    _update_sync_log('ura', total_inserted)
+    print(f'[sync] URA done — {total_inserted:,} rows inserted')
+
+
+def _background_sync():
+    time.sleep(8)   # let gunicorn workers fully start
+    with _sync_lock:
+        if _needs_sync('hdb'):
+            try:
+                _sync_hdb(full=_db_count('hdb_resale') == 0)
+            except Exception as e:
+                print(f'[sync] HDB background error: {e}')
+        if _needs_sync('ura'):
+            try:
+                _sync_ura(full=_db_count('ura_transactions') == 0)
+            except Exception as e:
+                print(f'[sync] URA background error: {e}')
+
+
+@app.route('/api/admin/sync-data', methods=['POST'])
+def admin_sync_data():
+    """Trigger a data sync. Body: {email, password, source: 'hdb'|'ura'|'all', full: bool}"""
+    body   = request.json or {}
+    email  = (body.get('email') or '').strip().lower()
+    pw     = body.get('password') or ''
+    source = body.get('source', 'all')
+    full   = bool(body.get('full', False))
+
+    conn = get_db(); cur = _cursor(conn)
+    cur.execute(_q('SELECT role FROM users WHERE email = ? AND password_hash = ?'),
+                (email, hashlib.sha256(pw.encode()).hexdigest()))
+    user = _row(cur); conn.close()
+
+    if not user or user.get('role') != 'admin':
+        return jsonify({'error': 'Admin credentials required'}), 403
+
+    def _run():
+        with _sync_lock:
+            if source in ('hdb', 'all'):
+                try: _sync_hdb(full=full)
+                except Exception as e: print(f'[sync] admin HDB error: {e}')
+            if source in ('ura', 'all'):
+                try: _sync_ura(full=full)
+                except Exception as e: print(f'[sync] admin URA error: {e}')
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({'status': 'sync started', 'source': source, 'full': full})
+
+
+@app.route('/api/admin/sync-status', methods=['GET'])
+def sync_status():
+    conn = get_db(); cur = _cursor(conn)
+    cur.execute('SELECT source, last_sync, records FROM sync_log')
+    log = _rows(cur)
+    cur.execute('SELECT COUNT(*) AS n FROM hdb_resale')
+    hdb_n = (_row(cur) or {}).get('n', 0)
+    cur.execute('SELECT COUNT(*) AS n FROM ura_transactions')
+    ura_n = (_row(cur) or {}).get('n', 0)
+    conn.close()
+    return jsonify({'sync_log': log, 'hdb_rows': hdb_n, 'ura_rows': ura_n})
 
 
 @app.route('/api/hdb/search', methods=['GET'])
 def hdb_search():
-    """
-    Autocomplete for towns and streets.
-    ?q=tampines  →  [{type, label, value}]
-    """
+    """Autocomplete for towns and streets from hdb_resale table."""
     q = (request.args.get('q') or '').strip().upper()
     if len(q) < 2:
         return jsonify([])
+    q_exp   = _hdb_expand(q)
+    pattern = f'%{q_exp}%'
 
-    q_expanded = _hdb_expand(q)
-    pattern = f'%{q_expanded}%'
-
-    con = _hdb_con()
-    towns = con.execute(
-        "SELECT DISTINCT town FROM resale WHERE town LIKE ? ORDER BY town LIMIT 6",
-        (f'%{q}%',)
-    ).fetchall()
-    streets = con.execute(
-        """SELECT DISTINCT street_name, town FROM resale
-           WHERE street_expanded LIKE ? ORDER BY street_name LIMIT 10""",
-        (pattern,)
-    ).fetchall()
-    con.close()
+    conn = get_db(); cur = _cursor(conn)
+    cur.execute(_q('SELECT DISTINCT town FROM hdb_resale WHERE town LIKE ? ORDER BY town LIMIT 6'),
+                (f'%{q}%',))
+    towns = _rows(cur)
+    cur.execute(_q('SELECT DISTINCT street_name, town FROM hdb_resale '
+                   'WHERE street_name LIKE ? ORDER BY street_name LIMIT 10'), (pattern,))
+    streets = _rows(cur)
+    conn.close()
 
     results = []
     for r in towns:
-        results.append({"type": "town", "label": r["town"].title(), "value": r["town"]})
+        results.append({'type': 'town', 'label': r['town'].title(), 'value': r['town']})
     for r in streets:
         label = f"{r['street_name'].title()} ({r['town'].title()})"
-        results.append({"type": "street", "label": label,
-                         "value": r["street_name"], "town": r["town"]})
+        results.append({'type': 'street', 'label': label,
+                        'value': r['street_name'], 'town': r['town']})
     return jsonify(results[:12])
 
 
 @app.route('/api/hdb/trend', methods=['GET'])
 def hdb_trend():
-    """
-    Price trend + comparable sales.
-    ?town=TAMPINES          — whole town
-    ?street=BEDOK NORTH RD  — single street (optionally &town=BEDOK)
-    &months=12              — lookback window (default 12)
-    &flat_type=4 ROOM       — optional filter
-    """
+    """Price trend + comparable sales from hdb_resale table."""
     raw_town   = (request.args.get('town')   or '').strip().upper()
     raw_street = (request.args.get('street') or '').strip().upper()
-    months     = min(int(request.args.get('months', 60)), 420)   # max 35 yrs
+    months     = min(int(request.args.get('months', 60)), 420)
     flat_type  = (request.args.get('flat_type') or '').strip().upper()
 
     if not raw_town and not raw_street:
         return jsonify({'error': 'Provide town or street'}), 400
 
-    # Expand abbreviations so old + new data both match
-    street_exp = _hdb_expand(raw_street) if raw_street else None
+    cutoff = (datetime.date.today().replace(day=1)
+              - datetime.timedelta(days=months * 30)).strftime('%Y-%m')
 
-    con = _hdb_con()
-
-    # ── Build WHERE clause ───────────────────────────────────
-    filters, params = [], []
+    filters, params = ['month >= ?'], [cutoff]
 
     if raw_town and not raw_street:
-        filters.append("town = ?")
+        filters.append('town = ?')
         params.append(raw_town)
     elif raw_street:
-        filters.append("street_expanded LIKE ?")
-        params.append(f'%{street_exp}%')
+        filters.append('street_name LIKE ?')
+        params.append(f'%{_hdb_expand(raw_street)}%')
         if raw_town:
-            filters.append("town = ?")
+            filters.append('town = ?')
             params.append(raw_town)
-
     if flat_type:
-        filters.append("flat_type = ?")
+        filters.append('flat_type = ?')
         params.append(flat_type)
 
-    # Cutoff month
-    import datetime as _dt
-    cutoff = (_dt.date.today().replace(day=1)
-              - _dt.timedelta(days=months * 30)).strftime('%Y-%m')
-    filters.append("month >= ?")
-    params.append(cutoff)
+    where = ' AND '.join(filters)
 
-    where = " AND ".join(filters)
+    conn = get_db(); cur = _cursor(conn)
 
-    # ── Monthly trend ────────────────────────────────────────
-    trend_rows = con.execute(f"""
-        SELECT substr(month,1,7) AS mo,
+    cur.execute(_q(f"""
+        SELECT month AS mo,
                CAST(AVG(resale_price) AS INTEGER) AS avg_price,
-               CAST(median_price AS INTEGER)       AS median_price,
+               CAST(AVG(resale_price) AS INTEGER) AS median_price,
                COUNT(*) AS transactions
-        FROM (
-            SELECT month, resale_price,
-                   AVG(resale_price) OVER (PARTITION BY substr(month,1,7)) AS median_price
-            FROM resale WHERE {where}
-        )
-        GROUP BY mo ORDER BY mo
-    """, params).fetchall()
+        FROM hdb_resale WHERE {where}
+        GROUP BY month ORDER BY month
+    """), params)
+    trend_rows = _rows(cur)
 
-    # ── By flat type breakdown ───────────────────────────────
-    type_params = [p for p in params]  # same filters
-    type_rows = con.execute(f"""
-        SELECT substr(month,1,7) AS mo, flat_type,
+    cur.execute(_q(f"""
+        SELECT month AS mo, flat_type,
                CAST(AVG(resale_price) AS INTEGER) AS avg_price
-        FROM resale WHERE {where}
-        GROUP BY mo, flat_type ORDER BY mo, flat_type
-    """, type_params).fetchall()
+        FROM hdb_resale WHERE {where}
+        GROUP BY month, flat_type ORDER BY month, flat_type
+    """), params)
+    type_rows = _rows(cur)
 
-    # ── Recent comparable sales ──────────────────────────────
-    recent_params = params[:-2] + params[-1:]  # drop cutoff, keep rest; last 6 months
-    recent_cutoff = (_dt.date.today().replace(day=1)
-                     - _dt.timedelta(days=6 * 30)).strftime('%Y-%m')
-    comparable_filters = [f for f in filters[:-1]] + ["month >= ?"]
-    comparable_where   = " AND ".join(comparable_filters)
-    comparable_params  = params[:-1] + [recent_cutoff]
+    recent_cutoff = (datetime.date.today().replace(day=1)
+                     - datetime.timedelta(days=6 * 30)).strftime('%Y-%m')
+    comp_filters = ['month >= ?'] + filters[1:]
+    comp_params  = [recent_cutoff] + params[1:]
+    comp_where   = ' AND '.join(comp_filters)
 
-    comparables = con.execute(f"""
+    cur.execute(_q(f"""
         SELECT block, street_name, flat_type, storey_range,
                floor_area_sqm, resale_price, month
-        FROM resale WHERE {comparable_where}
-        ORDER BY month DESC, resale_price DESC
-        LIMIT 10
-    """, comparable_params).fetchall()
+        FROM hdb_resale WHERE {comp_where}
+        ORDER BY month DESC, resale_price DESC LIMIT 10
+    """), comp_params)
+    comparables = _rows(cur)
 
-    # ── Summary stats ────────────────────────────────────────
-    summary = con.execute(f"""
-        SELECT COUNT(*)                        AS total,
-               CAST(AVG(resale_price) AS INT)  AS avg_price,
-               CAST(MIN(resale_price) AS INT)  AS min_price,
-               CAST(MAX(resale_price) AS INT)  AS max_price
-        FROM resale WHERE {where}
-    """, params).fetchone()
+    cur.execute(_q(f"""
+        SELECT COUNT(*) AS total,
+               CAST(AVG(resale_price) AS INTEGER) AS avg_price,
+               CAST(MIN(resale_price) AS INTEGER) AS min_price,
+               CAST(MAX(resale_price) AS INTEGER) AS max_price
+        FROM hdb_resale WHERE {where}
+    """), params)
+    summary = _row(cur) or {'total': 0, 'avg_price': 0, 'min_price': 0, 'max_price': 0}
 
-    # ── Available flat types ─────────────────────────────────
-    ft_filters = [f for f in filters[:-1]]  # remove cutoff only
-    ft_where = " AND ".join(ft_filters) if ft_filters else "1=1"
-    flat_types_q = params[:-1]  # remove cutoff param only
+    ft_filters = filters[1:]
+    ft_where   = ' AND '.join(ft_filters) if ft_filters else '1=1'
+    cur.execute(_q(f'SELECT DISTINCT flat_type FROM hdb_resale '
+                   f'{"WHERE " + ft_where if ft_filters else ""} ORDER BY flat_type'),
+                params[1:])
+    flat_types = [r['flat_type'] for r in _rows(cur)]
 
-    flat_types = [r["flat_type"] for r in con.execute(
-        f"SELECT DISTINCT flat_type FROM resale WHERE {ft_where} ORDER BY flat_type",
-        flat_types_q
-    ).fetchall()] if ft_filters else []
-
-    con.close()
+    conn.close()
 
     return jsonify({
-        "meta": {
-            "town":      raw_town or None,
-            "street":    raw_street or None,
-            "months":    months,
-            "flat_type": flat_type or None,
-        },
-        "trend": [
-            {"month": r["mo"], "avg_price": r["avg_price"],
-             "median_price": r["median_price"], "transactions": r["transactions"]}
-            for r in trend_rows
-        ],
-        "by_flat_type": [
-            {"month": r["mo"], "flat_type": r["flat_type"], "avg_price": r["avg_price"]}
-            for r in type_rows
-        ],
-        "comparables": [
-            {
-                "address":      f"{r['block']} {r['street_name'].title()}",
-                "flat_type":    r["flat_type"],
-                "storey_range": r["storey_range"],
-                "floor_area":   r["floor_area_sqm"],
-                "price":        r["resale_price"],
-                "month":        r["month"],
-            }
-            for r in comparables
-        ],
-        "summary": {
-            "total":     summary["total"],
-            "avg_price": summary["avg_price"],
-            "min_price": summary["min_price"],
-            "max_price": summary["max_price"],
-        },
-        "flat_types": flat_types,
+        'meta':        {'town': raw_town or None, 'street': raw_street or None,
+                        'months': months, 'flat_type': flat_type or None},
+        'trend':       [{'month': r['mo'], 'avg_price': r['avg_price'],
+                         'median_price': r['median_price'],
+                         'transactions': r['transactions']} for r in trend_rows],
+        'by_flat_type':[{'month': r['mo'], 'flat_type': r['flat_type'],
+                         'avg_price': r['avg_price']} for r in type_rows],
+        'comparables': [{'address':      f"{r['block'] or ''} {(r['street_name'] or '').title()}".strip(),
+                         'flat_type':    r['flat_type'],
+                         'storey_range': r['storey_range'],
+                         'floor_area':   r['floor_area_sqm'],
+                         'price':        r['resale_price'],
+                         'month':        r['month']} for r in comparables],
+        'summary':     {'total':     summary['total'],    'avg_price': summary['avg_price'],
+                        'min_price': summary['min_price'],'max_price': summary['max_price']},
+        'flat_types':  flat_types,
     })
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# END HDB TREND BLOCK
-# ─────────────────────────────────────────────────────────────────────────────
-
-
 init_db()
+
+# Start background data sync (non-blocking — only runs if data is missing/stale)
+if USE_POSTGRES:
+    threading.Thread(target=_background_sync, daemon=True).start()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 3000))
