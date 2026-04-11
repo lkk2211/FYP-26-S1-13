@@ -29,6 +29,10 @@ ONEMAP_PASSWORD = os.environ.get('ONEMAP_PASSWORD', '')
 _om_token_cache = {'token': None, 'expiry': 0}
 _om_lock        = threading.Lock()
 
+URA_ACCESS_KEY  = os.environ.get('URA_ACCESS_KEY', '')
+_ura_token_cache = {'token': None, 'expiry': 0}
+_ura_lock        = threading.Lock()
+
 # Database helpers — supports SQLite (local) and PostgreSQL (Supabase)
 def get_db():
     if USE_POSTGRES:
@@ -227,6 +231,78 @@ def get_onemap_token():
         except Exception as e:
             print(f'OneMap auth error: {e}')
             return None
+
+
+# ── URA API helpers ──────────────────────────────────────────────────────────
+def get_ura_token():
+    with _ura_lock:
+        if _ura_token_cache['token'] and time.time() < _ura_token_cache['expiry']:
+            return _ura_token_cache['token']
+        if not URA_ACCESS_KEY:
+            return None
+        try:
+            url = f'https://www.ura.gov.sg/uraDataService/invokeUraDS?service=Token&AccessKey={URA_ACCESS_KEY}'
+            req = urllib.request.Request(url, headers={'User-Agent': 'PropAI/1.0'})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                data = json.loads(r.read())
+            if data.get('Status') == 'Success':
+                _ura_token_cache['token']  = data['Result']
+                _ura_token_cache['expiry'] = time.time() + 82800  # 23 h (token valid 24 h)
+                return _ura_token_cache['token']
+        except Exception as e:
+            print(f'URA token error: {e}')
+        return None
+
+
+def fetch_ura_private_stats():
+    """Fetch latest private residential transaction stats from URA (batch 1 = last 3 quarters).
+    Returns (price_change_pct, volume_change_pct, live: bool)."""
+    token = get_ura_token()
+    if not token:
+        return 1.4, 6.8, False   # fallback curated figures
+    try:
+        url = 'https://www.ura.gov.sg/uraDataService/invokeUraDS?service=PMI_Resi_Transaction&batch=1'
+        req = urllib.request.Request(
+            url, headers={'AccessKey': URA_ACCESS_KEY, 'Token': token, 'User-Agent': 'PropAI/1.0'}
+        )
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = json.loads(r.read())
+        if data.get('Status') != 'Success':
+            return 1.4, 6.8, False
+
+        # Flatten transactions and group by MMYY contract date
+        from collections import defaultdict
+        monthly = defaultdict(list)
+        for proj in data.get('Result', []):
+            for txn in proj.get('transaction', []):
+                cd = str(txn.get('contractDate', '') or '').zfill(4)
+                if len(cd) == 4:
+                    monthly[cd].append(float(txn.get('price', 0) or 0))
+
+        if len(monthly) < 2:
+            return 1.4, 6.8, False
+
+        # Sort by date (MMYY → YYMM for sorting)
+        def _sort_key(mmyy):
+            return mmyy[2:] + mmyy[:2]
+
+        sorted_months = sorted(monthly.keys(), key=_sort_key)
+        curr_key, prev_key = sorted_months[-1], sorted_months[-2]
+
+        curr_prices = monthly[curr_key]
+        prev_prices = monthly[prev_key]
+
+        if not curr_prices or not prev_prices:
+            return 1.4, 6.8, False
+
+        avg_curr  = sum(curr_prices) / len(curr_prices)
+        avg_prev  = sum(prev_prices) / len(prev_prices)
+        price_chg = round((avg_curr - avg_prev) / avg_prev * 100, 1)
+        vol_chg   = round((len(curr_prices) - len(prev_prices)) / len(prev_prices) * 100, 1)
+        return price_chg, vol_chg, True
+    except Exception as e:
+        print(f'URA stats error: {e}')
+        return 1.4, 6.8, False
 
 
 def _haversine(lat1, lng1, lat2, lng2):
@@ -769,13 +845,16 @@ def market_watch():
     except Exception:
         pass  # fall back to curated figures
 
+    ura_price_chg, ura_vol_chg, live_ura = fetch_ura_private_stats()
+
     payload = {
         'period': {'current': m_curr_label, 'previous': m_prev_label},
         'last_updated': now.strftime('%b %Y'),
         'live_hdb': live,
+        'live_ura': live_ura,
         'segments': [
-            {'id': 'hdb_resale',   'label': 'HDB Resale',       'price_change': hdb_price_chg, 'volume_change': hdb_vol_chg, 'source': 'data.gov.sg'},
-            {'id': 'condo_resale', 'label': 'Condo/Apt Resale', 'price_change': 1.4,           'volume_change': 6.8,         'source': 'URA'},
+            {'id': 'hdb_resale',   'label': 'HDB Resale',       'price_change': hdb_price_chg, 'volume_change': hdb_vol_chg,   'source': 'data.gov.sg'},
+            {'id': 'condo_resale', 'label': 'Condo/Apt Resale', 'price_change': ura_price_chg, 'volume_change': ura_vol_chg,   'source': 'URA'},
         ]
     }
     return jsonify(payload)
@@ -1022,6 +1101,220 @@ def update_profile(user_id):
     if not user:
         return jsonify({"error": "User not found"}), 404
     return jsonify({"user": user})
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HDB RESALE TREND  —  paste this block into backend/server.py
+# (add near the bottom, just before   init_db()   )
+# ─────────────────────────────────────────────────────────────────────────────
+import sqlite3 as _sq          # already imported above as sqlite3 — safe alias
+import re as _re               # already imported — safe alias
+
+HDB_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'hdb.db')
+
+_HDB_ABBREV = {
+    r"\bNTH\b":"NORTH",  r"\bSTH\b":"SOUTH",   r"\bUPP\b":"UPPER",
+    r"\bLOR\b":"LORONG", r"\bJLN\b":"JALAN",   r"\bBT\b": "BUKIT",
+    r"\bKG\b": "KAMPONG",r"\bTG\b": "TANJONG", r"\bCRES\b":"CRESCENT",
+    r"\bGDNS\b":"GARDENS",r"\bPK\b":"PARK",    r"\bPL\b": "PLACE",
+    r"\bCL\b": "CLOSE",  r"\bDR\b": "DRIVE",   r"\bRD\b": "ROAD",
+    r"\bST\b": "STREET", r"\bTER\b":"TERRACE", r"\bMKT\b":"MARKET",
+    r"\bCTR\b":"CENTRE", r"\bHTS\b":"HEIGHTS", r"\bRIS\b":"RISE",
+}
+
+def _hdb_expand(s):
+    for p, r in _HDB_ABBREV.items():
+        s = _re.sub(p, r, s)
+    return s
+
+def _hdb_con():
+    con = _sq.connect(HDB_DB_PATH)
+    con.row_factory = _sq.Row
+    return con
+
+
+@app.route('/api/hdb/search', methods=['GET'])
+def hdb_search():
+    """
+    Autocomplete for towns and streets.
+    ?q=tampines  →  [{type, label, value}]
+    """
+    q = (request.args.get('q') or '').strip().upper()
+    if len(q) < 2:
+        return jsonify([])
+
+    q_expanded = _hdb_expand(q)
+    pattern = f'%{q_expanded}%'
+
+    con = _hdb_con()
+    towns = con.execute(
+        "SELECT DISTINCT town FROM resale WHERE town LIKE ? ORDER BY town LIMIT 6",
+        (f'%{q}%',)
+    ).fetchall()
+    streets = con.execute(
+        """SELECT DISTINCT street_name, town FROM resale
+           WHERE street_expanded LIKE ? ORDER BY street_name LIMIT 10""",
+        (pattern,)
+    ).fetchall()
+    con.close()
+
+    results = []
+    for r in towns:
+        results.append({"type": "town", "label": r["town"].title(), "value": r["town"]})
+    for r in streets:
+        label = f"{r['street_name'].title()} ({r['town'].title()})"
+        results.append({"type": "street", "label": label,
+                         "value": r["street_name"], "town": r["town"]})
+    return jsonify(results[:12])
+
+
+@app.route('/api/hdb/trend', methods=['GET'])
+def hdb_trend():
+    """
+    Price trend + comparable sales.
+    ?town=TAMPINES          — whole town
+    ?street=BEDOK NORTH RD  — single street (optionally &town=BEDOK)
+    &months=12              — lookback window (default 12)
+    &flat_type=4 ROOM       — optional filter
+    """
+    raw_town   = (request.args.get('town')   or '').strip().upper()
+    raw_street = (request.args.get('street') or '').strip().upper()
+    months     = min(int(request.args.get('months', 60)), 420)   # max 35 yrs
+    flat_type  = (request.args.get('flat_type') or '').strip().upper()
+
+    if not raw_town and not raw_street:
+        return jsonify({'error': 'Provide town or street'}), 400
+
+    # Expand abbreviations so old + new data both match
+    street_exp = _hdb_expand(raw_street) if raw_street else None
+
+    con = _hdb_con()
+
+    # ── Build WHERE clause ───────────────────────────────────
+    filters, params = [], []
+
+    if raw_town and not raw_street:
+        filters.append("town = ?")
+        params.append(raw_town)
+    elif raw_street:
+        filters.append("street_expanded LIKE ?")
+        params.append(f'%{street_exp}%')
+        if raw_town:
+            filters.append("town = ?")
+            params.append(raw_town)
+
+    if flat_type:
+        filters.append("flat_type = ?")
+        params.append(flat_type)
+
+    # Cutoff month
+    import datetime as _dt
+    cutoff = (_dt.date.today().replace(day=1)
+              - _dt.timedelta(days=months * 30)).strftime('%Y-%m')
+    filters.append("month >= ?")
+    params.append(cutoff)
+
+    where = " AND ".join(filters)
+
+    # ── Monthly trend ────────────────────────────────────────
+    trend_rows = con.execute(f"""
+        SELECT substr(month,1,7) AS mo,
+               CAST(AVG(resale_price) AS INTEGER) AS avg_price,
+               CAST(median_price AS INTEGER)       AS median_price,
+               COUNT(*) AS transactions
+        FROM (
+            SELECT month, resale_price,
+                   AVG(resale_price) OVER (PARTITION BY substr(month,1,7)) AS median_price
+            FROM resale WHERE {where}
+        )
+        GROUP BY mo ORDER BY mo
+    """, params).fetchall()
+
+    # ── By flat type breakdown ───────────────────────────────
+    type_params = [p for p in params]  # same filters
+    type_rows = con.execute(f"""
+        SELECT substr(month,1,7) AS mo, flat_type,
+               CAST(AVG(resale_price) AS INTEGER) AS avg_price
+        FROM resale WHERE {where}
+        GROUP BY mo, flat_type ORDER BY mo, flat_type
+    """, type_params).fetchall()
+
+    # ── Recent comparable sales ──────────────────────────────
+    recent_params = params[:-2] + params[-1:]  # drop cutoff, keep rest; last 6 months
+    recent_cutoff = (_dt.date.today().replace(day=1)
+                     - _dt.timedelta(days=6 * 30)).strftime('%Y-%m')
+    comparable_filters = [f for f in filters[:-1]] + ["month >= ?"]
+    comparable_where   = " AND ".join(comparable_filters)
+    comparable_params  = params[:-1] + [recent_cutoff]
+
+    comparables = con.execute(f"""
+        SELECT block, street_name, flat_type, storey_range,
+               floor_area_sqm, resale_price, month
+        FROM resale WHERE {comparable_where}
+        ORDER BY month DESC, resale_price DESC
+        LIMIT 10
+    """, comparable_params).fetchall()
+
+    # ── Summary stats ────────────────────────────────────────
+    summary = con.execute(f"""
+        SELECT COUNT(*)                        AS total,
+               CAST(AVG(resale_price) AS INT)  AS avg_price,
+               CAST(MIN(resale_price) AS INT)  AS min_price,
+               CAST(MAX(resale_price) AS INT)  AS max_price
+        FROM resale WHERE {where}
+    """, params).fetchone()
+
+    # ── Available flat types ─────────────────────────────────
+    ft_filters = [f for f in filters[:-1]]  # remove cutoff only
+    ft_where = " AND ".join(ft_filters) if ft_filters else "1=1"
+    flat_types_q = params[:-1]  # remove cutoff param only
+
+    flat_types = [r["flat_type"] for r in con.execute(
+        f"SELECT DISTINCT flat_type FROM resale WHERE {ft_where} ORDER BY flat_type",
+        flat_types_q
+    ).fetchall()] if ft_filters else []
+
+    con.close()
+
+    return jsonify({
+        "meta": {
+            "town":      raw_town or None,
+            "street":    raw_street or None,
+            "months":    months,
+            "flat_type": flat_type or None,
+        },
+        "trend": [
+            {"month": r["mo"], "avg_price": r["avg_price"],
+             "median_price": r["median_price"], "transactions": r["transactions"]}
+            for r in trend_rows
+        ],
+        "by_flat_type": [
+            {"month": r["mo"], "flat_type": r["flat_type"], "avg_price": r["avg_price"]}
+            for r in type_rows
+        ],
+        "comparables": [
+            {
+                "address":      f"{r['block']} {r['street_name'].title()}",
+                "flat_type":    r["flat_type"],
+                "storey_range": r["storey_range"],
+                "floor_area":   r["floor_area_sqm"],
+                "price":        r["resale_price"],
+                "month":        r["month"],
+            }
+            for r in comparables
+        ],
+        "summary": {
+            "total":     summary["total"],
+            "avg_price": summary["avg_price"],
+            "min_price": summary["min_price"],
+            "max_price": summary["max_price"],
+        },
+        "flat_types": flat_types,
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# END HDB TREND BLOCK
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 init_db()

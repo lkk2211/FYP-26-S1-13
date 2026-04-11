@@ -8,5 +8,11 @@ services:
     envVars:
       - key: DATABASE_URL
         sync: false        # Set this manually in Render dashboard → paste your Supabase connection string
+      - key: ONEMAP_EMAIL
+        sync: false        # Set this manually in Render dashboard → your OneMap account email
+      - key: ONEMAP_PASSWORD
+        sync: false        # Set this manually in Render dashboard → your OneMap account password
+      - key: URA_ACCESS_KEY
+        sync: false        # Set this manually in Render dashboard → register at ura.gov.sg/maps/api/reg.html
       - key: PYTHON_VERSION
         value: 3.11.0

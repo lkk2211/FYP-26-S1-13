@@ -5,3 +5,7 @@ pandas
 numpy
 scikit-learn
 gunicorn
+xgboost
+lightgbm
+catboost
+openpyxl
