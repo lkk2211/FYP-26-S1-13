@@ -11,8 +11,13 @@ falls back to the existing rule-based logic in predict_price().
 import os
 import pickle
 import datetime
-import numpy as np
-import pandas as pd
+
+try:
+    import numpy as np
+    import pandas as pd
+    _DEPS_AVAILABLE = True
+except ImportError:
+    _DEPS_AVAILABLE = False
 
 _DIR = os.path.dirname(os.path.abspath(__file__))
 

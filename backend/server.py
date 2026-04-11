@@ -1312,12 +1312,34 @@ def _sync_hdb(full=False):
     offset, limit, total_inserted = 0, 5000, 0
 
     while True:
+        url = BASE_URL + '?' + _up.urlencode(
+            {'resource_id': RESOURCE_ID, 'limit': limit, 'offset': offset})
+        req = urllib.request.Request(url, headers={'User-Agent': 'PropAI/1.0'})
+
+        # Retry with exponential backoff to handle 429 rate limiting
+        data = None
+        for attempt in range(4):
+            try:
+                with urllib.request.urlopen(req, timeout=60) as r:
+                    data = json.loads(r.read())
+                break
+            except urllib.error.HTTPError as e:
+                if e.code == 429:
+                    wait = 10 * (2 ** attempt)   # 10s, 20s, 40s, 80s
+                    print(f'[sync] HDB 429 at offset {offset}, waiting {wait}s (attempt {attempt+1})')
+                    time.sleep(wait)
+                else:
+                    print(f'[sync] HDB HTTP error at offset {offset}: {e}')
+                    break
+            except Exception as e:
+                print(f'[sync] HDB error at offset {offset}: {e}')
+                break
+
+        if data is None:
+            print(f'[sync] HDB fetch failed at offset {offset}, stopping sync')
+            break
+
         try:
-            url = BASE_URL + '?' + _up.urlencode(
-                {'resource_id': RESOURCE_ID, 'limit': limit, 'offset': offset})
-            req = urllib.request.Request(url, headers={'User-Agent': 'PropAI/1.0'})
-            with urllib.request.urlopen(req, timeout=60) as r:
-                data = json.loads(r.read())
             result  = data.get('result', {})
             records = result.get('records', [])
             total   = result.get('total', 0)
@@ -1364,9 +1386,9 @@ def _sync_hdb(full=False):
             print(f'[sync] HDB {offset:,}/{total:,}', end='\r')
             if offset >= total:
                 break
-            time.sleep(0.2)
+            time.sleep(0.5)   # gentle throttle between pages
         except Exception as e:
-            print(f'[sync] HDB error at offset {offset}: {e}')
+            print(f'[sync] HDB parse error at offset {offset}: {e}')
             break
 
     _update_sync_log('hdb', total_inserted)
