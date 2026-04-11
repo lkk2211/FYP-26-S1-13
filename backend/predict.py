@@ -1,4 +1,15 @@
 import math
+import os
+import sys
+
+# Load trained stacking models if available
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+try:
+    from model_inference import predict_hdb, predict_private
+    _ML_AVAILABLE = True
+except Exception:
+    _ML_AVAILABLE = False
+    predict_hdb = predict_private = lambda _: None
 
 # Singapore property data by postal code
 POSTAL_CONFIG = {
@@ -78,34 +89,57 @@ def predict_price(features):
     floor  = int(features.get('floor', 10))
 
     config = POSTAL_CONFIG.get(postal, DEFAULT_CONFIG)
+    is_private = config['property_type'] == 'Condominium'
+
+    # ── Try ML stacking model first ──────────────────────────────────────────
+    ml_price = None
+    if _ML_AVAILABLE:
+        if is_private:
+            ml_price = predict_private({
+                'postal':        postal,
+                'area_sqm':      area * 0.0929,   # sqft → sqm
+                'floor':         floor,
+                'property_type': 'CONDOMINIUM',
+                'type_of_sale':  'RESALE',
+                'tenure_type':   'LEASEHOLD',
+            })
+        else:
+            town = features.get('town', config.get('location', '').upper())
+            flat_type = features.get('flat_type',
+                        {1:'1 ROOM',2:'2 ROOM',3:'3 ROOM',4:'4 ROOM',5:'5 ROOM'}
+                        .get(beds, '4 ROOM'))
+            ml_price = predict_hdb({
+                'town':          town,
+                'flat_type':     flat_type,
+                'floor_area_sqm': area * 0.0929,
+                'storey_mid':    floor,
+                'lat':           features.get('lat'),
+                'lon':           features.get('lon'),
+            })
+    # ─────────────────────────────────────────────────────────────────────────
 
     # --- Price Calculation ---
-    psf = config["base_psf"]
-
-    # Floor premium: +0.6% per floor above ground for HDB, +0.9% for Condo
-    floor_pct = 0.009 if config["property_type"] == "Condominium" else 0.006
-    psf *= (1 + floor_pct * max(floor - 1, 0))
-
-    # Bedroom adjustment: each extra bedroom above 2 adds ~2% to psf
-    psf *= (1 + 0.02 * max(beds - 2, 0))
-
-    # Deterministic noise based on inputs (avoids random refresh changes)
-    seed_val = (int(postal) + int(area) + beds * 37 + floor * 13) % 100
-    noise_pct = (seed_val - 50) / 1000.0  # ±5%
-    psf *= (1 + noise_pct)
-
-    estimated_value = int(psf * area)
+    if ml_price is not None:
+        estimated_value = int(ml_price)
+        confidence = round(min(92.0 + min(floor / 50 * 2, 2), 97), 1)
+    else:
+        # Rule-based fallback
+        psf = config["base_psf"]
+        floor_pct = 0.009 if config["property_type"] == "Condominium" else 0.006
+        psf *= (1 + floor_pct * max(floor - 1, 0))
+        psf *= (1 + 0.02 * max(beds - 2, 0))
+        seed_val = (int(postal) + int(area) + beds * 37 + floor * 13) % 100
+        noise_pct = (seed_val - 50) / 1000.0
+        psf *= (1 + noise_pct)
+        estimated_value = int(psf * area)
+        base_conf = 90 if postal in POSTAL_CONFIG else 82
+        floor_bonus = min(floor / 50 * 3, 3)
+        bed_penalty = abs(beds - 3) * 0.5
+        confidence  = round(min(base_conf + floor_bonus - bed_penalty, 97), 1)
 
     # Price range (±8% band)
     min_value = int(estimated_value * 0.92)
     max_value = int(estimated_value * 1.08)
-
-    # --- Confidence ---
-    # Higher confidence for known postal codes, higher floors, standard room counts
-    base_conf = 90 if postal in POSTAL_CONFIG else 82
-    floor_bonus = min(floor / 50 * 3, 3)   # up to +3%
-    bed_penalty = abs(beds - 3) * 0.5       # penalty if unusual room count
-    confidence  = round(min(base_conf + floor_bonus - bed_penalty, 97), 1)
 
     # --- Factor Scores (0-100) ---
     loc_score  = config["mrt_score"]
@@ -166,7 +200,8 @@ def predict_price(features):
         "district":         config["district"],
         "insight":          config["insight"],
         "recommendation":   config["recommendation"],
-        "factors":          factors
+        "factors":          factors,
+        "model_source":     "ml_stacked" if ml_price is not None else "rule_based"
     }
 
 
