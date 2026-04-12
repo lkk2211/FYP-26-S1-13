@@ -1877,6 +1877,7 @@ async function loadDataTabStats() {
         const data = await res.json();
         const ids = {
             'data-hdb-count':      data.hdb_tx_count,
+            'data-ura-count':      data.priv_tx_count,
             'data-geocoded-count': data.geocoded_count,
             'data-policy-count':   data.policy_count,
             'data-sora-count':     data.sora_count,
