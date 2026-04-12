@@ -1727,18 +1727,17 @@ function closeFooterModal() {
 let _uploadType = 'hdb';
 
 const _UPLOAD_HINTS = {
-    hdb:      { label: 'Expected HDB CSV columns:', cols: 'month, town, flat_type, flat_model, floor_area_sqm, storey_range, resale_price, remaining_lease, lease_commence_date' },
-    private:  { label: 'Expected URA Private Property CSV columns:', cols: 'Project Name, Transacted Price ($), Area (SQFT), Unit Price ($ PSF), Sale Date, Street Name, Type of Sale, Type of Area, Area (SQM), Unit Price ($ PSM), Nett Price($), Property Type, Number of Units, Tenure, Postal District, Market Segment, Floor Level' },
-    geocoded: { label: 'Expected Geocoded Addresses CSV columns:', cols: 'postal_code, address, latitude, longitude, town, planning_area' },
-    policy:   { label: 'Expected Policy Changes XLSX columns:', cols: 'date, direction, severity, description' },
-    sora:     { label: 'Expected SORA Rates XLSX columns:', cols: 'date, published_rate' },
+    hdb:      { label: 'Expected HDB Resale CSV columns:', cols: 'month, town, flat_type, block, street_name, storey_range, floor_area_sqm, flat_model, lease_commence_date, remaining_lease, resale_price' },
+    geocoded: { label: 'Expected Geocoded Addresses CSV columns:', cols: 'search_text, lat, lon' },
+    policy:   { label: 'Expected Policy Changes XLSX columns:', cols: 'effective_month, effective_date, policy_name, category, direction, severity, source' },
+    sora:     { label: 'Expected SORA Rates XLSX columns:', cols: 'SORA Publication Date, Compound SORA - 3 month' },
 };
 
 function setUploadType(type) {
     _uploadType = type;
     const activeClass   = 'px-5 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-bold transition-all';
     const inactiveClass = 'px-5 py-2.5 bg-slate-100 text-slate-600 rounded-xl text-sm font-bold transition-all hover:bg-slate-200';
-    ['hdb','private','geocoded','policy','sora'].forEach(t => {
+    ['hdb','geocoded','policy','sora'].forEach(t => {
         const btn = document.getElementById(`upload-type-${t}`);
         if (btn) btn.className = t === type ? activeClass : inactiveClass;
     });
@@ -1797,7 +1796,6 @@ async function loadDataTabStats() {
         const data = await res.json();
         const ids = {
             'data-hdb-count':      data.hdb_tx_count,
-            'data-private-count':  data.priv_tx_count,
             'data-geocoded-count': data.geocoded_count,
             'data-policy-count':   data.policy_count,
             'data-sora-count':     data.sora_count,

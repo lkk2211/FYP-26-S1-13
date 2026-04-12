@@ -1525,81 +1525,58 @@ def upload_transactions():
                         return v if v not in ('', None) else default
             return default
 
+        def _row_exec(cur, sql, params):
+            """Execute one row INSERT with savepoint recovery so a bad row
+            doesn't abort the whole PostgreSQL transaction."""
+            if USE_POSTGRES:
+                cur.execute("SAVEPOINT _row_sp")
+                try:
+                    cur.execute(sql, params)
+                    cur.execute("RELEASE SAVEPOINT _row_sp")
+                    return True
+                except Exception:
+                    cur.execute("ROLLBACK TO SAVEPOINT _row_sp")
+                    return False
+            else:
+                try:
+                    cur.execute(sql, params)
+                    return True
+                except Exception:
+                    return False
+
         if tx_type == 'hdb':
             for r in rows:
-                try:
-                    cur.execute(_q("""
+                # Normalise month: "YYYY-MM" → "YYYY-MM-01" so it's valid for both
+                # TEXT and DATE column types in PostgreSQL
+                raw_month = str(_get(r,'month') or '').strip()
+                if len(raw_month) == 7 and raw_month[4] == '-':   # "YYYY-MM"
+                    raw_month = raw_month + '-01'
+
+                ok = _row_exec(cur, _q("""
                         INSERT INTO hdb_resale
                             (month, town, flat_type, flat_model, floor_area_sqm,
                              storey_range, resale_price, remaining_lease,
                              lease_commence_date, block, street_name, upload_batch)
                         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-                    """), (_get(r,'month'), _get(r,'town'), _get(r,'flat_type','flattype'),
-                           _get(r,'flat_model','flatmodel'),
-                           float(_get(r,'floor_area_sqm','floorareasqm') or 0),
-                           _get(r,'storey_range','storeyrange'),
-                           float(_get(r,'resale_price','resaleprice') or 0),
-                           _get(r,'remaining_lease','remaininglease'),
-                           int(float(_get(r,'lease_commence_date','leasecommencedate') or 0)) or None,
+                    """), (raw_month,
+                           _get(r,'town'),
+                           _get(r,'flat_type','flat_type'),
+                           _get(r,'flat_model','flat_model'),
+                           float(str(_get(r,'floor_area_sqm','floor_area_sqm') or '0').replace(',','') or 0),
+                           _get(r,'storey_range','storey_range'),
+                           float(str(_get(r,'resale_price','resale_price') or '0').replace(',','') or 0),
+                           _get(r,'remaining_lease','remaining_lease'),
+                           int(float(str(_get(r,'lease_commence_date','lease_commence_date') or '0').replace(',','') or 0)) or None,
                            str(_get(r,'block') or '').strip() or None,
-                           _get(r,'street_name','streetname','street name'),
+                           _get(r,'street_name','street_name'),
                            batch_id))
+                if ok:
                     inserted += 1
-                except Exception:
-                    continue
-        elif tx_type == 'private':
-            # URA private property CSV format:
-            # Project Name, Transacted Price ($), Area (SQFT), Unit Price ($ PSF),
-            # Sale Date, Street Name, Type of Sale, Type of Area, Area (SQM),
-            # Unit Price ($ PSM), Nett Price($), Property Type, Number of Units,
-            # Tenure, Postal District, Market Segment, Floor Level
-            for r in rows:
-                try:
-                    def _safe_float(v):
-                        try: return float(str(v).replace(',','')) if v else None
-                        except: return None
-                    def _safe_int(v):
-                        try: return int(float(str(v).replace(',',''))) if v else None
-                        except: return None
-
-                    cur.execute(_q("""
-                        INSERT INTO ura_transactions
-                            (project, street, property_type, market_segment,
-                             postal_district, floor_level, floor_area_sqft, floor_area_sqm,
-                             type_of_sale, type_of_area, transacted_price,
-                             unit_price_psf, unit_price_psm, nett_price,
-                             tenure, num_units, sale_date, upload_batch)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                    """), (
-                        _get(r,'project name','project'),
-                        _get(r,'street name','street'),
-                        _get(r,'property type','propertytype'),
-                        _get(r,'market segment','marketsegment'),
-                        _get(r,'postal district','postaldistrict'),
-                        _get(r,'floor level','floorlevel'),
-                        _safe_float(_get(r,'area sqft','floorareasqft')),
-                        _safe_float(_get(r,'area sqm','floorareasqm')),
-                        _get(r,'type of sale','typeofsale'),
-                        _get(r,'type of area','typeofarea'),
-                        _safe_float(_get(r,'transacted price','price')),
-                        _safe_float(_get(r,'unit price psf','unitpricepsf')),
-                        _safe_float(_get(r,'unit price psm','unitpricepsm')),
-                        _safe_float(_get(r,'nett price','nettprice')),
-                        _get(r,'tenure'),
-                        _safe_int(_get(r,'number of units','numunits')),
-                        _get(r,'sale date','saledate','contract date','contractdate'),
-                        batch_id
-                    ))
-                    inserted += 1
-                except Exception:
-                    continue
-
         elif tx_type == 'geocoded':
             for r in rows:
-                try:
-                    lat_v = float(str(_get(r,'lat','latitude') or '').replace(',','') or 0) or None
-                    lon_v = float(str(_get(r,'lon','lng','longitude') or '').replace(',','') or 0) or None
-                    cur.execute(_q("""
+                lat_v = float(str(_get(r,'lat','latitude') or '').replace(',','') or 0) or None
+                lon_v = float(str(_get(r,'lon','lng','longitude') or '').replace(',','') or 0) or None
+                ok = _row_exec(cur, _q("""
                         INSERT INTO geocoded_addresses
                             (search_text, lat, lon, postal_code, address, town, planning_area, upload_batch)
                         VALUES (?,?,?,?,?,?,?,?)
@@ -1612,30 +1589,29 @@ def upload_transactions():
                         _get(r,'planning_area','planningarea','planning area'),
                         batch_id
                     ))
+                if ok:
                     inserted += 1
-                except Exception:
-                    continue
 
         elif tx_type == 'policy':
             for r in rows:
-                try:
-                    # effective_month: store as YYYY-MM (first day of month)
-                    eff_month_raw = _get(r,'effective_month','effectivemonth','date','policy_date','policydate')
-                    if hasattr(eff_month_raw, 'strftime'):
-                        eff_month = eff_month_raw.strftime('%Y-%m')
-                    elif eff_month_raw:
-                        eff_month = str(eff_month_raw)[:7]  # trim to YYYY-MM
-                    else:
-                        eff_month = None
-                    # effective_date: full date string
-                    eff_date_raw = _get(r,'effective_date','effectivedate')
-                    if hasattr(eff_date_raw, 'strftime'):
-                        eff_date = eff_date_raw.strftime('%Y-%m-%d')
-                    elif eff_date_raw:
-                        eff_date = str(eff_date_raw)[:10]
-                    else:
-                        eff_date = None
-                    cur.execute(_q("""
+                # effective_month: store as YYYY-MM-01 for DB compatibility
+                eff_month_raw = _get(r,'effective_month','effectivemonth','date','policy_date','policydate')
+                if hasattr(eff_month_raw, 'strftime'):
+                    eff_month = eff_month_raw.strftime('%Y-%m-01')
+                elif eff_month_raw:
+                    s = str(eff_month_raw).strip()
+                    eff_month = s[:7] + '-01' if len(s) >= 7 else s
+                else:
+                    eff_month = None
+                # effective_date: full date string YYYY-MM-DD
+                eff_date_raw = _get(r,'effective_date','effectivedate')
+                if hasattr(eff_date_raw, 'strftime'):
+                    eff_date = eff_date_raw.strftime('%Y-%m-%d')
+                elif eff_date_raw:
+                    eff_date = str(eff_date_raw)[:10]
+                else:
+                    eff_date = None
+                ok = _row_exec(cur, _q("""
                         INSERT INTO policy_changes
                             (effective_month, effective_date, policy_name, category,
                              direction, severity, source, upload_batch)
@@ -1650,40 +1626,42 @@ def upload_transactions():
                         _get(r,'source','url','reference'),
                         batch_id
                     ))
+                if ok:
                     inserted += 1
-                except Exception:
-                    continue
 
         elif tx_type == 'sora':
             for r in rows:
-                try:
-                    cur.execute(_q("""
+                rate_date_raw = _get(r,'sora publication date','sorapublicationdate','date','rate_date','ratedate','published_date')
+                # Normalise to a plain string; pandas Timestamp → str gives "YYYY-MM-DD HH:MM:SS"
+                if hasattr(rate_date_raw, 'strftime'):
+                    rate_date = rate_date_raw.strftime('%Y-%m-%d')
+                else:
+                    rate_date = str(rate_date_raw).strip() if rate_date_raw else None
+                ok = _row_exec(cur, _q("""
                         INSERT INTO sora_rates (rate_date, published_rate, upload_batch)
                         VALUES (?,?,?)
                     """), (
-                        _get(r,'sora publication date','sorapublicationdate','date','rate_date','ratedate','published_date'),
+                        rate_date,
                         float(str(_get(r,'compound sora - 3 month','compoundsora-3month','sora_3m','sora','published_rate','rate') or '').replace(',','') or 0) or None,
                         batch_id
                     ))
+                if ok:
                     inserted += 1
-                except Exception:
-                    continue
 
-        # Delete records older than 10 years from transaction tables
+        # Delete HDB records older than 10 years
+        # month is stored as "YYYY-MM-01"; compare as a plain string (ISO sorts correctly)
         if tx_type == 'hdb':
             try:
                 if USE_POSTGRES:
-                    cur.execute("DELETE FROM hdb_resale WHERE month IS NOT NULL AND CAST(month AS DATE) < NOW() - INTERVAL '10 years'")
+                    cur.execute(
+                        "DELETE FROM hdb_resale WHERE month IS NOT NULL "
+                        "AND month < to_char(NOW() - INTERVAL '10 years', 'YYYY-MM-01')"
+                    )
                 else:
-                    cur.execute("DELETE FROM hdb_resale WHERE month IS NOT NULL AND month < date('now', '-10 years')")
-            except Exception:
-                pass
-        elif tx_type == 'private':
-            try:
-                if USE_POSTGRES:
-                    cur.execute("DELETE FROM ura_transactions WHERE uploaded_at < NOW() - INTERVAL '10 years'")
-                else:
-                    cur.execute("DELETE FROM ura_transactions WHERE uploaded_at < date('now', '-10 years')")
+                    cur.execute(
+                        "DELETE FROM hdb_resale WHERE month IS NOT NULL "
+                        "AND month < strftime('%Y-%m-01', 'now', '-10 years')"
+                    )
             except Exception:
                 pass
 
