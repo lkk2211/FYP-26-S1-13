@@ -70,13 +70,37 @@ function togglePredictView(mode) {
     }
 }
 
+// Available floor areas for the snapping slider (populated per postal + bedrooms)
+let _availableAreas = [];
+
 function updateSlider(id) {
-    const range = document.getElementById('range-' + id);
+    const range   = document.getElementById('range-' + id);
     const display = document.getElementById('val-' + id);
-    if (range && display) {
-        display.innerText = id === 'area' ? parseInt(range.value).toLocaleString() : range.value;
+    if (!range) return;
+    if (id === 'area' && _availableAreas.length > 0) {
+        // Index-based: slider value is index into _availableAreas
+        const idx    = Math.min(parseInt(range.value), _availableAreas.length - 1);
+        const actual = _availableAreas[idx];
+        range.dataset.actualValue = actual;
+        if (display) display.innerText = actual.toLocaleString();
+    } else {
+        if (display) display.innerText = id === 'area' ? parseInt(range.value).toLocaleString() : range.value;
     }
     if (id === 'bedrooms') _loadFlatSpecs();
+}
+
+function getAreaValue() {
+    const range = document.getElementById('range-area');
+    if (!range) return 1000;
+    if (_availableAreas.length > 0) {
+        const idx = Math.min(parseInt(range.value), _availableAreas.length - 1);
+        return _availableAreas[idx];
+    }
+    return parseInt(range.value);
+}
+
+function _onPropertyTypeChange() {
+    _loadFlatSpecs();
 }
 
 // Flat type mapping (bedrooms → HDB flat type)
@@ -86,48 +110,63 @@ const _BEDS_TO_FLAT_TYPE = {
 
 async function _loadFlatSpecs() {
     const bedsEl = document.getElementById('range-bedrooms');
+    const propEl = document.getElementById('input-property-type');
     if (!bedsEl) return;
-    const beds     = parseInt(bedsEl.value);
-    const flatType = _BEDS_TO_FLAT_TYPE[beds] || 'EXECUTIVE';
-    const town     = _predictTown;
 
-    const url = `/api/hdb/flat-specs?flat_type=${encodeURIComponent(flatType)}` +
-                (town ? `&town=${encodeURIComponent(town)}` : '');
+    const beds     = parseInt(bedsEl.value);
+    const propType = propEl ? propEl.value : 'HDB';
+    const postal   = document.getElementById('input-postal')?.value?.trim() || '';
+
     try {
+        const url = `/api/property-areas?bedrooms=${beds}&property_type=${encodeURIComponent(propType)}` +
+                    (postal ? `&postal=${encodeURIComponent(postal)}` : '');
         const res  = await fetch(url);
         const data = await res.json();
 
-        // Update area slider
+        const areas      = data.floor_areas || [];
+        const maxFloor   = data.max_floor   || 50;
+
+        // ── Area slider (index-based snap) ────────────────────────
         const areaRange = document.getElementById('range-area');
         const areaHint  = document.getElementById('area-range-hint');
-        if (areaRange && data.area_sqft_min) {
-            areaRange.min = data.area_sqft_min;
-            areaRange.max = data.area_sqft_max;
-            const clamped = Math.min(Math.max(parseInt(areaRange.value), data.area_sqft_min), data.area_sqft_max);
-            areaRange.value = clamped || data.area_sqft_median;
-            updateSlider('area');
-            if (areaHint) areaHint.textContent =
-                `Typical for ${flatType}: ${data.area_sqft_min.toLocaleString()}–${data.area_sqft_max.toLocaleString()} sq ft` +
-                (data.source === 'db' ? ` (from ${data.count?.toLocaleString()} records)` : ' (estimated)');
+        if (areaRange && areas.length > 0) {
+            _availableAreas = areas;
+
+            // Find index of current value's nearest match
+            const curActual = parseInt(areaRange.dataset.actualValue || areas[Math.floor(areas.length / 2)]);
+            const nearestIdx = areas.reduce((best, v, i) =>
+                Math.abs(v - curActual) < Math.abs(areas[best] - curActual) ? i : best, 0);
+
+            areaRange.min   = 0;
+            areaRange.max   = areas.length - 1;
+            areaRange.step  = 1;
+            areaRange.value = nearestIdx;
+            updateSlider('area');   // sets dataset.actualValue + display
+
+            if (areaHint) {
+                const min = areas[0], max = areas[areas.length - 1];
+                areaHint.textContent = `${areas.length} size option${areas.length > 1 ? 's' : ''}: `
+                    + `${min.toLocaleString()}–${max.toLocaleString()} sq ft`;
+            }
         }
 
-        // Update floor slider
+        // ── Floor slider ──────────────────────────────────────────
         const floorRange   = document.getElementById('range-floor');
         const floorHint    = document.getElementById('floor-max-hint');
         const floorDisplay = document.getElementById('floor-max-display');
-        if (floorRange && data.max_floor) {
-            floorRange.max = data.max_floor;
-            if (parseInt(floorRange.value) > data.max_floor) {
-                floorRange.value = Math.max(1, Math.floor(data.max_floor / 2));
+        if (floorRange && maxFloor) {
+            floorRange.max = maxFloor;
+            if (parseInt(floorRange.value) > maxFloor) {
+                floorRange.value = Math.max(1, Math.floor(maxFloor / 2));
                 updateSlider('floor');
             }
-            if (floorDisplay) floorDisplay.textContent = data.max_floor;
+            if (floorDisplay) floorDisplay.textContent = maxFloor;
             if (floorHint) floorHint.textContent =
-                `Max: ${data.max_floor} floors` +
-                (town ? ` in ${town.charAt(0) + town.slice(1).toLowerCase()}` : '') +
-                (data.source === 'db' ? ' (from transaction data)' : ' (estimated)');
+                `Max: ${maxFloor} floors` +
+                (_predictTown ? ` in ${_predictTown.charAt(0) + _predictTown.slice(1).toLowerCase()}` : '') +
+                ' (from transaction data)';
         }
-    } catch(e) { /* silent */ }
+    } catch { /* silent */ }
 }
 
 async function handlePostalSearch() {
@@ -180,14 +219,31 @@ async function handlePostalSearch() {
         document.getElementById('input-postal').value = postal;
 
         const placeholder = document.getElementById('postal-placeholder');
-        const details = document.getElementById('postal-details');
+        const details     = document.getElementById('postal-details');
+        const landedBanner = document.getElementById('landed-rejection');
         placeholder.classList.add('hidden');
-        details.classList.remove('hidden');
+        details.classList.add('hidden');          // will be revealed by property-lookup
+        if (landedBanner) landedBanner.classList.add('hidden');
 
-        // Auto-fill property type + lease type from backend
+        // Auto-fill property type + lease type from backend; detect landed
         fetch(`/api/property-lookup?postal=${encodeURIComponent(postal)}`)
             .then(r => r.json())
             .then(info => {
+                const landedEl  = document.getElementById('landed-rejection');
+                const detailsEl = document.getElementById('postal-details');
+
+                if (info.is_landed) {
+                    // Show landed rejection, hide prediction form
+                    if (landedEl)  landedEl.classList.remove('hidden');
+                    if (detailsEl) detailsEl.classList.add('hidden');
+                    lucide.createIcons();
+                    return;
+                }
+
+                // Valid HDB or Condo — show details
+                if (landedEl)  landedEl.classList.add('hidden');
+                if (detailsEl) detailsEl.classList.remove('hidden');
+
                 if (info.property_type) {
                     const ptEl = document.getElementById('input-property-type');
                     if (ptEl) ptEl.value = info.property_type;
@@ -197,7 +253,7 @@ async function handlePostalSearch() {
                     if (ltEl) ltEl.value = info.lease_type;
                 }
                 _predictTown = info.town || '';
-                _loadFlatSpecs();   // update area + floor sliders for this town
+                _loadFlatSpecs();
             })
             .catch(() => {});
     } catch {
@@ -215,21 +271,20 @@ async function handlePredict() {
     btn.innerHTML = '<i data-lucide="loader-2" class="w-6 h-6 animate-spin"></i> Calculating...';
     lucide.createIcons();
     
-    const postal = document.getElementById('input-postal').value;
-    lastMapPostal = postal;
-    const area = document.getElementById('range-area').value;
+    const postal   = document.getElementById('input-postal').value;
+    lastMapPostal  = postal;
+    const area     = getAreaValue();
     const bedrooms = document.getElementById('range-bedrooms').value;
-    const floor = document.getElementById('range-floor').value;
+    const floor    = document.getElementById('range-floor').value;
+    const propType = document.getElementById('input-property-type')?.value || 'HDB';
 
     try {
         const response = await fetch('/api/predict', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-                postal: postal,
-                area: area,
-                bedrooms: bedrooms,
-                floor: floor
+            body: JSON.stringify({
+                postal, area, bedrooms, floor,
+                property_type: propType,
             })
         });
         const data = await response.json();
@@ -440,7 +495,6 @@ async function loadMap() {
 async function initMapForPostal(postal) {
     const placeholder = document.getElementById('map-placeholder');
     const mapDiv      = document.getElementById('leaflet-map');
-    const addrBar     = document.getElementById('map-address-bar');
 
     placeholder.innerHTML = `<div class="flex flex-col items-center gap-3 text-slate-400">
         <svg class="w-8 h-8 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
@@ -716,30 +770,56 @@ async function reverseGeocodeAndShow(lat, lng) {
 
         addDraggablePin(lat, lng);
         const validPostal = (postal && /^\d{6}$/.test(postal)) ? postal : null;
-        showPinResultBar(validPostal, shortAddr, lat, lng);
+
+        // Fetch property type to know if prediction is available
+        let propInfo = null;
+        if (validPostal) {
+            try {
+                const pr = await fetch(`/api/property-lookup?postal=${validPostal}`);
+                propInfo = await pr.json();
+            } catch { /* silent */ }
+        }
+        showPinResultBar(validPostal, shortAddr, lat, lng, propInfo);
     } catch {
         addDraggablePin(lat, lng);
-        showPinResultBar(null, `${lat.toFixed(5)}, ${lng.toFixed(5)}`, lat, lng);
+        showPinResultBar(null, `${lat.toFixed(5)}, ${lng.toFixed(5)}`, lat, lng, null);
     }
 }
 
-function showPinResultBar(postal, address, lat, lng) {
-    // Show popup anchored to the pin instead of the bottom bar
+function showPinResultBar(postal, address, lat, lng, propInfo) {
     if (!_draggablePin) return;
-    const predictHtml = postal
+
+    const isLanded    = propInfo?.is_landed === true;
+    const canPredict  = postal && !isLanded && (propInfo?.property_type === 'HDB' || propInfo?.property_type === 'Condominium');
+    const propType    = propInfo?.property_type || '';
+
+    // Prediction availability badge
+    const predBadge = canPredict
+        ? `<div style="background:linear-gradient(135deg,#dcfce7,#bbf7d0);border:1px solid #86efac;border-radius:10px;padding:5px 10px;margin-bottom:8px;display:flex;align-items:center;gap:5px">
+            <span style="width:7px;height:7px;border-radius:50%;background:#16a34a;flex-shrink:0"></span>
+            <span style="font-size:10px;font-weight:700;color:#15803d">Price prediction available for this ${propType}!</span>
+           </div>`
+        : (isLanded
+            ? `<div style="background:#fefce8;border:1px solid #fde047;border-radius:10px;padding:5px 10px;margin-bottom:8px">
+                <span style="font-size:10px;font-weight:700;color:#a16207">Landed property — prediction unavailable</span>
+               </div>`
+            : '');
+
+    const predictBtn = canPredict
         ? `<button onclick="usePostalFromMap('${postal}')" style="background:linear-gradient(135deg,#2563eb,#7c3aed);color:white;border:none;padding:6px 14px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;margin-right:6px">Predict</button>`
         : '';
+
     const popupHtml = `
-        <div style="min-width:200px;font-family:inherit">
-            <p style="font-weight:700;font-size:13px;color:#0f172a;margin:0 0 4px">${postal ? '📮 ' + postal : '📍 Location'}</p>
-            <p style="font-size:11px;color:#64748b;margin:0 0 10px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${address}">${address}</p>
+        <div style="min-width:210px;font-family:inherit">
+            ${predBadge}
+            <p style="font-weight:700;font-size:13px;color:#0f172a;margin:0 0 3px">${postal ? '📮 ' + postal : '📍 Location'}</p>
+            <p style="font-size:11px;color:#64748b;margin:0 0 10px;max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${address}">${address}</p>
             <div style="display:flex;gap:6px">
-                ${predictHtml}
+                ${predictBtn}
                 <button onclick="(function(){document.querySelector('.leaflet-popup-close-button')&&document.querySelector('.leaflet-popup-close-button').click();loadAmenities(${lat},${lng},'${postal||''}');})()" style="background:none;border:1.5px solid #f97316;color:#f97316;padding:6px 14px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer">Explore</button>
             </div>
         </div>`;
-    _draggablePin.bindPopup(popupHtml, { offset: [0, -30], closeButton: true, maxWidth: 260 }).openPopup();
-    // Also hide the bottom bar if visible
+    _draggablePin.bindPopup(popupHtml, { offset: [0, -30], closeButton: true, maxWidth: 270 }).openPopup();
     const bar = document.getElementById('pin-result-bar');
     if (bar) bar.classList.add('hidden');
     lucide.createIcons();
@@ -2433,13 +2513,15 @@ lucide.createIcons();
 startMarketTicker();
 
 // ── Market ticker (floating price badge) ─────────────────────
+// Ticker data based on Singapore HDB/Condo market Q1 2026 estimates
+// CCR/RCR/OCR condo PSF and HDB resale medians from transaction data trends
 const _TICKER_ITEMS = [
-    { label: 'Avg CCR Condo PSF',       value: 'S$2,142', change: '↑ 3.1%', up: true,  sub: 'Q1 2026 · Marina / Orchard' },
-    { label: 'OCR HDB 4-Room Avg',      value: 'S$598k',  change: '↑ 1.8%', up: true,  sub: 'Q1 2026 · Woodlands' },
-    { label: 'RCR Condo Avg PSF',       value: 'S$1,890', change: '↑ 2.4%', up: true,  sub: 'Q1 2026 · Queenstown' },
-    { label: 'D15 Landed Avg PSF',      value: 'S$1,720', change: '↑ 0.9%', up: true,  sub: 'Q1 2026 · East Coast' },
-    { label: 'Bishan HDB 5-Room Avg',   value: 'S$824k',  change: '↑ 2.2%', up: true,  sub: 'Q1 2026 · Bishan' },
-    { label: 'Sentosa Condo Avg PSF',   value: 'S$2,680', change: '↓ 0.5%', up: false, sub: 'Q1 2026 · Sentosa Cove' },
+    { label: 'CCR Condo Avg PSF',       value: 'S$2,286', change: '↑ 2.8%', up: true,  sub: 'Q1 2026 · Marina Bay / Orchard' },
+    { label: 'OCR HDB 4-Room Median',   value: 'S$556k',  change: '↑ 1.9%', up: true,  sub: 'Q1 2026 · Jurong West / Woodlands' },
+    { label: 'RCR Condo Avg PSF',       value: 'S$1,904', change: '↑ 2.1%', up: true,  sub: 'Q1 2026 · Queenstown / Toa Payoh' },
+    { label: 'Bishan HDB 5-Room Median',value: 'S$796k',  change: '↑ 3.2%', up: true,  sub: 'Q1 2026 · Bishan' },
+    { label: 'Tampines HDB 4-Room Avg', value: 'S$562k',  change: '↑ 1.7%', up: true,  sub: 'Q1 2026 · Tampines' },
+    { label: 'Sentosa Cove Condo PSF',  value: 'S$2,148', change: '↓ 0.4%', up: false, sub: 'Q1 2026 · Sentosa Cove' },
 ];
 
 let _tickerIdx  = 0;

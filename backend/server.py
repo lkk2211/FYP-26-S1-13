@@ -1368,8 +1368,12 @@ def property_lookup():
         building = str(result.get('BUILDING') or '').strip().upper()
         blk_no   = str(result.get('BLK_NO') or '').strip()
 
-        # Detect HDB: no named building + numeric block number
+        # Detect HDB: no named building + numeric block number (e.g. "406", "123A")
         is_hdb = (building in ('NIL', '')) and bool(_re.match(r'^\d+[A-Z]?$', blk_no))
+        # Condo: has a proper named building (not NIL)
+        is_condo  = not is_hdb and building not in ('NIL', '')
+        # Landed: not HDB, no building name — standalone house
+        is_landed = not is_hdb and not is_condo
 
         town = None
         if lat and lon:
@@ -1402,11 +1406,19 @@ def property_lookup():
             except Exception:
                 pass
 
-        prop_type  = 'HDB' if is_hdb else 'Condominium'
-        lease_type = '99-year Leasehold' if is_hdb else 'Freehold'
+        if is_hdb:
+            prop_type  = 'HDB'
+            lease_type = '99-year Leasehold'
+        elif is_landed:
+            prop_type  = 'Landed'
+            lease_type = 'Freehold'
+        else:
+            prop_type  = 'Condominium'
+            lease_type = 'Freehold'
         return jsonify({
             'town': town, 'property_type': prop_type,
             'lease_type': lease_type, 'is_hdb': is_hdb,
+            'is_landed': is_landed, 'building_name': building,
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -1484,6 +1496,138 @@ def hdb_flat_specs():
         'source':           'db',
         'count':            n,
     })
+
+
+@app.route('/api/property-areas', methods=['GET'])
+def property_areas():
+    """Return distinct floor areas (sqft) and max floor for a property,
+    used to build a snapping slider on the predict tab."""
+    import re as _re
+
+    postal        = request.args.get('postal', '').strip()
+    bedrooms      = int(request.args.get('bedrooms', 3))
+    property_type = request.args.get('property_type', 'HDB')
+
+    # Postal sector → URA postal district mapping (first 2 postal digits)
+    _SECTOR_TO_DISTRICT = {
+        '01':'D01','02':'D01','03':'D01','04':'D01','05':'D01','06':'D01',
+        '07':'D02','08':'D02',
+        '14':'D03','15':'D03','16':'D03',
+        '09':'D04','10':'D04',
+        '11':'D05','12':'D05','13':'D05',
+        '17':'D06',
+        '18':'D07','19':'D07',
+        '20':'D08','21':'D08',
+        '22':'D09','23':'D09','24':'D09',
+        '25':'D10','26':'D10','27':'D10',
+        '28':'D11','29':'D11','30':'D11',
+        '31':'D12','32':'D12','33':'D12',
+        '34':'D13','35':'D13','36':'D13','37':'D13',
+        '38':'D14','39':'D14','40':'D14','41':'D14',
+        '42':'D15','43':'D15','44':'D15','45':'D15',
+        '46':'D16','47':'D16','48':'D16',
+        '49':'D17','50':'D17','81':'D17',
+        '51':'D18','52':'D18',
+        '53':'D19','54':'D19','55':'D19','82':'D19',
+        '56':'D20','57':'D20',
+        '58':'D21','59':'D21',
+        '60':'D22','61':'D22','62':'D22','63':'D22',
+        '64':'D23','65':'D23','66':'D23','67':'D23','68':'D23',
+        '69':'D24','70':'D24','71':'D24',
+        '72':'D25','73':'D25',
+        '77':'D26','78':'D26',
+        '75':'D27','76':'D27',
+        '79':'D28','80':'D28',
+    }
+
+    # Fallback condo floor areas (sqft) by bedroom count — typical Singapore condo sizes
+    _CONDO_PRESETS = {
+        1: [484, 506, 527, 560, 614, 635, 700],
+        2: [764, 807, 850, 915, 969, 1044],
+        3: [1098, 1163, 1216, 1302, 1389, 1453],
+        4: [1432, 1550, 1604, 1722, 1830, 1981],
+        5: [2000, 2153, 2400, 2583, 2800, 3000],
+        6: [2500, 3000, 3500, 4000, 4500, 5000],
+    }
+
+    _BEDS_TO_FLAT = {1:'1 ROOM',2:'2 ROOM',3:'3 ROOM',4:'4 ROOM',5:'5 ROOM',6:'EXECUTIVE'}
+    flat_type = _BEDS_TO_FLAT.get(bedrooms, '3 ROOM')
+
+    floor_areas = []
+    max_floor   = 50
+
+    try:
+        conn = get_db()
+        cur  = _cursor(conn)
+
+        if property_type == 'HDB':
+            # Distinct floor areas (sqm) → converted to sqft, rounded to 5 sqft
+            cur.execute(_q(
+                "SELECT DISTINCT floor_area_sqm FROM hdb_resale "
+                "WHERE flat_type = ? AND floor_area_sqm IS NOT NULL ORDER BY floor_area_sqm"
+            ), (flat_type,))
+            rows = cur.fetchall()
+            sqm_vals = sorted(set(float(r['floor_area_sqm'] if hasattr(r, '__getitem__') else r[0])
+                                  for r in rows if (r['floor_area_sqm'] if hasattr(r, '__getitem__') else r[0])))
+            floor_areas = sorted(set(round(s * 10.764 / 5.0) * 5 for s in sqm_vals))
+
+            # Max floor from storey_range
+            cur.execute(_q(
+                "SELECT storey_range FROM hdb_resale WHERE flat_type = ? AND storey_range LIKE '% TO %'"
+            ), (flat_type,))
+            storeys = [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0]) for r in cur.fetchall()]
+            def _top(s):
+                try: return int(s.split(' TO ')[-1].strip())
+                except: return 0
+            top_floors = [_top(s) for s in storeys]
+            if top_floors:
+                max_floor = max(top_floors)
+
+        else:  # Condominium
+            sector   = postal[:2] if len(postal) >= 2 else ''
+            district = _SECTOR_TO_DISTRICT.get(sector, '')
+            if district:
+                cur.execute(_q(
+                    "SELECT DISTINCT floor_area_sqft FROM ura_transactions "
+                    "WHERE postal_district = ? AND floor_area_sqft IS NOT NULL AND floor_area_sqft > 0 "
+                    "ORDER BY floor_area_sqft"
+                ), (district,))
+                rows = cur.fetchall()
+                raw = sorted(set(float(r['floor_area_sqft'] if hasattr(r, '__getitem__') else r[0])
+                                 for r in rows if (r['floor_area_sqft'] if hasattr(r, '__getitem__') else r[0])))
+                # Round to nearest 50 sqft, deduplicate
+                floor_areas = sorted(set(round(v / 50.0) * 50 for v in raw))
+
+                # Max floor from floor_level field
+                cur.execute(_q(
+                    "SELECT floor_level FROM ura_transactions "
+                    "WHERE postal_district = ? AND floor_level IS NOT NULL AND floor_level != ''"
+                ), (district,))
+                fl_rows = [str(r['floor_level'] if hasattr(r, '__getitem__') else r[0]) for r in cur.fetchall()]
+                def _fl_top(s):
+                    nums = _re.findall(r'\d+', s)
+                    return int(nums[-1]) if nums else 0
+                tops = [_fl_top(s) for s in fl_rows]
+                if tops:
+                    max_floor = max(tops)
+
+        conn.close()
+    except Exception:
+        pass
+
+    # Fall back to bedroom-based presets if no DB data
+    if not floor_areas:
+        if property_type == 'HDB':
+            _HDB_PRESETS = {
+                '1 ROOM':[330,355],'2 ROOM':[474,506],'3 ROOM':[646,700,753,807],
+                '4 ROOM':[915,969,1023,1076,1130],'5 ROOM':[1163,1216,1302,1389,1453,1507],
+                'EXECUTIVE':[1313,1399,1485,1571,1657],
+            }
+            floor_areas = _HDB_PRESETS.get(flat_type, [700,800,900])
+        else:
+            floor_areas = _CONDO_PRESETS.get(bedrooms, _CONDO_PRESETS[3])
+
+    return jsonify({'floor_areas': floor_areas, 'max_floor': int(max_floor)})
 
 
 @app.route('/api/admin/upload-transactions', methods=['POST'])

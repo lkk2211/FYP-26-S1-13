@@ -162,6 +162,8 @@ _TOWN_DISPLAY = {
 
 _pipelines = None
 _meta = None
+_private_pipelines = None
+_private_meta = None
 
 
 def _load_models():
@@ -175,16 +177,34 @@ def _load_models():
         meta = joblib.load(os.path.join(MODELS_DIR, 'meta.joblib'))
         _pipelines = [xgb, lgbm, cat]
         _meta = meta
-        # Refresh policy/SORA from DB (overrides values baked into meta)
         pol, sor = _load_latest_policy_sora()
-        if pol:
-            _meta['latest_policy'] = pol
-        if sor is not None:
-            _meta['latest_sora'] = sor
-        print("[predict] ML models loaded successfully")
+        if pol:   _meta['latest_policy'] = pol
+        if sor is not None: _meta['latest_sora'] = sor
+        print("[predict] HDB ML models loaded successfully")
         return True
     except Exception as e:
-        print(f"[predict] ML models not available, using fallback: {e}")
+        print(f"[predict] HDB ML models not available: {e}")
+        return False
+
+
+def _load_private_models():
+    global _private_pipelines, _private_meta
+    if _private_pipelines is not None:
+        return True
+    try:
+        xgb  = joblib.load(os.path.join(MODELS_DIR, 'xgb_private_pipeline.joblib'))
+        lgbm = joblib.load(os.path.join(MODELS_DIR, 'lgbm_private_pipeline.joblib'))
+        cat  = joblib.load(os.path.join(MODELS_DIR, 'cat_private_pipeline.joblib'))
+        meta = joblib.load(os.path.join(MODELS_DIR, 'meta_private.joblib'))
+        _private_pipelines = [xgb, lgbm, cat]
+        _private_meta = meta
+        pol, sor = _load_latest_policy_sora()
+        if pol:   _private_meta['latest_policy'] = pol
+        if sor is not None: _private_meta['latest_sora'] = sor
+        print("[predict] Private ML models loaded successfully")
+        return True
+    except Exception as e:
+        print(f"[predict] Private ML models not available: {e}")
         return False
 
 
@@ -469,14 +489,207 @@ def _predict_fallback(features):
     }
 
 
+# ─── Private property (condo) ML prediction ──────────────────────────────────
+
+# Postal sector (first 2 digits) → URA district + market segment
+_SECTOR_TO_DISTRICT = {
+    '01':'D01','02':'D01','03':'D01','04':'D01','05':'D01','06':'D01',
+    '07':'D02','08':'D02','14':'D03','15':'D03','16':'D03',
+    '09':'D04','10':'D04','11':'D05','12':'D05','13':'D05','17':'D06',
+    '18':'D07','19':'D07','20':'D08','21':'D08',
+    '22':'D09','23':'D09','24':'D09','25':'D10','26':'D10','27':'D10',
+    '28':'D11','29':'D11','30':'D11','31':'D12','32':'D12','33':'D12',
+    '34':'D13','35':'D13','36':'D13','37':'D13',
+    '38':'D14','39':'D14','40':'D14','41':'D14',
+    '42':'D15','43':'D15','44':'D15','45':'D15',
+    '46':'D16','47':'D16','48':'D16','49':'D17','50':'D17','81':'D17',
+    '51':'D18','52':'D18','53':'D19','54':'D19','55':'D19','82':'D19',
+    '56':'D20','57':'D20','58':'D21','59':'D21',
+    '60':'D22','61':'D22','62':'D22','63':'D22',
+    '64':'D23','65':'D23','66':'D23','67':'D23','68':'D23',
+    '69':'D24','70':'D24','71':'D24','72':'D25','73':'D25',
+    '75':'D27','76':'D27','77':'D26','78':'D26','79':'D28','80':'D28',
+}
+_CCR_DISTRICTS = {'D01','D02','D04','D09','D10','D11'}
+_RCR_DISTRICTS = {'D03','D05','D06','D07','D08','D12','D13','D14','D15','D20','D21'}
+
+
+def _predict_private_ml(features):
+    postal    = str(features.get('postal', '')).strip().zfill(6)
+    area_sqft = float(features.get('area', 1000))
+    floor     = int(features.get('floor', 10))
+
+    sector   = postal[:2]
+    district = _SECTOR_TO_DISTRICT.get(sector, 'D15')
+    if district in _CCR_DISTRICTS:
+        segment = 'CCR'
+    elif district in _RCR_DISTRICTS:
+        segment = 'RCR'
+    else:
+        segment = 'OCR'
+
+    now = datetime.now()
+    year     = now.year
+    quarter  = (now.month - 1) // 3 + 1
+    time_idx_raw = year * 12 + now.month
+    time_idx = time_idx_raw - _private_meta.get('time_idx_min', 24000)
+
+    pol  = _private_meta.get('latest_policy', {})
+    sora = float(_private_meta.get('latest_sora', 3.5))
+
+    num_cols = _private_meta.get('numerical_cols', [])
+    cat_cols = _private_meta.get('categorical_cols', ['property_type','market_segment','type_of_sale','postal_district'])
+
+    feat = {
+        'property_type':   'Condominium',
+        'market_segment':  segment,
+        'type_of_sale':    'Resale',
+        'postal_district': district,
+        'floor_area_sqft': area_sqft,
+        'floor_level_num': float(floor),
+        'year':            year,
+        'quarter':         quarter,
+        'time_idx':        time_idx,
+        'direction':       float(pol.get('direction', 0)),
+        'severity':        float(pol.get('severity', 0)),
+        'policy_impact':   float(pol.get('policy_impact', 0)),
+        'months_since_policy_change': int(pol.get('months_since_policy_change', 0)),
+        'sora':            sora,
+    }
+
+    try:
+        row = pd.DataFrame([{k: feat[k] for k in (cat_cols + num_cols) if k in feat}])
+        preds_log = [p.predict(row)[0] for p in _private_pipelines]
+        ensemble_log = np.mean(preds_log)
+        estimated_value = int(np.exp(ensemble_log))
+    except Exception as e:
+        print(f"[predict_private] inference error: {e}")
+        return None
+
+    spread = float(np.std([np.exp(v) for v in preds_log]))
+    cv = spread / max(estimated_value, 1)
+    confidence = round(max(68.0, min(93.0, 90.0 - cv * 200)), 1)
+
+    psf = estimated_value / area_sqft if area_sqft > 0 else 0
+    location_display = {
+        'CCR': 'Core Central Region', 'RCR': 'Rest of Central Region',
+        'OCR': 'Outside Central Region',
+    }.get(segment, segment)
+
+    floor_score = min(int(35 + floor * 1.5), 98)
+    area_score  = min(int(45 + (area_sqft - 700) * 0.05), 98)
+
+    return {
+        "estimated_value": estimated_value,
+        "min_value":  int(estimated_value * 0.91),
+        "max_value":  int(estimated_value * 1.09),
+        "confidence": confidence,
+        "market_trend":    "+2.3%",
+        "trend_direction": "up",
+        "market_state":    "Active",
+        "location":        location_display,
+        "property_type":   "Condominium",
+        "district":        district,
+        "insight": (
+            f"This {segment} condominium in {district} ({location_display}) is estimated at "
+            f"S${psf:,.0f} PSF based on recent private residential transaction data. "
+            "Predicted using an ensemble ML model trained on URA private property transactions."
+        ),
+        "recommendation": (
+            f"Estimated value S${estimated_value:,} — compare against URA caveat lodgements for "
+            f"{district} before making an offer. {segment} condos have shown steady demand."
+        ),
+        "factors": [
+            {"name": "Market Demand",       "score": 78, "label": "High",
+             "desc": f"Consistent buyer interest in {location_display} private residential."},
+            {"name": "Floor Level Premium", "score": floor_score,
+             "label": "Very High" if floor_score >= 85 else "High",
+             "desc": f"Level {floor} adds view and ventilation premiums typical in condominiums."},
+            {"name": "Floor Area",          "score": area_score,
+             "label": "High" if area_score >= 70 else "Moderate",
+             "desc": f"{area_sqft:.0f} sqft — {'spacious' if area_sqft >= 1200 else 'comfortable'} for a condo unit."},
+            {"name": "Location Premium",    "score": 82, "label": "High",
+             "desc": f"{district} ({segment}) offers {'premium' if segment == 'CCR' else 'good'} connectivity and amenities."},
+            {"name": "Investment Potential","score": 74, "label": "High",
+             "desc": "Private residential prices remain resilient with stable expat and upgrader demand."},
+            {"name": "MRT Proximity",       "score": 76, "label": "High",
+             "desc": "Strong MRT network coverage across Singapore supports private property values."},
+        ],
+    }
+
+
 # ─── Public entry point ───────────────────────────────────────────────────────
 
 def predict_price(features):
-    if _load_models():
-        result = _predict_ml(features)
-        if result is not None:
-            return result
-    return _predict_fallback(features)
+    prop_type = str(features.get('property_type', 'HDB')).strip()
+    is_condo  = prop_type.lower() in ('condominium', 'condo', 'private')
+
+    if is_condo:
+        if _load_private_models():
+            result = _predict_private_ml(features)
+            if result is not None:
+                return result
+        # Condo fallback — use rule-based with condo PSF
+        return _predict_fallback_condo(features)
+    else:
+        if _load_models():
+            result = _predict_ml(features)
+            if result is not None:
+                return result
+        return _predict_fallback(features)
+
+
+def _predict_fallback_condo(features):
+    """Rule-based fallback for condominiums when private ML model is unavailable."""
+    postal    = str(features.get('postal', '000000')).strip().zfill(6)
+    area_sqft = float(features.get('area', 1000))
+    floor     = int(features.get('floor', 10))
+
+    sector   = postal[:2]
+    district = _SECTOR_TO_DISTRICT.get(sector, 'D15')
+    if district in _CCR_DISTRICTS:
+        base_psf, segment = 2420, 'CCR'
+    elif district in _RCR_DISTRICTS:
+        base_psf, segment = 1904, 'RCR'
+    else:
+        base_psf, segment = 1520, 'OCR'
+
+    psf = base_psf * (1 + 0.012 * max(floor - 1, 0))
+    seed = (int(postal) + int(area_sqft) + floor * 17) % 100
+    psf  *= (1 + (seed - 50) / 1200.0)
+    estimated_value = int(psf * area_sqft)
+    location_display = {
+        'CCR': 'Core Central Region', 'RCR': 'Rest of Central Region',
+        'OCR': 'Outside Central Region',
+    }.get(segment, segment)
+
+    return {
+        "estimated_value": estimated_value,
+        "min_value":  int(estimated_value * 0.91),
+        "max_value":  int(estimated_value * 1.09),
+        "confidence": 78.0,
+        "market_trend":    "+2.1%", "trend_direction": "up",
+        "market_state":    "Active",
+        "location":        location_display,
+        "property_type":   "Condominium",
+        "district":        district,
+        "insight": (
+            f"Estimated at S${psf:,.0f} PSF for a {segment} condominium in {district}. "
+            "This is a rule-based estimate; train the private property model for higher accuracy."
+        ),
+        "recommendation": (
+            f"Indicative value: S${estimated_value:,}. Cross-check with URA caveat data and "
+            "recent transactions on PropertyGuru or 99.co before proceeding."
+        ),
+        "factors": [
+            {"name": "Market Demand",       "score": 76, "label": "High",   "desc": f"Stable demand in {location_display}."},
+            {"name": "Floor Level Premium", "score": min(int(35+floor*1.5),98), "label": "High", "desc": f"Level {floor} adds a view premium."},
+            {"name": "Floor Area",          "score": min(int(45+(area_sqft-700)*0.05),98), "label": "Moderate", "desc": f"{area_sqft:.0f} sqft unit."},
+            {"name": "Location Premium",    "score": 80 if segment=="CCR" else 72, "label": "High", "desc": f"{district} ({segment})."},
+            {"name": "Investment Potential","score": 72, "label": "High",   "desc": "Private residential remains a stable asset class."},
+            {"name": "MRT Proximity",       "score": 75, "label": "High",   "desc": "Good MRT coverage across Singapore."},
+        ],
+    }
 
 
 if __name__ == "__main__":

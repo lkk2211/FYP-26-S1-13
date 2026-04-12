@@ -329,6 +329,21 @@
                                     </div>
                                 </div>
 
+                                <!-- Landed property rejection banner -->
+                                <div id="landed-rejection" class="hidden bg-amber-50 border border-amber-200 rounded-2xl p-5 space-y-3 animate-fade-in">
+                                    <div class="flex items-start gap-3">
+                                        <i data-lucide="home" class="w-5 h-5 text-amber-600 shrink-0 mt-0.5"></i>
+                                        <div>
+                                            <p class="font-bold text-amber-800 text-sm">Landed property detected</p>
+                                            <p class="text-xs text-amber-700 mt-0.5 leading-relaxed">Landed properties (terraces, semi-Ds, bungalows) have highly varied floor areas and layouts that our AI model does not support. Price prediction is unavailable for this address.</p>
+                                        </div>
+                                    </div>
+                                    <button onclick="showView('map')" class="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold transition-all">
+                                        <i data-lucide="map-pin" class="w-4 h-4"></i>
+                                        Explore nearby amenities on the Map instead
+                                    </button>
+                                </div>
+
                                 <!-- Found State Details -->
                                 <div id="postal-details" class="hidden space-y-6 animate-fade-in">
                                     <div class="p-4 bg-emerald-50 border border-emerald-100 rounded-xl flex items-center gap-3 text-emerald-700 text-sm font-medium">
@@ -348,10 +363,9 @@
                                         <div class="grid grid-cols-2 gap-4">
                                             <div class="space-y-1">
                                                 <label class="text-xs font-bold text-slate-500 uppercase">Property Type</label>
-                                                <select id="input-property-type" class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium appearance-none">
+                                                <select id="input-property-type" class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium appearance-none" onchange="_onPropertyTypeChange()">
                                                     <option>Condominium</option>
                                                     <option>HDB</option>
-                                                    <option>Landed</option>
                                                 </select>
                                             </div>
                                             <div class="space-y-1">
