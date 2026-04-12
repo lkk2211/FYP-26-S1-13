@@ -1848,26 +1848,66 @@ async function handleCsvUpload() {
     btn.disabled = true;
     btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Uploading...';
     lucide.createIcons();
-    if (status) { status.className = 'text-sm text-slate-500'; status.textContent = 'Uploading...'; }
+    if (status) { status.className = 'text-sm text-slate-500'; status.textContent = 'Uploading file…'; status.classList.remove('hidden'); }
 
     try {
         const res  = await fetch('/api/admin/upload-transactions', { method: 'POST', body: formData });
         const data = await res.json();
         if (data.error) throw new Error(data.error);
-        const msg = `Uploaded ${data.inserted.toLocaleString()} of ${data.total_rows.toLocaleString()} rows successfully.`;
-        if (status) { status.className = 'text-sm text-emerald-600 font-medium'; status.textContent = msg; status.classList.remove('hidden'); }
+
+        // Async job — poll for completion
+        if (data.job_id) {
+            input.value = '';
+            const label = document.getElementById('upload-file-label');
+            if (label) label.textContent = 'Click to select a CSV file';
+            btn.disabled = false;
+            btn.innerHTML = '<i data-lucide="upload" class="w-4 h-4"></i> Upload to Database';
+            lucide.createIcons();
+            _pollUploadStatus(data.job_id, status);
+            return;
+        }
+
+        // Sync response (URA / SQLite)
+        const msg = `Uploaded ${(data.inserted||0).toLocaleString()} of ${(data.total_rows||0).toLocaleString()} rows successfully.`;
+        if (status) { status.className = 'text-sm text-emerald-600 font-medium'; status.textContent = msg; }
         showToast(msg);
         input.value = '';
-        const label = document.getElementById('upload-file-label');
-        if (label) label.textContent = 'Click to select a CSV file';
+        const label2 = document.getElementById('upload-file-label');
+        if (label2) label2.textContent = 'Click to select a CSV file';
         loadDataTabStats();
     } catch (e) {
-        if (status) { status.className = 'text-sm text-red-500 font-medium'; status.textContent = `Error: ${e.message}`; status.classList.remove('hidden'); }
+        if (status) { status.className = 'text-sm text-red-500 font-medium'; status.textContent = `Error: ${e.message}`; }
         showToast('Upload failed: ' + e.message);
     } finally {
         btn.disabled = false;
         btn.innerHTML = '<i data-lucide="upload" class="w-4 h-4"></i> Upload to Database';
         lucide.createIcons();
+    }
+}
+
+async function _pollUploadStatus(jobId, statusEl) {
+    const start = Date.now();
+    while (true) {
+        await new Promise(r => setTimeout(r, 2500));
+        try {
+            const res  = await fetch(`/api/admin/upload-status?job_id=${jobId}`);
+            const data = await res.json();
+            const elapsed = Math.round((Date.now() - start) / 1000);
+
+            if (data.state === 'processing') {
+                if (statusEl) statusEl.textContent = `Processing… ${(data.inserted||0).toLocaleString()} rows staged (${elapsed}s)`;
+            } else if (data.state === 'done') {
+                const msg = `Upload complete — ${(data.inserted||0).toLocaleString()} rows processed.`;
+                if (statusEl) { statusEl.className = 'text-sm text-emerald-600 font-medium'; statusEl.textContent = msg; }
+                showToast(msg);
+                loadDataTabStats();
+                return;
+            } else if (data.state === 'error') {
+                if (statusEl) { statusEl.className = 'text-sm text-red-500 font-medium'; statusEl.textContent = `Error: ${data.message}`; }
+                showToast('Upload failed: ' + data.message);
+                return;
+            }
+        } catch (_) { /* keep polling on transient network errors */ }
     }
 }
 

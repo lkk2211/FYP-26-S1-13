@@ -28,6 +28,105 @@ _retrain_status = {
 }
 _retrain_lock = threading.Lock()
 
+# ── Upload job tracking (async background processing) ────────────────────────
+_upload_jobs  = {}   # job_id → {state, message, inserted, total_rows}
+_upload_lock  = threading.Lock()
+
+
+def _run_upload_thread(job_id, file_bytes, filename, tx_type):
+    """Background thread: stream CSV into staging tables then call process_uploaded_data() RPC."""
+    import csv, io, re as _re
+
+    def _upd(state, message, inserted=0, total=0):
+        with _upload_lock:
+            _upload_jobs[job_id] = {
+                'state': state, 'message': message,
+                'inserted': inserted, 'total_rows': total,
+            }
+
+    _upd('processing', 'Starting upload…')
+
+    # ── _get helper (same fuzzy lookup as in the sync path) ───────────────────
+    def _get(row, *keys, default=None):
+        for k in keys:
+            kn = k.lower().replace(' ', '').replace('(', '').replace(')', '').replace('$', '').replace('#', '').replace('-', '').replace('_', '')
+            for col in row:
+                cn = col.strip().lower().replace(' ', '').replace('(', '').replace(')', '').replace('$', '').replace('#', '').replace('-', '').replace('_', '')
+                if cn == kn:
+                    v = row[col]
+                    return v if v not in ('', None) else default
+        return default
+
+    try:
+        import pandas as pd, psycopg2.extras as _pge
+
+        is_excel = filename.endswith('.xlsx') or filename.endswith('.xls')
+
+        if USE_POSTGRES and tx_type in ('hdb', 'geocoded', 'policy', 'sora') and not is_excel:
+            # ── ELT: stream CSV → staging → RPC ──────────────────────────────
+            if tx_type == 'hdb':
+                stage_sql = "INSERT INTO stage_resale (month, town, flat_type, block, street_name, storey_range, floor_area_sqm, flat_model, lease_commence_date, remaining_lease, resale_price) VALUES %s"
+                def _make_row(r):
+                    return (str(_get(r,'month') or ''), str(_get(r,'town') or ''),
+                            str(_get(r,'flat_type') or ''), str(_get(r,'block') or '').strip(),
+                            str(_get(r,'street_name') or ''), str(_get(r,'storey_range') or ''),
+                            str(_get(r,'floor_area_sqm') or ''), str(_get(r,'flat_model') or ''),
+                            str(_get(r,'lease_commence_date') or ''), str(_get(r,'remaining_lease') or ''),
+                            str(_get(r,'resale_price') or ''))
+            elif tx_type == 'sora':
+                stage_sql = "INSERT INTO stage_sora (publication_date, compound_sora_3m, compound_sora_6m, highest_transacted_rate, lowest_transacted_rate) VALUES %s"
+                def _make_row(r):
+                    return (str(_get(r,'sora publication date','sorapublicationdate','publication_date','publication date','sora value date','soravaluedate','date','rate_date') or ''),
+                            str(_get(r,'compound sora - 3 month','compoundsora-3month','compound_sora_3m','sora_3m','published_rate','rate') or ''),
+                            str(_get(r,'compound sora - 6 month','compoundsora-6month','compound_sora_6m','sora_6m') or ''),
+                            str(_get(r,'highest transacted rate','highest_transacted_rate','highesttransactedrate') or ''),
+                            str(_get(r,'lowest transacted rate','lowest_transacted_rate','lowesttransactedrate') or ''))
+            elif tx_type == 'policy':
+                stage_sql = "INSERT INTO stage_policy (effective_month, effective_date, policy_name, category, direction, severity, source) VALUES %s"
+                def _make_row(r):
+                    return (str(_get(r,'effective_month','effectivemonth','date','policy_date') or ''),
+                            str(_get(r,'effective_date','effectivedate') or ''),
+                            str(_get(r,'policy_name','policyname','name','description','measure') or ''),
+                            str(_get(r,'category') or ''),
+                            str(_get(r,'direction','effect') or ''),
+                            str(_get(r,'severity','severity_score','score') or ''),
+                            str(_get(r,'source','url','reference') or ''))
+            elif tx_type == 'geocoded':
+                stage_sql = "INSERT INTO stage_geo (search_text, lat, lon) VALUES %s"
+                def _make_row(r):
+                    return (str(_get(r,'search_text','searchtext','search text') or ''),
+                            str(_get(r,'lat','latitude') or ''),
+                            str(_get(r,'lon','lng','longitude') or ''))
+
+            conn = get_db(); cur = _cursor(conn)
+            total = 0
+            try:
+                for chunk_df in pd.read_csv(io.BytesIO(file_bytes), chunksize=5000,
+                                            dtype=str, keep_default_na=False):
+                    chunk_rows  = chunk_df.where(chunk_df.notna(), '').to_dict('records')
+                    chunk_stage = [_make_row(r) for r in chunk_rows]
+                    if chunk_stage:
+                        _pge.execute_values(cur, stage_sql, chunk_stage, page_size=1000)
+                        total += len(chunk_stage)
+                    _upd('processing', f'Staged {total:,} rows…', total, total)
+                _upd('processing', 'Running database cleaning…', total, total)
+                cur.execute("SELECT process_uploaded_data()")
+                conn.commit()
+                conn.close()
+                _upd('done', f'Upload complete — {total:,} rows processed.', total, total)
+            except Exception as e:
+                conn.rollback(); conn.close()
+                _upd('error', str(e))
+            return
+
+        # ── Direct insert (SQLite / URA) ─────────────────────────────────────
+        # Re-use the synchronous logic by calling _process_rows_direct()
+        # which is defined inside upload_transactions but we duplicate here minimally.
+        _upd('error', f'Unsupported async path for type={tx_type} on this backend.')
+
+    except Exception as e:
+        _upd('error', str(e))
+
 
 def _run_training_thread(model_type):
     """Background thread: run training script as subprocess, then reset model cache."""
@@ -1920,62 +2019,15 @@ def upload_transactions():
                         pass
         return total
 
-    # ── ELT path: stream CSV in 5 000-row chunks → staging → RPC (Postgres only)
-    # Avoids loading 200 k+ rows into RAM all at once.  URA is handled below.
+    # ── ELT path: hand off to background thread, return immediately ───────────
+    # Avoids gunicorn worker timeout on large files (227k+ rows).
     if USE_POSTGRES and tx_type in ('hdb', 'geocoded', 'policy', 'sora') and not is_excel:
-        import pandas as pd, psycopg2.extras as _pge
-
-        if tx_type == 'hdb':
-            stage_sql = "INSERT INTO stage_resale (month, town, flat_type, block, street_name, storey_range, floor_area_sqm, flat_model, lease_commence_date, remaining_lease, resale_price) VALUES %s"
-            def _make_row(r):
-                return (str(_get(r,'month') or ''), str(_get(r,'town') or ''),
-                        str(_get(r,'flat_type') or ''), str(_get(r,'block') or '').strip(),
-                        str(_get(r,'street_name') or ''), str(_get(r,'storey_range') or ''),
-                        str(_get(r,'floor_area_sqm') or ''), str(_get(r,'flat_model') or ''),
-                        str(_get(r,'lease_commence_date') or ''), str(_get(r,'remaining_lease') or ''),
-                        str(_get(r,'resale_price') or ''))
-        elif tx_type == 'sora':
-            stage_sql = "INSERT INTO stage_sora (publication_date, compound_sora_3m, compound_sora_6m, highest_transacted_rate, lowest_transacted_rate) VALUES %s"
-            def _make_row(r):
-                return (str(_get(r,'sora publication date','sorapublicationdate','publication_date','publication date','sora value date','soravaluedate','date','rate_date') or ''),
-                        str(_get(r,'compound sora - 3 month','compoundsora-3month','compound_sora_3m','sora_3m','published_rate','rate') or ''),
-                        str(_get(r,'compound sora - 6 month','compoundsora-6month','compound_sora_6m','sora_6m') or ''),
-                        str(_get(r,'highest transacted rate','highest_transacted_rate','highesttransactedrate') or ''),
-                        str(_get(r,'lowest transacted rate','lowest_transacted_rate','lowesttransactedrate') or ''))
-        elif tx_type == 'policy':
-            stage_sql = "INSERT INTO stage_policy (effective_month, effective_date, policy_name, category, direction, severity, source) VALUES %s"
-            def _make_row(r):
-                return (str(_get(r,'effective_month','effectivemonth','date','policy_date') or ''),
-                        str(_get(r,'effective_date','effectivedate') or ''),
-                        str(_get(r,'policy_name','policyname','name','description','measure') or ''),
-                        str(_get(r,'category') or ''),
-                        str(_get(r,'direction','effect') or ''),
-                        str(_get(r,'severity','severity_score','score') or ''),
-                        str(_get(r,'source','url','reference') or ''))
-        elif tx_type == 'geocoded':
-            stage_sql = "INSERT INTO stage_geo (search_text, lat, lon) VALUES %s"
-            def _make_row(r):
-                return (str(_get(r,'search_text','searchtext','search text') or ''),
-                        str(_get(r,'lat','latitude') or ''),
-                        str(_get(r,'lon','lng','longitude') or ''))
-
-        conn = get_db(); cur = _cursor(conn)
-        total = 0
-        try:
-            for chunk_df in pd.read_csv(io.BytesIO(file_bytes), chunksize=5000,
-                                        dtype=str, keep_default_na=False):
-                chunk_rows  = chunk_df.where(chunk_df.notna(), '').to_dict('records')
-                chunk_stage = [_make_row(r) for r in chunk_rows]
-                if chunk_stage:
-                    _pge.execute_values(cur, stage_sql, chunk_stage, page_size=1000)
-                    total += len(chunk_stage)
-            cur.execute("SELECT process_uploaded_data()")
-            conn.commit()
-            conn.close()
-            return jsonify({'inserted': total, 'total_rows': total, 'batch_id': batch_id})
-        except Exception as e:
-            conn.rollback(); conn.close()
-            return jsonify({'error': str(e)}), 500
+        with _upload_lock:
+            _upload_jobs[batch_id] = {'state': 'processing', 'message': 'Queued…', 'inserted': 0, 'total_rows': 0}
+        threading.Thread(target=_run_upload_thread,
+                         args=(batch_id, file_bytes, filename, tx_type),
+                         daemon=True).start()
+        return jsonify({'job_id': batch_id, 'message': 'Upload started'})
 
     # ── All other paths: parse file fully (Excel, SQLite, URA) ───────────────
     try:
@@ -2201,6 +2253,16 @@ def retrain_models():
 def retrain_status():
     with _retrain_lock:
         return jsonify(dict(_retrain_status))
+
+
+@app.route('/api/admin/upload-status', methods=['GET'])
+def upload_status():
+    job_id = request.args.get('job_id', '')
+    with _upload_lock:
+        job = _upload_jobs.get(job_id)
+    if not job:
+        return jsonify({'state': 'not_found', 'message': 'Job not found'}), 404
+    return jsonify(job)
 
 
 @app.route('/api/admin/sync-ura', methods=['POST'])
