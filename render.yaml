@@ -3,10 +3,12 @@ services:
     name: propaisg
     runtime: python
     rootDir: backend
-    buildCommand: pip install -r ../requirements.txt && python train_model.py
+    buildCommand: pip install -r ../requirements.txt && python train_model.py && (python train_model_private.py || echo "URA private model skipped — set URA_ACCESS_KEY in Render dashboard")
     startCommand: gunicorn server:app --bind 0.0.0.0:$PORT
     envVars:
       - key: DATABASE_URL
-        sync: false        # Set this manually in Render dashboard → paste your Supabase connection string
+        sync: false        # Set in Render dashboard → Supabase connection string
+      - key: URA_ACCESS_KEY
+        sync: false        # Set in Render dashboard → your URA access key
       - key: PYTHON_VERSION
         value: 3.11.0
