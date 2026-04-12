@@ -1882,6 +1882,86 @@ def upload_transactions():
                 batch_id,
             ))
 
+    elif tx_type == 'ura':
+        # URA private property transactions CSV downloaded from URA website.
+        # Accepted column names (case-insensitive):
+        #   Project Name / project
+        #   Street Name / street
+        #   Property Type / property_type
+        #   Market Segment / market_segment
+        #   Postal District / postal_district
+        #   Floor Level / floor_level
+        #   Area (SQFT) / floor_area_sqft
+        #   Area (SQM)  / floor_area_sqm
+        #   Type of Sale / type_of_sale
+        #   Transacted Price ($) / transacted_price
+        #   Unit Price ($ PSF) / unit_price_psf
+        #   Unit Price ($ PSM) / unit_price_psm
+        #   Tenure / tenure
+        #   Number of Units / num_units
+        #   Sale Date / Nett Price($) optional
+
+        # Full refresh: wipe existing URA data before inserting CSV
+        conn2 = get_db(); cur2 = _cursor(conn2)
+        try:
+            cur2.execute('DELETE FROM ura_transactions')
+            conn2.commit()
+        except Exception:
+            conn2.rollback()
+        finally:
+            conn2.close()
+
+        sql = _q("""INSERT INTO ura_transactions
+                    (project, street, property_type, market_segment,
+                     postal_district, floor_level, floor_area_sqft, floor_area_sqm,
+                     type_of_sale, transacted_price, unit_price_psf, unit_price_psm,
+                     tenure, num_units, sale_date, upload_batch)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""")
+        for r in rows:
+            sale_raw = _get(r, 'sale date', 'saledate', 'sale_date', 'contractdate', 'contract date')
+            sale_date = _norm_date(sale_raw)
+            if not sale_date:
+                # URA CSV uses "Jan-24" or "Jan-2024" format
+                import re as _re2
+                s = str(sale_raw or '').strip()
+                m = _re2.match(r'([A-Za-z]{3})[-\s](\d{2,4})', s)
+                if m:
+                    import datetime as _dt2
+                    try:
+                        mo = _dt2.datetime.strptime(m.group(1), '%b').month
+                        yr = int(m.group(2))
+                        yr = 2000 + yr if yr < 100 else yr
+                        sale_date = f'{yr}-{mo:02d}-01'
+                    except Exception:
+                        pass
+
+            sqft = _sf(_get(r, 'area sqft', 'areasqft', 'floor_area_sqft', 'area(sqft)', 'areasqft'))
+            sqm  = _sf(_get(r, 'area sqm',  'areasqm',  'floor_area_sqm',  'area(sqm)',  'areasqm'))
+            if sqft and not sqm:
+                sqm = sqft / 10.764
+            elif sqm and not sqft:
+                sqft = sqm * 10.764
+
+            district = str(_get(r, 'postal district', 'postaldistrict', 'postal_district', 'district') or '0').strip().zfill(2)
+
+            params_list.append((
+                _get(r, 'project name', 'projectname', 'project'),
+                _get(r, 'street name', 'streetname', 'street'),
+                _get(r, 'property type', 'propertytype', 'property_type'),
+                _get(r, 'market segment', 'marketsegment', 'market_segment'),
+                district,
+                _get(r, 'floor level', 'floorlevel', 'floor_level', 'floor range', 'floorrange'),
+                sqft, sqm,
+                _get(r, 'type of sale', 'typeofsale', 'type_of_sale'),
+                _sf(_get(r, 'transacted price', 'transactedprice', 'transacted_price', 'transactedprice$')),
+                _sf(_get(r, 'unit price psf', 'unitpricepsf', 'unit_price_psf', 'unitprice$psf')),
+                _sf(_get(r, 'unit price psm', 'unitpricepsm', 'unit_price_psm', 'unitprice$psm')),
+                _get(r, 'tenure'),
+                _si(_get(r, 'number of units', 'numberofunits', 'num_units', 'noofunits'), default=1),
+                sale_date,
+                batch_id,
+            ))
+
     # ── Execute batch inserts ─────────────────────────────────────────────────
 
     conn = get_db()

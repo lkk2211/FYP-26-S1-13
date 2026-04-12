@@ -1808,6 +1808,7 @@ let _uploadType = 'hdb';
 
 const _UPLOAD_HINTS = {
     hdb:      { label: 'Expected HDB Resale CSV columns:', cols: 'month, town, flat_type, block, street_name, storey_range, floor_area_sqm, flat_model, lease_commence_date, remaining_lease, resale_price' },
+    ura:      { label: 'Expected URA Transactions CSV columns (download from URA website):', cols: 'Project Name, Street Name, Property Type, Market Segment, Postal District, Floor Level, Area (SQFT), Area (SQM), Type of Sale, Transacted Price ($), Unit Price ($ PSF), Unit Price ($ PSM), Tenure, Number of Units, Sale Date' },
     geocoded: { label: 'Expected Geocoded Addresses CSV columns:', cols: 'search_text, lat, lon' },
     policy:   { label: 'Expected Policy Changes XLSX columns:', cols: 'effective_month, effective_date, policy_name, category, direction, severity, source' },
     sora:     { label: 'Expected SORA Rates XLSX columns:', cols: 'SORA Publication Date, Compound SORA - 3 month' },
@@ -1817,7 +1818,7 @@ function setUploadType(type) {
     _uploadType = type;
     const activeClass   = 'px-5 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-bold transition-all';
     const inactiveClass = 'px-5 py-2.5 bg-slate-100 text-slate-600 rounded-xl text-sm font-bold transition-all hover:bg-slate-200';
-    ['hdb','geocoded','policy','sora'].forEach(t => {
+    ['hdb','ura','geocoded','policy','sora'].forEach(t => {
         const btn = document.getElementById(`upload-type-${t}`);
         if (btn) btn.className = t === type ? activeClass : inactiveClass;
     });
