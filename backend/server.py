@@ -121,6 +121,36 @@ SQLITE_SCHEMA = """
         articles   TEXT NOT NULL,
         fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+    CREATE TABLE IF NOT EXISTS hdb_transactions (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        month           TEXT,
+        town            TEXT,
+        flat_type       TEXT,
+        flat_model      TEXT,
+        floor_area_sqm  REAL,
+        storey_range    TEXT,
+        resale_price    REAL,
+        remaining_lease TEXT,
+        lease_commence_date INTEGER,
+        upload_batch    TEXT,
+        uploaded_at     TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS private_transactions (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        project         TEXT,
+        street          TEXT,
+        property_type   TEXT,
+        market_segment  TEXT,
+        district        TEXT,
+        floor_area_sqft REAL,
+        floor_range     TEXT,
+        type_of_sale    TEXT,
+        contract_date   TEXT,
+        price           REAL,
+        unit_price      REAL,
+        upload_batch    TEXT,
+        uploaded_at     TEXT NOT NULL DEFAULT (datetime('now'))
+    );
 """
 
 POSTGRES_SCHEMA = """
@@ -186,6 +216,36 @@ POSTGRES_SCHEMA = """
         articles   TEXT NOT NULL,
         fetched_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS hdb_transactions (
+        id              SERIAL PRIMARY KEY,
+        month           TEXT,
+        town            TEXT,
+        flat_type       TEXT,
+        flat_model      TEXT,
+        floor_area_sqm  REAL,
+        storey_range    TEXT,
+        resale_price    REAL,
+        remaining_lease TEXT,
+        lease_commence_date INTEGER,
+        upload_batch    TEXT,
+        uploaded_at     TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS private_transactions (
+        id              SERIAL PRIMARY KEY,
+        project         TEXT,
+        street          TEXT,
+        property_type   TEXT,
+        market_segment  TEXT,
+        district        TEXT,
+        floor_area_sqft REAL,
+        floor_range     TEXT,
+        type_of_sale    TEXT,
+        contract_date   TEXT,
+        price           REAL,
+        unit_price      REAL,
+        upload_batch    TEXT,
+        uploaded_at     TIMESTAMP NOT NULL DEFAULT NOW()
+    );
 """
 
 def init_db():
@@ -201,6 +261,25 @@ def init_db():
         conn.executescript(SQLITE_SCHEMA)
         conn.commit()
     conn.close()
+
+def migrate_db():
+    """Add columns introduced after initial deploy without breaking existing DBs."""
+    conn = get_db()
+    try:
+        if USE_POSTGRES:
+            cur = _cursor(conn)
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()")
+            conn.commit()
+        else:
+            try:
+                conn.execute("ALTER TABLE users ADD COLUMN created_at TEXT DEFAULT (datetime('now'))")
+                conn.commit()
+            except Exception:
+                pass  # column already exists
+    except Exception as e:
+        print(f"migrate_db warning: {e}")
+    finally:
+        conn.close()
 
 # OneMap API helpers
 def get_onemap_token():
@@ -793,8 +872,32 @@ def static_proxy(path):
 # API routes
 @app.route('/api/predict', methods=['POST'])
 def predict():
-    data = request.json
+    data   = request.json
     result = predict_price(data)
+
+    try:
+        beds = int(data.get('bedrooms', 3))
+        area_sqm = float(data.get('area', 1000)) / 10.764
+        _BEDS_TO_TYPE = {1:'1 ROOM',2:'2 ROOM',3:'3 ROOM',4:'4 ROOM',5:'5 ROOM'}
+        flat_type = _BEDS_TO_TYPE.get(beds, 'EXECUTIVE' if beds >= 6 else '5 ROOM')
+        user_id = data.get('user_id') or None
+
+        conn = get_db()
+        cur  = _cursor(conn)
+        cur.execute(_q("""
+            INSERT INTO predictions (user_id, town, flat_type, floor_area_sqm,
+                estimated_value, confidence, market_trend, feature_scores, model_version)
+            VALUES (?,?,?,?,?,?,?,?,?)
+        """), (user_id, result.get('location'), flat_type, round(area_sqm,1),
+               result.get('estimated_value'), result.get('confidence'),
+               result.get('market_trend'),
+               json.dumps([{'name': f['name'],'score': f['score']} for f in result.get('factors', [])]),
+               '2.0.0'))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[predict] DB save error: {e}")
+
     return jsonify(result)
 
 @app.route('/api/stats', methods=['GET'])
@@ -810,12 +913,65 @@ def stats():
     total_predictions = count(cur, 'predictions')
     total_records     = count(cur, 'price_records')
 
+    # New table counts
+    try:
+        cur.execute("SELECT COUNT(*) AS n FROM hdb_transactions"); hdb_tx_count = dict(cur.fetchone())['n']
+    except: hdb_tx_count = 0
+    try:
+        cur.execute("SELECT COUNT(*) AS n FROM private_transactions"); priv_tx_count = dict(cur.fetchone())['n']
+    except: priv_tx_count = 0
+
     cur.execute("SELECT id, full_name, email FROM users ORDER BY id DESC LIMIT 5")
     recent_users = _rows(cur)
 
     cur.execute("SELECT id, full_name, email, role FROM users ORDER BY id DESC")
     all_users = [{"id": r["id"], "full_name": r["full_name"], "email": r["email"],
                   "role": r["role"], "is_admin": r["role"] == "admin"} for r in _rows(cur)]
+
+    # Predictions by property type (infer from flat_type)
+    cur.execute("SELECT flat_type, COUNT(*) AS n FROM predictions GROUP BY flat_type")
+    hdb_types = {'1 ROOM','2 ROOM','3 ROOM','4 ROOM','5 ROOM','EXECUTIVE','MULTI-GENERATION'}
+    hdb_count, priv_count = 0, 0
+    for r in _rows(cur):
+        ft = (r.get('flat_type') or '').upper()
+        if ft in hdb_types or 'ROOM' in ft:
+            hdb_count += r['n']
+        else:
+            priv_count += r['n']
+    predictions_by_type = {'hdb': hdb_count, 'private': priv_count}
+
+    # Top 10 towns by prediction count
+    cur.execute("SELECT town, COUNT(*) AS n FROM predictions WHERE town IS NOT NULL GROUP BY town ORDER BY n DESC LIMIT 10")
+    predictions_by_town = [{'town': r['town'], 'count': r['n']} for r in _rows(cur)]
+
+    # Daily predictions last 14 days
+    if USE_POSTGRES:
+        cur.execute("SELECT DATE(predicted_at) AS d, COUNT(*) AS n FROM predictions WHERE predicted_at >= NOW() - INTERVAL '14 days' GROUP BY DATE(predicted_at) ORDER BY d")
+    else:
+        cur.execute("SELECT DATE(predicted_at) AS d, COUNT(*) AS n FROM predictions WHERE predicted_at >= datetime('now','-14 days') GROUP BY DATE(predicted_at) ORDER BY d")
+    daily_predictions = [{'date': str(r['d']), 'count': r['n']} for r in _rows(cur)]
+
+    # Daily registrations last 14 days (requires created_at column from migrate_db)
+    daily_registrations = []
+    try:
+        if USE_POSTGRES:
+            cur.execute("SELECT DATE(created_at) AS d, COUNT(*) AS n FROM users WHERE created_at >= NOW() - INTERVAL '14 days' GROUP BY DATE(created_at) ORDER BY d")
+        else:
+            cur.execute("SELECT DATE(created_at) AS d, COUNT(*) AS n FROM users WHERE created_at >= datetime('now','-14 days') GROUP BY DATE(created_at) ORDER BY d")
+        daily_registrations = [{'date': str(r['d']), 'count': r['n']} for r in _rows(cur)]
+    except Exception:
+        pass
+
+    # Recent 50 predictions
+    if USE_POSTGRES:
+        cur.execute("SELECT p.id, p.town, p.flat_type, p.floor_area_sqm, p.estimated_value, p.confidence, p.predicted_at, u.full_name FROM predictions p LEFT JOIN users u ON p.user_id=u.id ORDER BY p.predicted_at DESC LIMIT 50")
+    else:
+        cur.execute("SELECT p.id, p.town, p.flat_type, p.floor_area_sqm, p.estimated_value, p.confidence, p.predicted_at, u.full_name FROM predictions p LEFT JOIN users u ON p.user_id=u.id ORDER BY p.predicted_at DESC LIMIT 50")
+    recent_preds = _rows(cur)
+    for r in recent_preds:
+        for k in list(r.keys()):
+            if hasattr(r[k], 'isoformat'):
+                r[k] = r[k].isoformat()
 
     if USE_POSTGRES:
         db_size = "Supabase"
@@ -824,9 +980,17 @@ def stats():
         db_size  = f"{db_bytes/1024:.1f} KB" if db_bytes < 1024**2 else f"{db_bytes/1024**2:.2f} MB"
 
     conn.close()
-    return jsonify({"total_users": total_users, "total_predictions": total_predictions,
-                    "total_records": total_records, "db_size": db_size,
-                    "recent_users": recent_users, "all_users": all_users})
+    return jsonify({
+        "total_users": total_users, "total_predictions": total_predictions,
+        "total_records": total_records, "db_size": db_size,
+        "hdb_tx_count": hdb_tx_count, "priv_tx_count": priv_tx_count,
+        "recent_users": recent_users, "all_users": all_users,
+        "predictions_by_type": predictions_by_type,
+        "predictions_by_town": predictions_by_town,
+        "daily_predictions": daily_predictions,
+        "daily_registrations": daily_registrations,
+        "recent_predictions": recent_preds,
+    })
 
 
 @app.route('/api/trend', methods=['GET'])
@@ -1024,7 +1188,333 @@ def update_profile(user_id):
     return jsonify({"user": user})
 
 
+@app.route('/api/admin/upload-transactions', methods=['POST'])
+def upload_transactions():
+    import csv, io
+    tx_type = request.form.get('type', 'hdb').lower()  # 'hdb' or 'private'
+    file    = request.files.get('file')
+    if not file:
+        return jsonify({'error': 'No file provided'}), 400
+
+    try:
+        content = file.read().decode('utf-8-sig')
+        reader  = csv.DictReader(io.StringIO(content))
+        rows    = list(reader)
+    except Exception as e:
+        return jsonify({'error': f'CSV parse error: {e}'}), 400
+
+    if not rows:
+        return jsonify({'error': 'CSV is empty'}), 400
+
+    batch_id = datetime.datetime.utcnow().isoformat()
+    conn = get_db()
+    cur  = _cursor(conn)
+    inserted = 0
+
+    try:
+        if tx_type == 'hdb':
+            for r in rows:
+                def g(k, default=None):
+                    for key in r:
+                        if key.strip().lower() == k.lower():
+                            v = r[key]
+                            return v if v != '' else default
+                    return default
+                try:
+                    cur.execute(_q("""
+                        INSERT INTO hdb_transactions
+                            (month, town, flat_type, flat_model, floor_area_sqm,
+                             storey_range, resale_price, remaining_lease,
+                             lease_commence_date, upload_batch)
+                        VALUES (?,?,?,?,?,?,?,?,?,?)
+                    """), (g('month'), g('town'), g('flat_type'), g('flat_model'),
+                           float(g('floor_area_sqm') or 0),
+                           g('storey_range'), float(g('resale_price') or 0),
+                           g('remaining_lease'),
+                           int(float(g('lease_commence_date') or 0)) or None,
+                           batch_id))
+                    inserted += 1
+                except Exception:
+                    continue
+        else:
+            for r in rows:
+                def gp(k, default=None):
+                    for key in r:
+                        if key.strip().lower() == k.lower():
+                            v = r[key]
+                            return v if v != '' else default
+                    return default
+                try:
+                    cur.execute(_q("""
+                        INSERT INTO private_transactions
+                            (project, street, property_type, market_segment,
+                             district, floor_area_sqft, floor_range,
+                             type_of_sale, contract_date, price, unit_price, upload_batch)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                    """), (gp('project'), gp('street'), gp('property_type') or gp('propertytype'),
+                           gp('market_segment') or gp('marketsegment'),
+                           gp('district'), float(gp('area') or gp('floor_area_sqft') or 0),
+                           gp('floor_range') or gp('floorrange'),
+                           gp('type_of_sale') or gp('typeofsale'),
+                           gp('contract_date') or gp('contractdate'),
+                           float(gp('price') or 0),
+                           float(gp('unit_price') or gp('unitprice') or 0),
+                           batch_id))
+                    inserted += 1
+                except Exception:
+                    continue
+
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return jsonify({'error': str(e)}), 500
+
+    conn.close()
+    return jsonify({'inserted': inserted, 'total_rows': len(rows), 'batch_id': batch_id})
+
+
+@app.route('/api/admin/export-report', methods=['GET'])
+def export_report():
+    try:
+        from io import BytesIO
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.colors import HexColor
+        from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
+                                         Table, TableStyle, HRFlowable)
+        from reportlab.lib.units import cm
+        from reportlab.lib import colors as rl_colors
+    except ImportError:
+        return jsonify({'error': 'reportlab not installed'}), 500
+
+    # ── Gather data ─────────────────────────────────────────────────────────
+    conn = get_db()
+    cur  = _cursor(conn)
+
+    def cnt(t):
+        try:
+            cur.execute(f"SELECT COUNT(*) AS n FROM {t}")
+            return dict(cur.fetchone())['n']
+        except Exception:
+            return 0
+
+    total_users  = cnt('users')
+    total_preds  = cnt('predictions')
+    total_recs   = cnt('price_records')
+    hdb_txs      = cnt('hdb_transactions')
+    priv_txs     = cnt('private_transactions')
+
+    # Users by role
+    cur.execute("SELECT role, COUNT(*) AS n FROM users GROUP BY role")
+    role_rows = {r['role']: r['n'] for r in _rows(cur)}
+    admin_count = role_rows.get('admin', 0)
+
+    # Predictions by type
+    cur.execute("SELECT flat_type, COUNT(*) AS n FROM predictions GROUP BY flat_type ORDER BY n DESC")
+    hdb_types = {'1 ROOM','2 ROOM','3 ROOM','4 ROOM','5 ROOM','EXECUTIVE','MULTI-GENERATION'}
+    hdb_c, priv_c = 0, 0
+    type_rows = _rows(cur)
+    for r in type_rows:
+        ft = (r.get('flat_type') or '').upper()
+        if ft in hdb_types or 'ROOM' in ft:
+            hdb_c += r['n']
+        else:
+            priv_c += r['n']
+
+    # Top towns
+    cur.execute("SELECT town, COUNT(*) AS n FROM predictions WHERE town IS NOT NULL GROUP BY town ORDER BY n DESC LIMIT 10")
+    top_towns = _rows(cur)
+
+    # Daily predictions last 14 days
+    if USE_POSTGRES:
+        cur.execute("SELECT DATE(predicted_at) AS d, COUNT(*) AS n FROM predictions WHERE predicted_at >= NOW() - INTERVAL '14 days' GROUP BY DATE(predicted_at) ORDER BY d")
+    else:
+        cur.execute("SELECT DATE(predicted_at) AS d, COUNT(*) AS n FROM predictions WHERE predicted_at >= datetime('now','-14 days') GROUP BY DATE(predicted_at) ORDER BY d")
+    daily_preds = _rows(cur)
+
+    # Daily registrations
+    daily_regs = []
+    try:
+        if USE_POSTGRES:
+            cur.execute("SELECT DATE(created_at) AS d, COUNT(*) AS n FROM users WHERE created_at >= NOW() - INTERVAL '14 days' GROUP BY DATE(created_at) ORDER BY d")
+        else:
+            cur.execute("SELECT DATE(created_at) AS d, COUNT(*) AS n FROM users WHERE created_at >= datetime('now','-14 days') GROUP BY DATE(created_at) ORDER BY d")
+        daily_regs = _rows(cur)
+    except Exception:
+        pass
+
+    # Recent 50 predictions
+    cur.execute("SELECT p.id, p.town, p.flat_type, p.floor_area_sqm, p.estimated_value, p.confidence, p.predicted_at, u.full_name FROM predictions p LEFT JOIN users u ON p.user_id=u.id ORDER BY p.predicted_at DESC LIMIT 50")
+    recent_preds = _rows(cur)
+
+    if USE_POSTGRES:
+        db_size = "Supabase PostgreSQL"
+    else:
+        db_bytes = os.path.getsize(DB_PATH)
+        db_size = f"{db_bytes/1024:.1f} KB" if db_bytes < 1024**2 else f"{db_bytes/1024**2:.2f} MB"
+
+    conn.close()
+
+    # ── Build PDF ────────────────────────────────────────────────────────────
+    buf  = BytesIO()
+    PAGE = A4
+    doc  = SimpleDocTemplate(buf, pagesize=PAGE, rightMargin=2*cm, leftMargin=2*cm,
+                              topMargin=2.5*cm, bottomMargin=2*cm)
+
+    SS = getSampleStyleSheet()
+    NAVY    = HexColor('#0F172A')
+    BLUE    = HexColor('#3B82F6')
+    LIGHT   = HexColor('#F8FAFC')
+    MID     = HexColor('#64748B')
+    GREEN   = HexColor('#10B981')
+    RED     = HexColor('#EF4444')
+
+    H1  = ParagraphStyle('H1',  parent=SS['Heading1'], fontSize=22, textColor=NAVY,  spaceAfter=4,  spaceBefore=16)
+    H2  = ParagraphStyle('H2',  parent=SS['Heading2'], fontSize=14, textColor=NAVY,  spaceAfter=4,  spaceBefore=12)
+    BODY = ParagraphStyle('BD', parent=SS['Normal'],  fontSize=9,  textColor=NAVY,  spaceAfter=2)
+    SMALL = ParagraphStyle('SM', parent=SS['Normal'], fontSize=8,  textColor=MID,   spaceAfter=1)
+
+    def hr(): return HRFlowable(width='100%', thickness=0.5, color=HexColor('#E2E8F0'), spaceAfter=6, spaceBefore=6)
+
+    def tbl(data, col_widths, header=True):
+        t = Table(data, colWidths=col_widths, repeatRows=1 if header else 0)
+        style = [
+            ('BACKGROUND', (0,0), (-1,0), NAVY if header else LIGHT),
+            ('TEXTCOLOR',  (0,0), (-1,0), HexColor('#FFFFFF') if header else NAVY),
+            ('FONTNAME',   (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTSIZE',   (0,0), (-1,-1), 8),
+            ('ROWBACKGROUNDS', (0,1), (-1,-1), [HexColor('#FFFFFF'), LIGHT]),
+            ('GRID',       (0,0), (-1,-1), 0.3, HexColor('#E2E8F0')),
+            ('LEFTPADDING', (0,0), (-1,-1), 6),
+            ('RIGHTPADDING',(0,0), (-1,-1), 6),
+            ('TOPPADDING',  (0,0), (-1,-1), 4),
+            ('BOTTOMPADDING',(0,0),(-1,-1), 4),
+            ('VALIGN',     (0,0), (-1,-1), 'MIDDLE'),
+        ]
+        t.setStyle(TableStyle(style))
+        return t
+
+    now_str = datetime.datetime.now().strftime('%d %B %Y, %H:%M')
+    story = []
+
+    # ── Cover / Header ────────────────────────────────────────────────────
+    story.append(Paragraph('PropAI.sg', ParagraphStyle('BIG', parent=SS['Title'], fontSize=32, textColor=NAVY, spaceAfter=2)))
+    story.append(Paragraph('Admin Report', ParagraphStyle('SUB', parent=SS['Normal'], fontSize=16, textColor=BLUE, spaceAfter=6)))
+    story.append(Paragraph(f'Generated: {now_str}', SMALL))
+    story.append(hr())
+    story.append(Spacer(1, 0.3*cm))
+
+    # ── 1. Platform Overview ─────────────────────────────────────────────
+    story.append(Paragraph('1. Platform Overview', H1))
+    ov_data = [
+        ['Metric', 'Value'],
+        ['Total Registered Users',    str(total_users)],
+        ['  — Admin Users',           str(admin_count)],
+        ['  — Regular Users',         str(total_users - admin_count)],
+        ['Total Predictions Made',    str(total_preds)],
+        ['  — HDB Predictions',       str(hdb_c)],
+        ['  — Private Property',      str(priv_c)],
+        ['Price Records in DB',       str(total_recs)],
+        ['HDB Transaction Records',   str(hdb_txs)],
+        ['Private Transaction Records', str(priv_txs)],
+        ['Database Size',             db_size],
+    ]
+    W = doc.width
+    story.append(tbl(ov_data, [W*0.6, W*0.4]))
+    story.append(Spacer(1, 0.5*cm))
+
+    # ── 2. User Statistics ───────────────────────────────────────────────
+    story.append(Paragraph('2. User Statistics', H1))
+
+    if daily_regs:
+        story.append(Paragraph('Daily New Registrations (last 14 days)', H2))
+        reg_data = [['Date', 'New Registrations']]
+        for r in daily_regs:
+            reg_data.append([str(r.get('d','')), str(r.get('n', 0))])
+        story.append(tbl(reg_data, [W*0.5, W*0.5]))
+        story.append(Spacer(1, 0.3*cm))
+
+    if daily_preds:
+        story.append(Paragraph('Daily Predictions (last 14 days)', H2))
+        dp_data = [['Date', 'Predictions']]
+        for r in daily_preds:
+            dp_data.append([str(r.get('d','')), str(r.get('n', 0))])
+        story.append(tbl(dp_data, [W*0.5, W*0.5]))
+        story.append(Spacer(1, 0.3*cm))
+
+    # ── 3. Prediction Analytics ──────────────────────────────────────────
+    story.append(Paragraph('3. Prediction Analytics', H1))
+
+    # Breakdown by type
+    story.append(Paragraph('Property Type Breakdown', H2))
+    pt_data = [['Property Category', 'Predictions', 'Share']]
+    t_sum = hdb_c + priv_c or 1
+    pt_data.append(['HDB Resale',       str(hdb_c),  f"{hdb_c/t_sum*100:.1f}%"])
+    pt_data.append(['Private Property', str(priv_c), f"{priv_c/t_sum*100:.1f}%"])
+    story.append(tbl(pt_data, [W*0.5, W*0.25, W*0.25]))
+    story.append(Spacer(1, 0.3*cm))
+
+    # Top towns
+    if top_towns:
+        story.append(Paragraph('Top Areas by Prediction Volume', H2))
+        town_data = [['Rank', 'Area/Town', 'Predictions']]
+        for i, r in enumerate(top_towns, 1):
+            town_data.append([str(i), str(r.get('town','')), str(r.get('n', 0))])
+        story.append(tbl(town_data, [W*0.15, W*0.55, W*0.30]))
+        story.append(Spacer(1, 0.3*cm))
+
+    # Recent 50 predictions
+    story.append(Paragraph('Recent 50 Predictions', H2))
+    pred_data = [['#', 'User', 'Area/Town', 'Flat Type', 'Est. Value (S$)', 'Conf %', 'Date']]
+    for i, r in enumerate(recent_preds, 1):
+        val  = f"{int(r.get('estimated_value') or 0):,}"
+        conf = f"{float(r.get('confidence') or 0):.0f}"
+        dt_raw = str(r.get('predicted_at') or '')
+        dt   = dt_raw[:10] if dt_raw else ''
+        pred_data.append([
+            str(i),
+            str(r.get('full_name') or 'Guest')[:18],
+            str(r.get('town') or '-')[:18],
+            str(r.get('flat_type') or '-')[:12],
+            val, conf, dt
+        ])
+    story.append(tbl(pred_data, [W*0.05, W*0.16, W*0.18, W*0.14, W*0.16, W*0.10, W*0.11], header=True))
+    story.append(Spacer(1, 0.5*cm))
+
+    # ── 4. Database & System ─────────────────────────────────────────────
+    story.append(Paragraph('4. Database & System Statistics', H1))
+    db_data = [
+        ['Table', 'Record Count'],
+        ['users',               str(total_users)],
+        ['predictions',         str(total_preds)],
+        ['price_records',       str(total_recs)],
+        ['hdb_transactions',    str(hdb_txs)],
+        ['private_transactions', str(priv_txs)],
+    ]
+    story.append(tbl(db_data, [W*0.6, W*0.4]))
+    story.append(Spacer(1, 0.3*cm))
+
+    sys_data = [
+        ['Metric', 'Value'],
+        ['Database Provider',  'Supabase (PostgreSQL)' if USE_POSTGRES else 'SQLite (local)'],
+        ['Database Size',      db_size],
+        ['Report Generated',   now_str],
+    ]
+    story.append(tbl(sys_data, [W*0.6, W*0.4]))
+    story.append(Spacer(1, 0.5*cm))
+    story.append(Paragraph('End of Report — PropAI.sg Admin Portal', SMALL))
+
+    doc.build(story)
+    buf.seek(0)
+
+    from flask import send_file
+    fname = f"propai_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+    return send_file(buf, as_attachment=True, download_name=fname, mimetype='application/pdf')
+
+
 init_db()
+migrate_db()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 3000))
