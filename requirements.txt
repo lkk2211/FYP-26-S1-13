@@ -10,3 +10,4 @@ lightgbm
 catboost
 requests
 gunicorn
+reportlab

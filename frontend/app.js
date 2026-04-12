@@ -279,6 +279,8 @@ function showAdminTab(tabId) {
 
     if (tabId === 'user') {
         loadAdminUsers();
+    } else if (tabId === 'data') {
+        loadDataTabStats();
     }
 
     lucide.createIcons();
@@ -1085,19 +1087,25 @@ const NEIGHBOURHOOD_BASE = {
 
 function generateNeighbourhoodPrices(neighbourhood, range) {
     const cfg = NEIGHBOURHOOD_BASE[neighbourhood] || NEIGHBOURHOOD_BASE['Clementi'];
-    const months = range === '6m' ? 6 : range === '1y' ? 12 : range === '3y' ? 36 : range === '5y' ? 60 : 24;
-    const step = months >= 36 ? 3 : 1;
+    const months = range === '6m' ? 6 : range === '1y' ? 12 : range === '3y' ? 36 : 60;
+    // step controls how many months between each data point / label
+    const step = range === '5y' ? 6 : range === '3y' ? 3 : 1;
     const labels = [], prices = [];
     const now = new Date();
     let p = cfg.base * Math.pow(1 - cfg.growth / 12, months);
     for (let i = months; i >= 0; i--) {
-        if (i % step !== 0) {
-            p = p * (1 + cfg.growth / 12 + (Math.sin(i * 0.7) * 0.002));
-            continue;
-        }
-        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-        labels.push(d.toLocaleString('en-SG', { month: 'short', year: '2-digit' }));
         p = p * (1 + cfg.growth / 12 + (Math.sin(i * 0.7) * 0.002));
+        if (i % step !== 0) continue;
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        // Use "Q1 '23" style for 3Y/5Y, "Jan '24" style for 6M/1Y
+        let label;
+        if (step >= 3) {
+            const q = Math.floor(d.getMonth() / 3) + 1;
+            label = `Q${q} '${String(d.getFullYear()).slice(2)}`;
+        } else {
+            label = d.toLocaleString('en-SG', { month: 'short', year: '2-digit' });
+        }
+        labels.push(label);
         prices.push(Math.round(p));
     }
     return { labels, prices };
@@ -1117,18 +1125,22 @@ async function initTrendChart(range = currentRange) {
     let labels = [], prices = [];
 
     try {
-        const res = await fetch(`/api/trend`);
-        if (!res.ok) throw new Error();
-        const data = await res.json();
-        if (data.trend_data && data.trend_data.length) {
-            const cfg = NEIGHBOURHOOD_BASE[currentNeighbourhood] || NEIGHBOURHOOD_BASE['Clementi'];
-            const apiAvg = data.trend_data.reduce((s, d) => s + d.price, 0) / data.trend_data.length;
-            const scale = cfg.base / apiAvg;
-            labels = data.trend_data.map(d => d.month);
-            prices = data.trend_data.map(d => Math.round(d.price * scale));
-        } else throw new Error();
-        loadComparableTable(data);
-        loadNearestSale(data);
+        if (range === '6m') {
+            const res = await fetch(`/api/trend`);
+            if (!res.ok) throw new Error();
+            const data = await res.json();
+            if (data.trend_data && data.trend_data.length) {
+                const cfg = NEIGHBOURHOOD_BASE[currentNeighbourhood] || NEIGHBOURHOOD_BASE['Clementi'];
+                const apiAvg = data.trend_data.reduce((s, d) => s + d.price, 0) / data.trend_data.length;
+                const scale = cfg.base / apiAvg;
+                labels = data.trend_data.map(d => d.month);
+                prices = data.trend_data.map(d => Math.round(d.price * scale));
+                loadComparableTable(data);
+                loadNearestSale(data);
+            } else throw new Error();
+        } else {
+            throw new Error('use generated');
+        }
     } catch {
         const gen = generateNeighbourhoodPrices(currentNeighbourhood, range);
         labels = gen.labels;
@@ -1189,7 +1201,14 @@ async function initTrendChart(range = currentRange) {
                 },
                 x: {
                     grid: { display: false },
-                    ticks: { font: { size: 11, weight: '600' }, color: tickColor }
+                    ticks: {
+                        font: { size: 11, weight: '600' },
+                        color: tickColor,
+                        maxRotation: 45,
+                        minRotation: 0,
+                        autoSkip: true,
+                        maxTicksLimit: range === '5y' ? 10 : range === '3y' ? 12 : range === '1y' ? 12 : 6
+                    }
                 }
             }
         }
@@ -1520,6 +1539,106 @@ async function fetchAdminStats() {
             </div>
         `).join('');
     } catch (e) { console.error(e); }
+}
+
+// ── Admin: Export Report ──────────────────────────────────────
+async function exportAdminReport(btn) {
+    const orig = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Generating...';
+    lucide.createIcons();
+    try {
+        const res = await fetch('/api/admin/export-report');
+        if (!res.ok) throw new Error(`Server error ${res.status}`);
+        const blob = await res.blob();
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href     = url;
+        a.download = `propai_report_${new Date().toISOString().slice(0,10)}.pdf`;
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast('Report downloaded');
+    } catch (e) {
+        showToast('Failed to generate report: ' + e.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = orig;
+        lucide.createIcons();
+    }
+}
+
+// ── Admin: CSV Upload ─────────────────────────────────────────
+let _uploadType = 'hdb';
+
+function setUploadType(type) {
+    _uploadType = type;
+    const hdbBtn  = document.getElementById('upload-type-hdb');
+    const privBtn = document.getElementById('upload-type-private');
+    const hint    = document.getElementById('upload-format-hint');
+    if (!hdbBtn || !privBtn) return;
+
+    if (type === 'hdb') {
+        hdbBtn.className  = 'px-5 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-bold transition-all';
+        privBtn.className = 'px-5 py-2.5 bg-slate-100 text-slate-600 rounded-xl text-sm font-bold transition-all hover:bg-slate-200';
+        if (hint) hint.innerHTML = '<p class="font-bold text-slate-700 mb-1 font-sans">Expected HDB CSV columns:</p>month, town, flat_type, flat_model, floor_area_sqm, storey_range, resale_price, remaining_lease, lease_commence_date';
+    } else {
+        privBtn.className = 'px-5 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-bold transition-all';
+        hdbBtn.className  = 'px-5 py-2.5 bg-slate-100 text-slate-600 rounded-xl text-sm font-bold transition-all hover:bg-slate-200';
+        if (hint) hint.innerHTML = '<p class="font-bold text-slate-700 mb-1 font-sans">Expected Private Property CSV columns:</p>project, street, property_type, market_segment, district, area, floor_range, type_of_sale, contract_date, price, unit_price';
+    }
+}
+
+function onCsvFileSelected(event) {
+    const file  = event.target.files[0];
+    const label = document.getElementById('upload-file-label');
+    if (file && label) label.textContent = file.name;
+}
+
+async function handleCsvUpload() {
+    const input  = document.getElementById('tx-csv-input');
+    const status = document.getElementById('upload-status');
+    const btn    = document.getElementById('upload-submit-btn');
+    if (!input || !input.files.length) { showToast('Please select a CSV file first'); return; }
+
+    const formData = new FormData();
+    formData.append('file', input.files[0]);
+    formData.append('type', _uploadType);
+
+    btn.disabled = true;
+    btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Uploading...';
+    lucide.createIcons();
+    if (status) { status.className = 'text-sm text-slate-500'; status.textContent = 'Uploading...'; }
+
+    try {
+        const res  = await fetch('/api/admin/upload-transactions', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        const msg = `Uploaded ${data.inserted.toLocaleString()} of ${data.total_rows.toLocaleString()} rows successfully.`;
+        if (status) { status.className = 'text-sm text-emerald-600 font-medium'; status.textContent = msg; status.classList.remove('hidden'); }
+        showToast(msg);
+        input.value = '';
+        const label = document.getElementById('upload-file-label');
+        if (label) label.textContent = 'Click to select a CSV file';
+        loadDataTabStats();
+    } catch (e) {
+        if (status) { status.className = 'text-sm text-red-500 font-medium'; status.textContent = `Error: ${e.message}`; status.classList.remove('hidden'); }
+        showToast('Upload failed: ' + e.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i data-lucide="upload" class="w-4 h-4"></i> Upload to Database';
+        lucide.createIcons();
+    }
+}
+
+async function loadDataTabStats() {
+    try {
+        const res  = await fetch('/api/stats');
+        const data = await res.json();
+        const hEl  = document.getElementById('data-hdb-count');
+        const pEl  = document.getElementById('data-private-count');
+        if (hEl) hEl.textContent = (data.hdb_tx_count || 0).toLocaleString();
+        if (pEl) pEl.textContent = (data.priv_tx_count || 0).toLocaleString();
+    } catch (e) { /* silent */ }
 }
 
 // ── Auth ─────────────────────────────────────────────────────
