@@ -441,6 +441,16 @@ def migrate_db():
             ]:
                 try: cur.execute(col_def)
                 except Exception: pass
+            # Add upload_batch to all dataset tables (migration for existing Supabase tables)
+            for col_def in [
+                "ALTER TABLE hdb_resale ADD COLUMN IF NOT EXISTS upload_batch TEXT",
+                "ALTER TABLE ura_transactions ADD COLUMN IF NOT EXISTS upload_batch TEXT",
+                "ALTER TABLE geocoded_addresses ADD COLUMN IF NOT EXISTS upload_batch TEXT",
+                "ALTER TABLE policy_changes ADD COLUMN IF NOT EXISTS upload_batch TEXT",
+                "ALTER TABLE sora_rates ADD COLUMN IF NOT EXISTS upload_batch TEXT",
+            ]:
+                try: cur.execute(col_def)
+                except Exception: pass
             conn.commit()
         else:
             for stmt in [
