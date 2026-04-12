@@ -1717,159 +1717,178 @@ def upload_transactions():
         return jsonify({'error': 'CSV is empty'}), 400
 
     batch_id = datetime.datetime.utcnow().isoformat()
-    conn = get_db()
-    cur  = _cursor(conn)
-    inserted = 0
 
-    try:
-        def _get(row, *keys, default=None):
-            """Case-insensitive key lookup across multiple candidate keys."""
-            for k in keys:
-                for col in row:
-                    if col.strip().lower().replace(' ', '').replace('(', '').replace(')', '').replace('$', '').replace('#', '') == k.lower().replace(' ', '').replace('(', '').replace(')', '').replace('$', '').replace('#', ''):
-                        v = row[col]
-                        return v if v not in ('', None) else default
+    # ── Helpers ──────────────────────────────────────────────────────────────
+
+    def _get(row, *keys, default=None):
+        """Case-insensitive key lookup across multiple candidate column names."""
+        for k in keys:
+            kn = k.lower().replace(' ', '').replace('(', '').replace(')', '').replace('$', '').replace('#', '')
+            for col in row:
+                cn = col.strip().lower().replace(' ', '').replace('(', '').replace(')', '').replace('$', '').replace('#', '')
+                if cn == kn:
+                    v = row[col]
+                    return v if v not in ('', None) else default
+        return default
+
+    def _norm_date(raw):
+        """Normalise any date-like value to YYYY-MM-DD. Returns None if unparseable."""
+        import datetime as _dt
+        if raw is None or str(raw).strip() in ('', 'None', 'nan', 'NaT', '-'):
+            return None
+        if hasattr(raw, 'strftime'):
+            return raw.strftime('%Y-%m-%d')
+        s = str(raw).strip()
+        if len(s) >= 10 and s[4] == '-' and s[7] == '-':
+            return s[:10]
+        if len(s) == 7 and s[4] == '-':
+            return s + '-01'
+        for fmt in ('%d %b %Y', '%d %B %Y', '%d-%b-%Y', '%d-%B-%Y'):
+            try:
+                return _dt.datetime.strptime(s, fmt).strftime('%Y-%m-%d')
+            except ValueError:
+                pass
+        return s or None
+
+    def _norm_month(raw):
+        d = _norm_date(raw)
+        return (d[:7] + '-01') if d and len(d) >= 7 else None
+
+    def _sf(v, default=0.0):
+        """Safe float — never raises."""
+        try:
+            return float(str(v or '').replace(',', '').strip()) if str(v or '').replace(',', '').strip() not in ('', '-', 'nan') else default
+        except (ValueError, TypeError):
             return default
 
-        def _norm_date(raw):
-            """Normalise any date-like value to a YYYY-MM-DD string.
-            Handles: pandas Timestamp, 'YYYY-MM-DD HH:MM:SS', 'YYYY-MM-DD',
-                     'YYYY-MM', 'DD Mon YYYY' (e.g. '04 Jan 2017').
-            Returns None for missing/invalid values."""
-            import datetime as _dt
-            if raw is None or str(raw).strip() in ('', 'None', 'nan', 'NaT', '-'):
-                return None
-            if hasattr(raw, 'strftime'):          # pandas Timestamp or datetime
-                return raw.strftime('%Y-%m-%d')
-            s = str(raw).strip()
-            # ISO with time: "2017-01-04 00:00:00" or "2017-01-04T00:00:00"
-            if len(s) >= 10 and s[4] == '-' and s[7] == '-':
-                return s[:10]
-            # "YYYY-MM" → "YYYY-MM-01"
-            if len(s) == 7 and s[4] == '-':
-                return s + '-01'
-            # "DD Mon YYYY" e.g. "04 Jan 2017"
-            for fmt in ('%d %b %Y', '%d %B %Y', '%d-%b-%Y', '%d-%B-%Y'):
-                try:
-                    return _dt.datetime.strptime(s, fmt).strftime('%Y-%m-%d')
-                except ValueError:
-                    pass
-            return s or None
+    def _si(v, default=None):
+        """Safe int — never raises."""
+        try:
+            f = float(str(v or '').replace(',', '').strip())
+            return int(f) if f else default
+        except (ValueError, TypeError):
+            return default
 
-        def _norm_month(raw):
-            """Return YYYY-MM-01 from any date-like value."""
-            d = _norm_date(raw)
-            if d and len(d) >= 7:
-                return d[:7] + '-01'
-            return None
-
-        def _row_exec(cur, sql, params):
-            """Execute one row INSERT with savepoint recovery so a bad row
-            doesn't abort the whole PostgreSQL transaction."""
+    def _batch_insert(conn, cur, sql, params_list, batch_size=500):
+        """Batch insert: tries 500-row chunks, falls back to single-row on failure."""
+        total = 0
+        for i in range(0, len(params_list), batch_size):
+            chunk = params_list[i:i + batch_size]
             if USE_POSTGRES:
-                cur.execute("SAVEPOINT _row_sp")
+                cur.execute("SAVEPOINT _batch_sp")
                 try:
-                    cur.execute(sql, params)
-                    cur.execute("RELEASE SAVEPOINT _row_sp")
-                    return True
+                    cur.executemany(sql, chunk)
+                    cur.execute("RELEASE SAVEPOINT _batch_sp")
+                    total += len(chunk)
                 except Exception:
-                    cur.execute("ROLLBACK TO SAVEPOINT _row_sp")
-                    return False
+                    cur.execute("ROLLBACK TO SAVEPOINT _batch_sp")
+                    for p in chunk:
+                        cur.execute("SAVEPOINT _row_sp")
+                        try:
+                            cur.execute(sql, p)
+                            cur.execute("RELEASE SAVEPOINT _row_sp")
+                            total += 1
+                        except Exception:
+                            cur.execute("ROLLBACK TO SAVEPOINT _row_sp")
             else:
                 try:
-                    cur.execute(sql, params)
-                    return True
+                    cur.executemany(sql, chunk)
+                    total += len(chunk)
                 except Exception:
-                    return False
+                    for p in chunk:
+                        try:
+                            cur.execute(sql, p)
+                            total += 1
+                        except Exception:
+                            pass
+        return total
 
-        if tx_type == 'hdb':
-            for r in rows:
-                raw_month = _norm_month(_get(r, 'month'))
+    # ── Build params lists (pure Python — no DB calls yet) ───────────────────
 
-                ok = _row_exec(cur, _q("""
-                        INSERT INTO hdb_resale
-                            (month, town, flat_type, flat_model, floor_area_sqm,
-                             storey_range, resale_price, remaining_lease,
-                             lease_commence_date, block, street_name, upload_batch)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-                    """), (raw_month,
-                           _get(r,'town'),
-                           _get(r,'flat_type','flat_type'),
-                           _get(r,'flat_model','flat_model'),
-                           float(str(_get(r,'floor_area_sqm','floor_area_sqm') or '0').replace(',','') or 0),
-                           _get(r,'storey_range','storey_range'),
-                           float(str(_get(r,'resale_price','resale_price') or '0').replace(',','') or 0),
-                           _get(r,'remaining_lease','remaining_lease'),
-                           int(float(str(_get(r,'lease_commence_date','lease_commence_date') or '0').replace(',','') or 0)) or None,
-                           str(_get(r,'block') or '').strip() or None,
-                           _get(r,'street_name','street_name'),
-                           batch_id))
-                if ok:
-                    inserted += 1
-        elif tx_type == 'geocoded':
-            for r in rows:
-                lat_v = float(str(_get(r,'lat','latitude') or '').replace(',','') or 0) or None
-                lon_v = float(str(_get(r,'lon','lng','longitude') or '').replace(',','') or 0) or None
-                ok = _row_exec(cur, _q("""
-                        INSERT INTO geocoded_addresses
-                            (search_text, lat, lon, postal_code, address, town, planning_area, upload_batch)
-                        VALUES (?,?,?,?,?,?,?,?)
-                    """), (
-                        _get(r,'search_text','searchtext','search text'),
-                        lat_v, lon_v,
-                        _get(r,'postal_code','postal','postalcode'),
-                        _get(r,'address','full_address','building'),
-                        _get(r,'town'),
-                        _get(r,'planning_area','planningarea','planning area'),
-                        batch_id
-                    ))
-                if ok:
-                    inserted += 1
+    params_list = []
 
-        elif tx_type == 'policy':
-            for r in rows:
-                eff_month = _norm_month(_get(r, 'effective_month', 'effectivemonth', 'date', 'policy_date', 'policydate'))
-                eff_date  = _norm_date(_get(r, 'effective_date', 'effectivedate'))
-                ok = _row_exec(cur, _q("""
-                        INSERT INTO policy_changes
-                            (effective_month, effective_date, policy_name, category,
-                             direction, severity, source, upload_batch)
-                        VALUES (?,?,?,?,?,?,?,?)
-                    """), (
-                        eff_month,
-                        eff_date,
-                        _get(r,'policy_name','policyname','name','description','measure'),
-                        _get(r,'category'),
-                        float(str(_get(r,'direction','effect') or '0').replace(',','') or 0),
-                        float(str(_get(r,'severity','severity_score','score') or '0').replace(',','') or 0),
-                        _get(r,'source','url','reference'),
-                        batch_id
-                    ))
-                if ok:
-                    inserted += 1
+    if tx_type == 'hdb':
+        sql = _q("""INSERT INTO hdb_resale
+                    (month, town, flat_type, flat_model, floor_area_sqm,
+                     storey_range, resale_price, remaining_lease,
+                     lease_commence_date, block, street_name, upload_batch)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""")
+        for r in rows:
+            params_list.append((
+                _norm_month(_get(r, 'month')),
+                _get(r, 'town'),
+                _get(r, 'flat_type'),
+                _get(r, 'flat_model'),
+                _sf(_get(r, 'floor_area_sqm')),
+                _get(r, 'storey_range'),
+                _sf(_get(r, 'resale_price')),
+                _get(r, 'remaining_lease'),
+                _si(_get(r, 'lease_commence_date')),
+                str(_get(r, 'block') or '').strip() or None,
+                _get(r, 'street_name'),
+                batch_id,
+            ))
 
-        elif tx_type == 'sora':
-            for r in rows:
-                # "SORA Publication Date" holds the full date string ("04 Jan 2017");
-                # "SORA Value Date" is a merged header whose first sub-column is year-only — use it as fallback
-                rate_date = _norm_date(_get(r,
+    elif tx_type == 'geocoded':
+        sql = _q("""INSERT INTO geocoded_addresses
+                    (search_text, lat, lon, postal_code, address, town, planning_area, upload_batch)
+                    VALUES (?,?,?,?,?,?,?,?)""")
+        for r in rows:
+            lat_v = _sf(_get(r, 'lat', 'latitude')) or None
+            lon_v = _sf(_get(r, 'lon', 'lng', 'longitude')) or None
+            params_list.append((
+                _get(r, 'search_text', 'searchtext', 'search text'),
+                lat_v, lon_v,
+                _get(r, 'postal_code', 'postal', 'postalcode'),
+                _get(r, 'address', 'full_address', 'building'),
+                _get(r, 'town'),
+                _get(r, 'planning_area', 'planningarea', 'planning area'),
+                batch_id,
+            ))
+
+    elif tx_type == 'policy':
+        sql = _q("""INSERT INTO policy_changes
+                    (effective_month, effective_date, policy_name, category,
+                     direction, severity, source, upload_batch)
+                    VALUES (?,?,?,?,?,?,?,?)""")
+        for r in rows:
+            params_list.append((
+                _norm_month(_get(r, 'effective_month', 'effectivemonth', 'date', 'policy_date')),
+                _norm_date(_get(r, 'effective_date', 'effectivedate')),
+                _get(r, 'policy_name', 'policyname', 'name', 'description', 'measure'),
+                _get(r, 'category'),
+                _sf(_get(r, 'direction', 'effect')),
+                _sf(_get(r, 'severity', 'severity_score', 'score')),
+                _get(r, 'source', 'url', 'reference'),
+                batch_id,
+            ))
+
+    elif tx_type == 'sora':
+        sql = _q("""INSERT INTO sora_rates (rate_date, published_rate, upload_batch)
+                    VALUES (?,?,?)""")
+        for r in rows:
+            rate = _sf(_get(r,
+                'compound sora - 3 month', 'compoundsora-3month',
+                'sora_3m', 'sora', 'published_rate', 'rate'), default=None)
+            if rate is None or rate == 0.0:
+                continue  # skip rows with no rate value
+            params_list.append((
+                _norm_date(_get(r,
                     'sora publication date', 'sorapublicationdate',
-                    'published_date', 'publication date', 'publicationdate',
+                    'published_date', 'publication date',
                     'sora value date', 'soravaluedate',
-                    'date', 'rate_date', 'ratedate'))
-                ok = _row_exec(cur, _q("""
-                        INSERT INTO sora_rates (rate_date, published_rate, upload_batch)
-                        VALUES (?,?,?)
-                    """), (
-                        rate_date,
-                        float(str(_get(r,'compound sora - 3 month','compoundsora-3month','sora_3m','sora','published_rate','rate') or '').replace(',','') or 0) or None,
-                        batch_id
-                    ))
-                if ok:
-                    inserted += 1
+                    'date', 'rate_date', 'ratedate')),
+                rate,
+                batch_id,
+            ))
 
-        # Delete HDB records older than 10 years
-        # Compute cutoff in Python to avoid to_char format-string ambiguity in PostgreSQL
+    # ── Execute batch inserts ─────────────────────────────────────────────────
+
+    conn = get_db()
+    cur  = _cursor(conn)
+    try:
+        inserted = _batch_insert(conn, cur, sql, params_list)
+
         if tx_type == 'hdb':
             try:
                 cutoff = (datetime.datetime.utcnow() - datetime.timedelta(days=3650)).strftime('%Y-%m-01')
