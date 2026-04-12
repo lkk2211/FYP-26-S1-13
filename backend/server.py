@@ -1731,6 +1731,30 @@ def upload_transactions():
                         return v if v not in ('', None) else default
             return default
 
+        def _norm_date(raw):
+            """Normalise any date-like value to a YYYY-MM-DD string.
+            Handles: pandas Timestamp, 'YYYY-MM-DD HH:MM:SS', 'YYYY-MM-DD', 'YYYY-MM'.
+            Returns None for missing/invalid values."""
+            if raw is None or str(raw).strip() in ('', 'None', 'nan', 'NaT'):
+                return None
+            if hasattr(raw, 'strftime'):          # pandas Timestamp or datetime
+                return raw.strftime('%Y-%m-%d')
+            s = str(raw).strip()
+            # Strip time component: "2017-01-01 00:00:00" or "2017-01-01T00:00:00"
+            if len(s) >= 10 and s[4] == '-' and s[7] == '-':
+                return s[:10]
+            # "YYYY-MM" → "YYYY-MM-01"
+            if len(s) == 7 and s[4] == '-':
+                return s + '-01'
+            return s or None
+
+        def _norm_month(raw):
+            """Return YYYY-MM-01 from any date-like value."""
+            d = _norm_date(raw)
+            if d and len(d) >= 7:
+                return d[:7] + '-01'
+            return None
+
         def _row_exec(cur, sql, params):
             """Execute one row INSERT with savepoint recovery so a bad row
             doesn't abort the whole PostgreSQL transaction."""
@@ -1752,11 +1776,7 @@ def upload_transactions():
 
         if tx_type == 'hdb':
             for r in rows:
-                # Normalise month: "YYYY-MM" → "YYYY-MM-01" so it's valid for both
-                # TEXT and DATE column types in PostgreSQL
-                raw_month = str(_get(r,'month') or '').strip()
-                if len(raw_month) == 7 and raw_month[4] == '-':   # "YYYY-MM"
-                    raw_month = raw_month + '-01'
+                raw_month = _norm_month(_get(r, 'month'))
 
                 ok = _row_exec(cur, _q("""
                         INSERT INTO hdb_resale
@@ -1800,23 +1820,8 @@ def upload_transactions():
 
         elif tx_type == 'policy':
             for r in rows:
-                # effective_month: store as YYYY-MM-01 for DB compatibility
-                eff_month_raw = _get(r,'effective_month','effectivemonth','date','policy_date','policydate')
-                if hasattr(eff_month_raw, 'strftime'):
-                    eff_month = eff_month_raw.strftime('%Y-%m-01')
-                elif eff_month_raw:
-                    s = str(eff_month_raw).strip()
-                    eff_month = s[:7] + '-01' if len(s) >= 7 else s
-                else:
-                    eff_month = None
-                # effective_date: full date string YYYY-MM-DD
-                eff_date_raw = _get(r,'effective_date','effectivedate')
-                if hasattr(eff_date_raw, 'strftime'):
-                    eff_date = eff_date_raw.strftime('%Y-%m-%d')
-                elif eff_date_raw:
-                    eff_date = str(eff_date_raw)[:10]
-                else:
-                    eff_date = None
+                eff_month = _norm_month(_get(r, 'effective_month', 'effectivemonth', 'date', 'policy_date', 'policydate'))
+                eff_date  = _norm_date(_get(r, 'effective_date', 'effectivedate'))
                 ok = _row_exec(cur, _q("""
                         INSERT INTO policy_changes
                             (effective_month, effective_date, policy_name, category,
@@ -1837,12 +1842,11 @@ def upload_transactions():
 
         elif tx_type == 'sora':
             for r in rows:
-                rate_date_raw = _get(r,'sora publication date','sorapublicationdate','date','rate_date','ratedate','published_date')
-                # Normalise to a plain string; pandas Timestamp → str gives "YYYY-MM-DD HH:MM:SS"
-                if hasattr(rate_date_raw, 'strftime'):
-                    rate_date = rate_date_raw.strftime('%Y-%m-%d')
-                else:
-                    rate_date = str(rate_date_raw).strip() if rate_date_raw else None
+                # Try "SORA Value Date" first (the actual reference date), fall back to Publication Date
+                rate_date = _norm_date(_get(r,
+                    'sora value date', 'soravaluedate',
+                    'sora publication date', 'sorapublicationdate',
+                    'date', 'rate_date', 'ratedate', 'published_date'))
                 ok = _row_exec(cur, _q("""
                         INSERT INTO sora_rates (rate_date, published_rate, upload_batch)
                         VALUES (?,?,?)
@@ -1855,19 +1859,11 @@ def upload_transactions():
                     inserted += 1
 
         # Delete HDB records older than 10 years
-        # month is stored as "YYYY-MM-01"; compare as a plain string (ISO sorts correctly)
+        # Compute cutoff in Python to avoid to_char format-string ambiguity in PostgreSQL
         if tx_type == 'hdb':
             try:
-                if USE_POSTGRES:
-                    cur.execute(
-                        "DELETE FROM hdb_resale WHERE month IS NOT NULL "
-                        "AND month < to_char(NOW() - INTERVAL '10 years', 'YYYY-MM-01')"
-                    )
-                else:
-                    cur.execute(
-                        "DELETE FROM hdb_resale WHERE month IS NOT NULL "
-                        "AND month < strftime('%Y-%m-01', 'now', '-10 years')"
-                    )
+                cutoff = (datetime.datetime.utcnow() - datetime.timedelta(days=3650)).strftime('%Y-%m-01')
+                cur.execute(_q("DELETE FROM hdb_resale WHERE month IS NOT NULL AND month < ?"), (cutoff,))
             except Exception:
                 pass
 
