@@ -1855,64 +1855,66 @@ def sync_ura():
         return jsonify({'error': f'URA token request failed: {e}'}), 500
 
     batch_id = datetime.datetime.utcnow().isoformat()
-    conn = get_db(); cur = _cursor(conn)
     inserted = 0
 
-    try:
-        import urllib.parse
-        for batch in range(1, 5):
-            try:
-                req = urllib.request.Request(
-                    f'{URA_BASE}/invokeUraDS?service=PMI_Resi_Transaction&batch={batch}',
-                    headers={'AccessKey': access_key, 'Token': token}
-                )
-                r = urllib.request.urlopen(req, timeout=60)
-                data = json.loads(r.read())
-                if data.get('Status') != 'Success':
-                    continue
-                for proj in data.get('Result', []):
-                    mkt = proj.get('marketSegment', '')
-                    for det in proj.get('details', []):
-                        cd = str(det.get('contractDate', ''))
-                        try:
-                            mo, yr = int(cd.split('/')[0]), int(cd.split('/')[1])
-                            year = 2000 + yr if yr < 100 else yr
-                        except Exception:
-                            continue
-                        sale_date = f'{year}-{mo:02d}'
-                        cur.execute(_q("""
-                            INSERT INTO ura_transactions
-                                (project, street, property_type, market_segment,
-                                 postal_district, floor_level, floor_area_sqft, floor_area_sqm,
-                                 type_of_sale, transacted_price, unit_price_psf, unit_price_psm,
-                                 tenure, num_units, sale_date, upload_batch)
-                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                        """), (
-                            proj.get('project', ''),
-                            det.get('street', ''),
-                            det.get('propertyType', ''),
-                            mkt,
-                            str(det.get('district', '0')).zfill(2),
-                            det.get('floorLevel') or det.get('floorRange', ''),
-                            float(det.get('area') or 0),
-                            float(det.get('area') or 0) / 10.764,
-                            _TYPE_MAP.get(str(det.get('typeOfSale', '3')), 'Resale'),
-                            float(det.get('price') or 0),
-                            float(det.get('unitPrice') or 0),
-                            None, det.get('tenure', ''),
-                            int(float(det.get('noOfUnits') or 1)),
-                            sale_date, batch_id
-                        ))
-                        inserted += 1
-            except Exception:
+    # Collect all rows from URA API before touching the DB
+    rows = []
+    for batch in range(1, 5):
+        try:
+            req = urllib.request.Request(
+                f'{URA_BASE}/invokeUraDS?service=PMI_Resi_Transaction&batch={batch}',
+                headers={'AccessKey': access_key, 'Token': token}
+            )
+            r = urllib.request.urlopen(req, timeout=60)
+            data = json.loads(r.read())
+            if data.get('Status') != 'Success':
                 continue
+            for proj in data.get('Result', []):
+                mkt = proj.get('marketSegment', '')
+                for det in proj.get('details', []):
+                    cd = str(det.get('contractDate', ''))
+                    try:
+                        mo, yr = int(cd.split('/')[0]), int(cd.split('/')[1])
+                        year = 2000 + yr if yr < 100 else yr
+                    except Exception:
+                        continue
+                    sale_date = f'{year}-{mo:02d}'
+                    rows.append((
+                        proj.get('project', ''),
+                        det.get('street', ''),
+                        det.get('propertyType', ''),
+                        mkt,
+                        str(det.get('district', '0')).zfill(2),
+                        det.get('floorLevel') or det.get('floorRange', ''),
+                        float(det.get('area') or 0),
+                        float(det.get('area') or 0) / 10.764,
+                        _TYPE_MAP.get(str(det.get('typeOfSale', '3')), 'Resale'),
+                        float(det.get('price') or 0),
+                        float(det.get('unitPrice') or 0),
+                        None, det.get('tenure', ''),
+                        int(float(det.get('noOfUnits') or 1)),
+                        sale_date, batch_id
+                    ))
+        except Exception:
+            continue
 
-        # Delete records older than 10 years
-        if USE_POSTGRES:
-            cur.execute("DELETE FROM ura_transactions WHERE uploaded_at < NOW() - INTERVAL '10 years'")
-        else:
-            cur.execute("DELETE FROM ura_transactions WHERE uploaded_at < date('now', '-10 years')")
+    if not rows:
+        return jsonify({'error': 'URA API returned no records — check URA_ACCESS_KEY or try again later'}), 500
 
+    conn = get_db(); cur = _cursor(conn)
+    try:
+        # Full refresh: clear existing URA data then insert fresh batch
+        cur.execute('DELETE FROM ura_transactions')
+        for row in rows:
+            cur.execute(_q("""
+                INSERT INTO ura_transactions
+                    (project, street, property_type, market_segment,
+                     postal_district, floor_level, floor_area_sqft, floor_area_sqm,
+                     type_of_sale, transacted_price, unit_price_psf, unit_price_psm,
+                     tenure, num_units, sale_date, upload_batch)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """), row)
+            inserted += 1
         conn.commit()
     except Exception as e:
         conn.rollback()
@@ -1920,7 +1922,7 @@ def sync_ura():
         return jsonify({'error': str(e)}), 500
 
     conn.close()
-    return jsonify({'inserted': inserted, 'batch_id': batch_id, 'message': f'Synced {inserted} new URA records'})
+    return jsonify({'inserted': inserted, 'batch_id': batch_id, 'message': f'Synced {inserted} URA records (full refresh)'})
 
 
 @app.route('/api/feedback', methods=['POST'])
