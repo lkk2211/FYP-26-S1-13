@@ -39,7 +39,7 @@ from lightgbm import LGBMRegressor
 from catboost import CatBoostRegressor
 
 MODELS_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
-URA_BASE    = 'https://www.ura.gov.sg/uraDataService'
+URA_BASE    = 'https://eservice.ura.gov.sg/uraDataService'
 ACCESS_KEY  = os.environ.get('URA_ACCESS_KEY', '')
 DATABASE_URL = os.environ.get('DATABASE_URL', '')
 
@@ -175,7 +175,7 @@ def _get_ura_token(access_key: str) -> str:
 
 def _fetch_batch(access_key: str, token: str, batch: int) -> list:
     r = requests.get(
-        f'{URA_BASE}/invokeUraDS',
+        f'{URA_BASE}/invokeUraDS/v1',
         params={'service': 'PMI_Resi_Transaction', 'batch': batch},
         headers={'AccessKey': access_key, 'Token': token},
         timeout=60,
@@ -198,10 +198,10 @@ def download_from_ura_api(access_key: str) -> pd.DataFrame:
         projects = _fetch_batch(access_key, token, batch)
         for proj in projects:
             market_seg = proj.get('marketSegment', '')
-            for det in proj.get('details', []):
+            for det in proj.get('transaction', []):
                 cd = det.get('contractDate', '')
                 try:
-                    mo, yr = int(cd.split('/')[0]), int(cd.split('/')[1])
+                    mo, yr = int(cd[:2]), int(cd[2:])
                     year   = 2000 + yr if yr < 100 else yr
                     quarter = (mo - 1) // 3 + 1
                 except Exception:
@@ -212,7 +212,7 @@ def download_from_ura_api(access_key: str) -> pd.DataFrame:
                     'type_of_sale':    _TYPE_OF_SALE_API.get(str(det.get('typeOfSale', '3')), 'Resale'),
                     'postal_district': str(det.get('district', '0')).zfill(2),
                     'floor_area_sqft': float(det.get('area') or 0),
-                    'floor_level_num': _parse_floor_level(det.get('floorLevel') or det.get('floorRange')),
+                    'floor_level_num': _parse_floor_level(det.get('floorRange') or det.get('floorLevel')),
                     'year':            year,
                     'quarter':         quarter,
                     'sale_date':       f'{year}-{mo:02d}',

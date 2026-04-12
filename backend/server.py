@@ -1920,7 +1920,7 @@ def sync_ura():
     if not access_key:
         return jsonify({'error': 'URA_ACCESS_KEY not configured'}), 400
 
-    URA_BASE = 'https://www.ura.gov.sg/uraDataService'
+    URA_BASE = 'https://eservice.ura.gov.sg/uraDataService'
     _TYPE_MAP = {'1': 'New Sale', '2': 'Sub Sale', '3': 'Resale'}
 
     def _re_parse_floor(fl):
@@ -1956,7 +1956,7 @@ def sync_ura():
     for batch in range(1, 5):
         try:
             req = urllib.request.Request(
-                f'{URA_BASE}/invokeUraDS?service=PMI_Resi_Transaction&batch={batch}',
+                f'{URA_BASE}/invokeUraDS/v1?service=PMI_Resi_Transaction&batch={batch}',
                 headers={'AccessKey': access_key, 'Token': token}
             )
             r = urllib.request.urlopen(req, timeout=60)
@@ -1965,21 +1965,22 @@ def sync_ura():
                 continue
             for proj in data.get('Result', []):
                 mkt = proj.get('marketSegment', '')
-                for det in proj.get('details', []):
+                for det in proj.get('transaction', []):
                     cd = str(det.get('contractDate', ''))
                     try:
-                        mo, yr = int(cd.split('/')[0]), int(cd.split('/')[1])
+                        # contractDate format: "MMYY" e.g. "0715" = July 2015
+                        mo, yr = int(cd[:2]), int(cd[2:])
                         year = 2000 + yr if yr < 100 else yr
                     except Exception:
                         continue
                     sale_date = f'{year}-{mo:02d}'
                     rows.append((
                         proj.get('project', ''),
-                        det.get('street', ''),
+                        det.get('street', proj.get('street', '')),
                         det.get('propertyType', ''),
                         mkt,
                         str(det.get('district', '0')).zfill(2),
-                        det.get('floorLevel') or det.get('floorRange', ''),
+                        det.get('floorRange') or det.get('floorLevel', ''),
                         float(det.get('area') or 0),
                         float(det.get('area') or 0) / 10.764,
                         _TYPE_MAP.get(str(det.get('typeOfSale', '3')), 'Resale'),
