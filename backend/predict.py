@@ -1,6 +1,15 @@
+import os
 import math
+import joblib
+import numpy as np
+import pandas as pd
+import requests
+from datetime import datetime
 
-# Singapore property data by postal code
+MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
+
+# ─── Rule-based fallback (used when ML models are not available) ──────────────
+
 POSTAL_CONFIG = {
     "238801": {
         "district": "D01", "location": "Marina Bay", "property_type": "Condominium",
@@ -71,86 +80,318 @@ DEFAULT_CONFIG = {
 }
 
 
-def predict_price(features):
+# ─── Planning area → HDB town normalisation ───────────────────────────────────
+
+_PLANNING_TO_HDB_TOWN = {
+    'KALLANG': 'KALLANG/WHAMPOA',
+    'WHAMPOA': 'KALLANG/WHAMPOA',
+    'DOWNTOWN CORE': 'CENTRAL AREA',
+    'MUSEUM': 'CENTRAL AREA',
+    'SINGAPORE RIVER': 'CENTRAL AREA',
+    'ROCHOR': 'CENTRAL AREA',
+    'MARINA SOUTH': 'CENTRAL AREA',
+    'MARINA EAST': 'CENTRAL AREA',
+    'OUTRAM': 'BUKIT MERAH',
+    'RIVER VALLEY': 'CENTRAL AREA',
+    'NOVENA': 'TOA PAYOH',
+    'TANGLIN': 'BUKIT TIMAH',
+    'BUONA VISTA': 'CLEMENTI',
+    'WESTERN WATER CATCHMENT': 'JURONG WEST',
+    'LIM CHU KANG': 'CHOA CHU KANG',
+    'MANDAI': 'WOODLANDS',
+    'CENTRAL WATER CATCHMENT': 'BISHAN',
+    'NORTH-EASTERN ISLANDS': 'PASIR RIS',
+    'SOUTHERN ISLANDS': 'CENTRAL AREA',
+    'STRAITS VIEW': 'CENTRAL AREA',
+    'TUAS': 'JURONG WEST',
+    'PIONEER': 'JURONG WEST',
+    'BOON LAY': 'JURONG WEST',
+    'WESTERN ISLANDS': 'JURONG WEST',
+}
+
+_BEDROOMS_TO_FLAT_TYPE = {
+    1: '1 ROOM',
+    2: '2 ROOM',
+    3: '3 ROOM',
+    4: '4 ROOM',
+    5: '5 ROOM',
+}
+
+_FLAT_TYPE_TO_MODEL = {
+    '1 ROOM': 'IMPROVED',
+    '2 ROOM': 'IMPROVED',
+    '3 ROOM': 'NEW GENERATION',
+    '4 ROOM': 'MODEL A',
+    '5 ROOM': 'MODEL A',
+    'EXECUTIVE': 'MAISONETTE',
+    'MULTI-GENERATION': 'MULTI GENERATION',
+}
+
+# Approximate HDB town centroids for location display
+_TOWN_DISPLAY = {
+    'ANG MO KIO': 'Ang Mo Kio',
+    'BEDOK': 'Bedok',
+    'BISHAN': 'Bishan',
+    'BUKIT BATOK': 'Bukit Batok',
+    'BUKIT MERAH': 'Bukit Merah',
+    'BUKIT PANJANG': 'Bukit Panjang',
+    'BUKIT TIMAH': 'Bukit Timah',
+    'CENTRAL AREA': 'Central Area',
+    'CHOA CHU KANG': 'Choa Chu Kang',
+    'CLEMENTI': 'Clementi',
+    'GEYLANG': 'Geylang',
+    'HOUGANG': 'Hougang',
+    'JURONG EAST': 'Jurong East',
+    'JURONG WEST': 'Jurong West',
+    'KALLANG/WHAMPOA': 'Kallang/Whampoa',
+    'MARINE PARADE': 'Marine Parade',
+    'PASIR RIS': 'Pasir Ris',
+    'PUNGGOL': 'Punggol',
+    'QUEENSTOWN': 'Queenstown',
+    'SEMBAWANG': 'Sembawang',
+    'SENGKANG': 'Sengkang',
+    'SERANGOON': 'Serangoon',
+    'TAMPINES': 'Tampines',
+    'TOA PAYOH': 'Toa Payoh',
+    'WOODLANDS': 'Woodlands',
+    'YISHUN': 'Yishun',
+}
+
+
+# ─── ML model loading (lazy, once) ────────────────────────────────────────────
+
+_pipelines = None
+_meta = None
+
+
+def _load_models():
+    global _pipelines, _meta
+    if _pipelines is not None:
+        return True
+    try:
+        xgb  = joblib.load(os.path.join(MODELS_DIR, 'xgb_pipeline.joblib'))
+        lgbm = joblib.load(os.path.join(MODELS_DIR, 'lgbm_pipeline.joblib'))
+        cat  = joblib.load(os.path.join(MODELS_DIR, 'cat_pipeline.joblib'))
+        meta = joblib.load(os.path.join(MODELS_DIR, 'meta.joblib'))
+        _pipelines = [xgb, lgbm, cat]
+        _meta = meta
+        print("[predict] ML models loaded successfully")
+        return True
+    except Exception as e:
+        print(f"[predict] ML models not available, using fallback: {e}")
+        return False
+
+
+# ─── OneMap geocoding ─────────────────────────────────────────────────────────
+
+def _geocode_postal(postal):
+    """Returns (town_upper, lat, lon) or (None, None, None)."""
+    try:
+        r = requests.get(
+            'https://www.onemap.gov.sg/api/common/elastic/search',
+            params={
+                'searchVal': postal,
+                'returnGeom': 'Y',
+                'getAddrDetails': 'Y',
+                'pageNum': 1,
+            },
+            timeout=6,
+        )
+        results = r.json().get('results', [])
+        if not results:
+            return None, None, None
+        res = results[0]
+        lat = float(res.get('LATITUDE', 0) or 0)
+        lon = float(res.get('LONGITUDE', res.get('LONGTITUDE', 0)) or 0)
+        if lat == 0 and lon == 0:
+            return None, None, None
+
+        # Get planning area from coordinates
+        pa_resp = requests.get(
+            'https://www.onemap.gov.sg/api/public/popapi/getPlanningarea',
+            params={'lat': lat, 'lon': lon},
+            timeout=6,
+        )
+        pa_data = pa_resp.json()
+        # Response is a list
+        if isinstance(pa_data, list) and pa_data:
+            pa = pa_data[0].get('pln_area_n', '').strip().upper()
+        else:
+            pa = pa_data.get('pln_area_n', '').strip().upper()
+
+        town = _PLANNING_TO_HDB_TOWN.get(pa, pa) if pa else None
+        return town, lat, lon
+    except Exception:
+        return None, None, None
+
+
+# ─── ML prediction ────────────────────────────────────────────────────────────
+
+def _predict_ml(features):
+    postal   = str(features.get('postal', '')).strip().zfill(6)
+    area_sqft = float(features.get('area', 1000))
+    bedrooms  = int(features.get('bedrooms', 3))
+    floor     = int(features.get('floor', 10))
+
+    area_sqm = area_sqft / 10.764
+
+    # Derive flat_type from bedrooms
+    flat_type = _BEDROOMS_TO_FLAT_TYPE.get(bedrooms, 'EXECUTIVE' if bedrooms >= 6 else '5 ROOM')
+    flat_model = _FLAT_TYPE_TO_MODEL.get(flat_type, 'MODEL A')
+
+    # Geocode
+    town, _lat, _lon = _geocode_postal(postal)
+    if not town:
+        return None  # fall back to rule-based
+
+    # Time features
+    now = datetime.now()
+    year = now.year
+    quarter = (now.month - 1) // 3 + 1
+    time_idx_raw = year * 12 + now.month
+    time_idx = time_idx_raw - _meta['time_idx_min']
+
+    # Storey mid (treat floor as mid of its storey band)
+    storey_mid = float(floor)
+
+    # Lease/age defaults from training medians
+    key = (town, flat_type)
+    med = _meta['medians_by_town_type'].get(key, {})
+    remaining_lease_years = float(med.get('remaining_lease_years', 65.0))
+    flat_age_years = float(med.get('flat_age_years', 34.0))
+
+    row = pd.DataFrame([{
+        'town': town,
+        'flat_type': flat_type,
+        'flat_model': flat_model,
+        'floor_area_sqm': area_sqm,
+        'year': year,
+        'quarter': quarter,
+        'time_idx': time_idx,
+        'storey_mid': storey_mid,
+        'remaining_lease_years': remaining_lease_years,
+        'flat_age_years': flat_age_years,
+    }])
+
+    preds_log = [p.predict(row)[0] for p in _pipelines]
+    ensemble_log = np.mean(preds_log)
+    estimated_value = int(np.exp(ensemble_log))
+
+    # Confidence: higher when all three models agree
+    spread = float(np.std([np.exp(v) for v in preds_log]))
+    cv = spread / estimated_value
+    confidence = round(max(70.0, min(95.0, 92.0 - cv * 200)), 1)
+
+    min_value = int(estimated_value * 0.92)
+    max_value = int(estimated_value * 1.08)
+
+    location_display = _TOWN_DISPLAY.get(town, town.title())
+
+    # Factor scores
+    floor_score = min(int(40 + floor * 1.2), 98)
+    lease_score = min(int(remaining_lease_years * 1.3), 98)
+    area_score  = min(int(50 + (area_sqm - 50) * 0.5), 98)
+
+    factors = [
+        {
+            "name": "Market Demand",
+            "score": 80,
+            "label": "High",
+            "desc": f"Active buyer interest in {location_display} HDB resale market."
+        },
+        {
+            "name": "Floor Level Premium",
+            "score": floor_score,
+            "label": "Very High" if floor_score >= 85 else ("High" if floor_score >= 70 else "Moderate"),
+            "desc": f"Level {floor} commands {'excellent' if floor >= 15 else 'good'} views and ventilation."
+        },
+        {
+            "name": "Remaining Lease",
+            "score": lease_score,
+            "label": "Very High" if lease_score >= 85 else ("High" if lease_score >= 70 else "Moderate"),
+            "desc": f"~{int(remaining_lease_years)} years remaining lease supports strong resale value."
+        },
+        {
+            "name": "Floor Area",
+            "score": area_score,
+            "label": "High" if area_score >= 70 else "Moderate",
+            "desc": f"{area_sqm:.0f} sqm ({area_sqft:.0f} sqft) — {'spacious' if area_sqm >= 90 else 'comfortable'} layout for {flat_type.title()}."
+        },
+        {
+            "name": "Location Premium",
+            "score": 78,
+            "label": "High",
+            "desc": f"{location_display} is a well-connected HDB town with established amenities."
+        },
+        {
+            "name": "Investment Potential",
+            "score": 75,
+            "label": "High",
+            "desc": "HDB resale prices remain resilient with stable demand from upgraders and first-time buyers."
+        },
+    ]
+
+    return {
+        "estimated_value": estimated_value,
+        "min_value":        min_value,
+        "max_value":        max_value,
+        "confidence":       confidence,
+        "market_trend":     "+2.1%",
+        "trend_direction":  "up",
+        "market_state":     "Active",
+        "location":         location_display,
+        "property_type":    "HDB",
+        "district":         f"HDB {location_display}",
+        "insight": (
+            f"{location_display} is a well-established HDB town with consistent resale demand. "
+            "This estimate is based on an ensemble ML model trained on Singapore HDB resale transactions."
+        ),
+        "recommendation": (
+            f"Predicted price is S${estimated_value:,} for a {flat_type.title()} at level {floor}. "
+            "Compare against recent transacted prices on HDB Resale Portal before making an offer."
+        ),
+        "factors": factors,
+    }
+
+
+# ─── Rule-based fallback ──────────────────────────────────────────────────────
+
+def _predict_fallback(features):
     postal = str(features.get('postal', '000000')).strip().zfill(6)
     area   = float(features.get('area', 1000))
     beds   = int(features.get('bedrooms', 3))
     floor  = int(features.get('floor', 10))
 
     config = POSTAL_CONFIG.get(postal, DEFAULT_CONFIG)
-
-    # --- Price Calculation ---
     psf = config["base_psf"]
-
-    # Floor premium: +0.6% per floor above ground for HDB, +0.9% for Condo
     floor_pct = 0.009 if config["property_type"] == "Condominium" else 0.006
     psf *= (1 + floor_pct * max(floor - 1, 0))
-
-    # Bedroom adjustment: each extra bedroom above 2 adds ~2% to psf
     psf *= (1 + 0.02 * max(beds - 2, 0))
 
-    # Deterministic noise based on inputs (avoids random refresh changes)
     seed_val = (int(postal) + int(area) + beds * 37 + floor * 13) % 100
-    noise_pct = (seed_val - 50) / 1000.0  # ±5%
-    psf *= (1 + noise_pct)
+    psf *= (1 + (seed_val - 50) / 1000.0)
 
     estimated_value = int(psf * area)
-
-    # Price range (±8% band)
     min_value = int(estimated_value * 0.92)
     max_value = int(estimated_value * 1.08)
 
-    # --- Confidence ---
-    # Higher confidence for known postal codes, higher floors, standard room counts
     base_conf = 90 if postal in POSTAL_CONFIG else 82
-    floor_bonus = min(floor / 50 * 3, 3)   # up to +3%
-    bed_penalty = abs(beds - 3) * 0.5       # penalty if unusual room count
+    floor_bonus = min(floor / 50 * 3, 3)
+    bed_penalty = abs(beds - 3) * 0.5
     confidence  = round(min(base_conf + floor_bonus - bed_penalty, 97), 1)
 
-    # --- Factor Scores (0-100) ---
-    loc_score  = config["mrt_score"]
-    area_score = min(int(50 + (area - 500) / 30), 98)
+    loc_score   = config["mrt_score"]
     floor_score = min(int(40 + floor * 1.2), 98)
-    mkt_score  = 85 if config["market_state"] == "Very Active" else 75
-    invest_score = int((loc_score + mkt_score) / 2 + floor / 10)
+    mkt_score   = 85 if config["market_state"] == "Very Active" else 75
+    inv_score   = int((loc_score + mkt_score) / 2 + floor / 10)
 
     factors = [
-        {
-            "name": "Market Demand",
-            "score": mkt_score,
-            "label": "Very High" if mkt_score >= 85 else "High",
-            "desc": f"High transaction volume in {config['location']} — strong buyer interest in this area."
-        },
-        {
-            "name": "Nearby Amenities",
-            "score": loc_score,
-            "label": "Very High" if loc_score >= 85 else "High",
-            "desc": "Shopping malls, hawker centres, schools, and parks within close vicinity."
-        },
-        {
-            "name": "Floor Level Premium",
-            "score": floor_score,
-            "label": "Very High" if floor_score >= 85 else ("High" if floor_score >= 70 else "Moderate"),
-            "desc": f"Level {floor} commands {'excellent' if floor >= 15 else 'good'} views and natural ventilation."
-        },
-        {
-            "name": "Investment Potential",
-            "score": min(invest_score, 96),
-            "label": "High" if invest_score >= 75 else "Moderate",
-            "desc": "Strong rental yield potential and capital appreciation based on district trends."
-        },
-        {
-            "name": "MRT Proximity",
-            "score": loc_score,
-            "label": "Very High" if loc_score >= 85 else "High",
-            "desc": f"{config['district']} has excellent MRT access within walking distance."
-        },
-        {
-            "name": "Location Premium",
-            "score": min(loc_score + 5, 98),
-            "label": "Very High" if loc_score >= 85 else "High",
-            "desc": f"{config['location']} is a well-established area with good infrastructure and services."
-        }
+        {"name": "Market Demand",       "score": mkt_score,          "label": "Very High" if mkt_score >= 85 else "High",    "desc": f"High transaction volume in {config['location']} — strong buyer interest."},
+        {"name": "Nearby Amenities",    "score": loc_score,          "label": "Very High" if loc_score >= 85 else "High",    "desc": "Shopping malls, hawker centres, schools, and parks within close vicinity."},
+        {"name": "Floor Level Premium", "score": floor_score,        "label": "Very High" if floor_score >= 85 else ("High" if floor_score >= 70 else "Moderate"), "desc": f"Level {floor} commands {'excellent' if floor >= 15 else 'good'} views and natural ventilation."},
+        {"name": "Investment Potential","score": min(inv_score, 96), "label": "High" if inv_score >= 75 else "Moderate",     "desc": "Strong rental yield potential and capital appreciation based on district trends."},
+        {"name": "MRT Proximity",       "score": loc_score,          "label": "Very High" if loc_score >= 85 else "High",    "desc": f"{config['district']} has excellent MRT access within walking distance."},
+        {"name": "Location Premium",    "score": min(loc_score + 5, 98), "label": "Very High" if loc_score >= 85 else "High","desc": f"{config['location']} is a well-established area with good infrastructure and services."},
     ]
 
     return {
@@ -166,16 +407,26 @@ def predict_price(features):
         "district":         config["district"],
         "insight":          config["insight"],
         "recommendation":   config["recommendation"],
-        "factors":          factors
+        "factors":          factors,
     }
+
+
+# ─── Public entry point ───────────────────────────────────────────────────────
+
+def predict_price(features):
+    if _load_models():
+        result = _predict_ml(features)
+        if result is not None:
+            return result
+    return _predict_fallback(features)
 
 
 if __name__ == "__main__":
     tests = [
-        {"postal": "238801", "area": 1200, "bedrooms": 3, "floor": 20},
         {"postal": "560123", "area": 1000, "bedrooms": 4, "floor": 10},
         {"postal": "159088", "area": 900,  "bedrooms": 3, "floor": 8},
+        {"postal": "342005", "area": 1100, "bedrooms": 4, "floor": 12},
     ]
     for t in tests:
         r = predict_price(t)
-        print(f"{t['postal']} ({r['location']}): S${r['estimated_value']:,} | Conf: {r['confidence']}% | Trend: {r['market_trend']}")
+        print(f"{t['postal']} ({r['location']}): S${r['estimated_value']:,} | Conf: {r['confidence']}%")
