@@ -430,18 +430,27 @@ def train(df_raw: pd.DataFrame):
 
 
 if __name__ == '__main__':
-    from_db = '--from-db' in sys.argv
+    from_db = '--from-db' in sys.argv or bool(DATABASE_URL)
+
+    df_raw = None
 
     if from_db:
         print('Loading from ura_transactions database table...')
-        df_raw = load_from_db()
-        print(f'Loaded {len(df_raw):,} records from DB')
-    else:
+        try:
+            df_raw = load_from_db()
+            print(f'Loaded {len(df_raw):,} records from DB')
+        except ValueError as e:
+            print(f'  DB load failed: {e}')
+            df_raw = None
+
+    if df_raw is None or len(df_raw) == 0:
         key = ACCESS_KEY
         if not key:
-            print('ERROR: Set URA_ACCESS_KEY env var, or use --from-db to train from uploaded CSV data.')
+            print('ERROR: ura_transactions table is empty and URA_ACCESS_KEY is not set.')
+            print('  → Upload URA transaction data via the admin panel, then redeploy.')
+            print('  → Or set URA_ACCESS_KEY in the Render dashboard to download from URA API.')
             sys.exit(1)
-        print('Downloading from URA API...')
+        print('Downloading from URA API (ura_transactions was empty or unavailable)...')
         df_raw = download_from_ura_api(key)
         print(f'Downloaded {len(df_raw):,} records')
 
