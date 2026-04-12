@@ -1769,19 +1769,26 @@ def upload_transactions():
         except (ValueError, TypeError):
             return default
 
-    def _batch_insert(conn, cur, sql, params_list, batch_size=500):
-        """Batch insert: tries 500-row chunks, falls back to single-row on failure."""
+    def _batch_insert(conn, cur, sql, params_list, batch_size=1000):
+        """Batch insert using execute_values (PostgreSQL) or executemany (SQLite).
+        execute_values sends one INSERT ... VALUES(r1),(r2),... per chunk —
+        a single round trip regardless of chunk size."""
         total = 0
-        for i in range(0, len(params_list), batch_size):
-            chunk = params_list[i:i + batch_size]
-            if USE_POSTGRES:
+        if USE_POSTGRES:
+            import psycopg2.extras as _pge
+            # Rewrite "INSERT INTO t (cols) VALUES (?,?,?)" → template for execute_values
+            ev_sql = sql.replace('%s', '%%s')   # escape any existing %s first
+            ev_sql = ev_sql.rsplit('VALUES', 1)[0] + 'VALUES %s'
+            for i in range(0, len(params_list), batch_size):
+                chunk = params_list[i:i + batch_size]
                 cur.execute("SAVEPOINT _batch_sp")
                 try:
-                    cur.executemany(sql, chunk)
+                    _pge.execute_values(cur, ev_sql, chunk, page_size=batch_size)
                     cur.execute("RELEASE SAVEPOINT _batch_sp")
                     total += len(chunk)
                 except Exception:
                     cur.execute("ROLLBACK TO SAVEPOINT _batch_sp")
+                    # row-by-row fallback for this chunk
                     for p in chunk:
                         cur.execute("SAVEPOINT _row_sp")
                         try:
@@ -1790,17 +1797,20 @@ def upload_transactions():
                             total += 1
                         except Exception:
                             cur.execute("ROLLBACK TO SAVEPOINT _row_sp")
-            else:
-                try:
-                    cur.executemany(sql, chunk)
-                    total += len(chunk)
-                except Exception:
-                    for p in chunk:
-                        try:
-                            cur.execute(sql, p)
-                            total += 1
-                        except Exception:
-                            pass
+            return total
+        # SQLite path
+        for i in range(0, len(params_list), batch_size):
+            chunk = params_list[i:i + batch_size]
+            try:
+                cur.executemany(sql, chunk)
+                total += len(chunk)
+            except Exception:
+                for p in chunk:
+                    try:
+                        cur.execute(sql, p)
+                        total += 1
+                    except Exception:
+                        pass
         return total
 
     # ── Build params lists (pure Python — no DB calls yet) ───────────────────
