@@ -37,7 +37,7 @@ NUMERICAL_COLS = [
 ALL_FEATURES = CATEGORICAL_COLS + NUMERICAL_COLS
 
 
-# ─── Data download ────────────────────────────────────────────────────────────
+# ─── Data sources ─────────────────────────────────────────────────────────────
 
 def download_hdb_data():
     """Paginate through data.gov.sg datastore API and return full DataFrame."""
@@ -66,6 +66,42 @@ def download_hdb_data():
 
     print()
     return pd.DataFrame(all_records)
+
+
+def load_from_db():
+    """Load HDB resale data from the hdb_resale database table.
+    Returns a DataFrame or None if the table is empty."""
+    DATABASE_URL_ENV = os.environ.get('DATABASE_URL', '')
+    DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'propaisg.db')
+
+    try:
+        if DATABASE_URL_ENV:
+            import psycopg2
+            conn = psycopg2.connect(DATABASE_URL_ENV)
+            cur  = conn.cursor()
+        else:
+            import sqlite3
+            conn = sqlite3.connect(DB_PATH)
+            cur  = conn.cursor()
+
+        cur.execute("""
+            SELECT month, town, flat_type, flat_model, floor_area_sqm,
+                   storey_range, resale_price, remaining_lease, lease_commence_date
+            FROM hdb_resale
+        """)
+        rows = cur.fetchall()
+        conn.close()
+    except Exception as e:
+        print(f"  DB load error: {e}")
+        return None
+
+    if not rows:
+        return None
+
+    return pd.DataFrame(rows, columns=[
+        'month', 'town', 'flat_type', 'flat_model', 'floor_area_sqm',
+        'storey_range', 'resale_price', 'remaining_lease', 'lease_commence_date',
+    ])
 
 
 # ─── Feature engineering ──────────────────────────────────────────────────────
@@ -124,11 +160,24 @@ def _build_pipeline(model):
     return Pipeline(steps=[('preprocessor', preprocessor), ('model', model)])
 
 
-def train():
+def train(from_db=False):
     os.makedirs(MODELS_DIR, exist_ok=True)
 
-    print("Downloading HDB resale data...")
-    df = download_hdb_data()
+    df = None
+    if from_db or os.environ.get('DATABASE_URL'):
+        print("Attempting to load HDB resale data from database...")
+        df = load_from_db()
+        if df is not None and len(df) > 0:
+            print(f"Loaded {len(df):,} records from hdb_resale table")
+        else:
+            df = None
+            if from_db:
+                raise ValueError("hdb_resale table is empty — upload CSV data first.")
+            print("hdb_resale table empty, falling back to data.gov.sg API download...")
+
+    if df is None:
+        print("Downloading HDB resale data from data.gov.sg...")
+        df = download_hdb_data()
     print(f"Raw records: {len(df):,}")
 
     print("Engineering features...")
@@ -203,4 +252,5 @@ def train():
 
 
 if __name__ == '__main__':
-    train()
+    import sys
+    train(from_db='--from-db' in sys.argv)

@@ -76,6 +76,58 @@ function updateSlider(id) {
     if (range && display) {
         display.innerText = id === 'area' ? parseInt(range.value).toLocaleString() : range.value;
     }
+    if (id === 'bedrooms') _loadFlatSpecs();
+}
+
+// Flat type mapping (bedrooms → HDB flat type)
+const _BEDS_TO_FLAT_TYPE = {
+    1: '1 ROOM', 2: '2 ROOM', 3: '3 ROOM', 4: '4 ROOM', 5: '5 ROOM', 6: 'EXECUTIVE',
+};
+
+async function _loadFlatSpecs() {
+    const bedsEl = document.getElementById('range-bedrooms');
+    if (!bedsEl) return;
+    const beds     = parseInt(bedsEl.value);
+    const flatType = _BEDS_TO_FLAT_TYPE[beds] || 'EXECUTIVE';
+    const town     = _predictTown;
+
+    const url = `/api/hdb/flat-specs?flat_type=${encodeURIComponent(flatType)}` +
+                (town ? `&town=${encodeURIComponent(town)}` : '');
+    try {
+        const res  = await fetch(url);
+        const data = await res.json();
+
+        // Update area slider
+        const areaRange = document.getElementById('range-area');
+        const areaHint  = document.getElementById('area-range-hint');
+        if (areaRange && data.area_sqft_min) {
+            areaRange.min = data.area_sqft_min;
+            areaRange.max = data.area_sqft_max;
+            const clamped = Math.min(Math.max(parseInt(areaRange.value), data.area_sqft_min), data.area_sqft_max);
+            areaRange.value = clamped || data.area_sqft_median;
+            updateSlider('area');
+            if (areaHint) areaHint.textContent =
+                `Typical for ${flatType}: ${data.area_sqft_min.toLocaleString()}–${data.area_sqft_max.toLocaleString()} sq ft` +
+                (data.source === 'db' ? ` (from ${data.count?.toLocaleString()} records)` : ' (estimated)');
+        }
+
+        // Update floor slider
+        const floorRange   = document.getElementById('range-floor');
+        const floorHint    = document.getElementById('floor-max-hint');
+        const floorDisplay = document.getElementById('floor-max-display');
+        if (floorRange && data.max_floor) {
+            floorRange.max = data.max_floor;
+            if (parseInt(floorRange.value) > data.max_floor) {
+                floorRange.value = Math.max(1, Math.floor(data.max_floor / 2));
+                updateSlider('floor');
+            }
+            if (floorDisplay) floorDisplay.textContent = data.max_floor;
+            if (floorHint) floorHint.textContent =
+                `Max: ${data.max_floor} floors` +
+                (town ? ` in ${town.charAt(0) + town.slice(1).toLowerCase()}` : '') +
+                (data.source === 'db' ? ' (from transaction data)' : ' (estimated)');
+        }
+    } catch(e) { /* silent */ }
 }
 
 async function handlePostalSearch() {
@@ -113,6 +165,23 @@ async function handlePostalSearch() {
         const details = document.getElementById('postal-details');
         placeholder.classList.add('hidden');
         details.classList.remove('hidden');
+
+        // Auto-fill property type + lease type from backend
+        fetch(`/api/property-lookup?postal=${encodeURIComponent(postal)}`)
+            .then(r => r.json())
+            .then(info => {
+                if (info.property_type) {
+                    const ptEl = document.getElementById('input-property-type');
+                    if (ptEl) ptEl.value = info.property_type;
+                }
+                if (info.lease_type) {
+                    const ltEl = document.getElementById('input-lease-type');
+                    if (ltEl) ltEl.value = info.lease_type;
+                }
+                _predictTown = info.town || '';
+                _loadFlatSpecs();   // update area + floor sliders for this town
+            })
+            .catch(() => {});
     } catch {
         errorEl.textContent = 'Unable to search. Please try again.';
         errorEl.classList.remove('hidden');
@@ -289,6 +358,7 @@ function showAdminTab(tabId) {
 // ── Global state ────────────────────────────────────────────
 let lastMapPostal = '';
 let currentNeighbourhood = 'Clementi';
+let _predictTown = '';
 
 // ── Map ──────────────────────────────────────────────────────
 let mapInstance = null;

@@ -1284,6 +1284,162 @@ def update_profile(user_id):
     return jsonify({"user": user})
 
 
+@app.route('/api/property-lookup', methods=['GET'])
+def property_lookup():
+    """Geocode a postal code and return town, property type, and lease type."""
+    import re as _re
+    postal = request.args.get('postal', '').strip()
+    if not postal:
+        return jsonify({'error': 'postal required'}), 400
+
+    # 1. Try geocoded_addresses table first
+    try:
+        conn = get_db(); cur = _cursor(conn)
+        cur.execute(_q("SELECT town, address FROM geocoded_addresses WHERE postal_code = ? LIMIT 1"), (postal,))
+        row = _row(cur)
+        conn.close()
+        if row and row.get('town'):
+            town = str(row['town']).strip().upper()
+            return jsonify({'town': town, 'property_type': 'HDB', 'lease_type': '99-year Leasehold', 'is_hdb': True})
+    except Exception:
+        pass
+
+    # 2. OneMap elastic search
+    try:
+        import urllib.parse
+        r = urllib.request.urlopen(
+            f"https://www.onemap.gov.sg/api/common/elastic/search"
+            f"?searchVal={urllib.parse.quote(postal)}&returnGeom=Y&getAddrDetails=Y&pageNum=1",
+            timeout=8
+        )
+        om = json.loads(r.read())
+        result = (om.get('results') or [None])[0]
+        if not result:
+            return jsonify({'error': 'Not found'}), 404
+
+        lat = float(result.get('LATITUDE') or 0)
+        lon = float(result.get('LONGITUDE') or result.get('LONGTITUDE') or 0)
+        building = str(result.get('BUILDING') or '').strip().upper()
+        blk_no   = str(result.get('BLK_NO') or '').strip()
+
+        # Detect HDB: no named building + numeric block number
+        is_hdb = (building in ('NIL', '')) and bool(_re.match(r'^\d+[A-Z]?$', blk_no))
+
+        town = None
+        if lat and lon:
+            try:
+                r2 = urllib.request.urlopen(
+                    f"https://www.onemap.gov.sg/api/public/popapi/getPlanningarea"
+                    f"?lat={lat}&lon={lon}",
+                    timeout=8
+                )
+                pa_data = json.loads(r2.read())
+                if isinstance(pa_data, list) and pa_data:
+                    pa = pa_data[0].get('pln_area_n', '').strip().upper()
+                else:
+                    pa = pa_data.get('pln_area_n', '').strip().upper()
+                if pa:
+                    _PLANNING_MAP = {
+                        'KALLANG': 'KALLANG/WHAMPOA', 'WHAMPOA': 'KALLANG/WHAMPOA',
+                        'DOWNTOWN CORE': 'CENTRAL AREA', 'MUSEUM': 'CENTRAL AREA',
+                        'SINGAPORE RIVER': 'CENTRAL AREA', 'ROCHOR': 'CENTRAL AREA',
+                        'MARINA SOUTH': 'CENTRAL AREA', 'MARINA EAST': 'CENTRAL AREA',
+                        'OUTRAM': 'BUKIT MERAH', 'RIVER VALLEY': 'CENTRAL AREA',
+                        'NOVENA': 'TOA PAYOH', 'TANGLIN': 'BUKIT TIMAH',
+                        'BUONA VISTA': 'CLEMENTI', 'TUAS': 'JURONG WEST',
+                        'PIONEER': 'JURONG WEST', 'BOON LAY': 'JURONG WEST',
+                        'LIM CHU KANG': 'CHOA CHU KANG', 'MANDAI': 'WOODLANDS',
+                        'CENTRAL WATER CATCHMENT': 'BISHAN',
+                        'WESTERN WATER CATCHMENT': 'JURONG WEST',
+                    }
+                    town = _PLANNING_MAP.get(pa, pa)
+            except Exception:
+                pass
+
+        prop_type  = 'HDB' if is_hdb else 'Condominium'
+        lease_type = '99-year Leasehold' if is_hdb else 'Freehold'
+        return jsonify({
+            'town': town, 'property_type': prop_type,
+            'lease_type': lease_type, 'is_hdb': is_hdb,
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/hdb/flat-specs', methods=['GET'])
+def hdb_flat_specs():
+    """Return floor-area stats and max floor for a given flat_type (+ optional town)."""
+    import re as _re
+
+    flat_type = request.args.get('flat_type', '').strip().upper()
+    town      = request.args.get('town', '').strip().upper()
+
+    # Hardcoded defaults by flat type (sqft) used when table is empty
+    _DEFAULTS = {
+        '1 ROOM':  {'min': 280,  'max': 500,  'median': 355,  'max_floor': 12},
+        '2 ROOM':  {'min': 380,  'max': 560,  'median': 474,  'max_floor': 16},
+        '3 ROOM':  {'min': 645,  'max': 830,  'median': 732,  'max_floor': 25},
+        '4 ROOM':  {'min': 915,  'max': 1165, 'median': 1001, 'max_floor': 40},
+        '5 ROOM':  {'min': 1180, 'max': 1410, 'median': 1292, 'max_floor': 40},
+        'EXECUTIVE': {'min': 1390, 'max': 1780, 'median': 1561, 'max_floor': 25},
+        'MULTI-GENERATION': {'min': 1550, 'max': 1900, 'median': 1722, 'max_floor': 25},
+    }
+    defaults = _DEFAULTS.get(flat_type, {'min': 500, 'max': 1500, 'median': 900, 'max_floor': 40})
+
+    def _parse_storey_max(sr):
+        nums = _re.findall(r'\d+', str(sr))
+        return max(int(n) for n in nums) if nums else 0
+
+    try:
+        conn = get_db(); cur = _cursor(conn)
+        q_town = " AND UPPER(town) = ?" if town else ""
+        params = (flat_type, town) if town else (flat_type,)
+        cur.execute(_q(f"""
+            SELECT floor_area_sqm, storey_range
+            FROM hdb_resale
+            WHERE UPPER(flat_type) = ?{q_town}
+              AND floor_area_sqm IS NOT NULL AND floor_area_sqm > 0
+        """), params)
+        rows = cur.fetchall()
+        conn.close()
+    except Exception:
+        rows = []
+
+    if not rows:
+        return jsonify({
+            'area_sqft_min':    defaults['min'],
+            'area_sqft_max':    defaults['max'],
+            'area_sqft_median': defaults['median'],
+            'max_floor':        defaults['max_floor'],
+            'source':           'defaults',
+        })
+
+    if isinstance(rows[0], dict):
+        areas   = [float(r['floor_area_sqm']) for r in rows]
+        storeys = [r.get('storey_range', '') for r in rows]
+    else:
+        areas   = [float(r[0]) for r in rows]
+        storeys = [r[1] for r in rows]
+
+    areas_sqft = sorted([a * 10.764 for a in areas])
+    n = len(areas_sqft)
+    median_sqft = areas_sqft[n // 2]
+    min_sqft    = areas_sqft[max(0, int(n * 0.05))]  # 5th percentile
+    max_sqft    = areas_sqft[min(n - 1, int(n * 0.95))]  # 95th percentile
+
+    max_floor = max((_parse_storey_max(s) for s in storeys), default=defaults['max_floor'])
+    max_floor = max(max_floor, defaults['max_floor'])  # at least the default
+
+    return jsonify({
+        'area_sqft_min':    round(min_sqft / 50) * 50,
+        'area_sqft_max':    round(max_sqft / 50) * 50,
+        'area_sqft_median': round(median_sqft / 50) * 50,
+        'max_floor':        max_floor,
+        'source':           'db',
+        'count':            n,
+    })
+
+
 @app.route('/api/admin/upload-transactions', methods=['POST'])
 def upload_transactions():
     import csv, io

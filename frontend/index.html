@@ -315,21 +315,14 @@
                                         </div>
 
                                         <div class="space-y-6">
-                                            <div class="space-y-3">
-                                                <div class="flex justify-between items-center">
-                                                    <label class="text-xs font-bold text-slate-700 uppercase">Floor Area (sq ft)</label>
-                                                    <span class="text-sm font-bold text-slate-900"><span id="val-area">1,000</span> sq ft</span>
-                                                </div>
-                                                <input type="range" id="range-area" min="300" max="5000" step="50" value="1000" oninput="updateSlider('area')" />
-                                            </div>
-
+                                            <!-- Step 1: Bedrooms -->
                                             <div class="grid grid-cols-2 gap-8">
                                                 <div class="space-y-3">
                                                     <div class="flex justify-between items-center">
                                                         <label class="text-xs font-bold text-slate-700 uppercase">Bedrooms</label>
                                                         <span id="val-bedrooms" class="text-sm font-bold text-slate-900">3</span>
                                                     </div>
-                                                    <input type="range" id="range-bedrooms" min="1" max="10" step="1" value="3" oninput="updateSlider('bedrooms')" />
+                                                    <input type="range" id="range-bedrooms" min="1" max="6" step="1" value="3" oninput="updateSlider('bedrooms')" />
                                                 </div>
                                                 <div class="space-y-3">
                                                     <div class="flex justify-between items-center">
@@ -340,12 +333,24 @@
                                                 </div>
                                             </div>
 
+                                            <!-- Step 2: Floor Area (range updates when bedrooms change) -->
+                                            <div class="space-y-3">
+                                                <div class="flex justify-between items-center">
+                                                    <label class="text-xs font-bold text-slate-700 uppercase">Floor Area (sq ft)</label>
+                                                    <span class="text-sm font-bold text-slate-900"><span id="val-area">1,000</span> sq ft</span>
+                                                </div>
+                                                <input type="range" id="range-area" min="300" max="5000" step="50" value="1000" oninput="updateSlider('area')" />
+                                                <p id="area-range-hint" class="text-xs text-slate-400">Select bedrooms first to see the typical size range for this flat type.</p>
+                                            </div>
+
+                                            <!-- Step 3: Floor level (max updates based on town data) -->
                                             <div class="space-y-3">
                                                 <div class="flex justify-between items-center">
                                                     <label class="text-xs font-bold text-slate-700 uppercase">Floor Level</label>
                                                     <span class="text-sm font-bold text-slate-900">Level <span id="val-floor">10</span></span>
                                                 </div>
                                                 <input type="range" id="range-floor" min="1" max="50" step="1" value="10" oninput="updateSlider('floor')" />
+                                                <p id="floor-max-hint" class="text-xs text-slate-400">Max: <span id="floor-max-display">50</span> floors based on town data.</p>
                                             </div>
                                         </div>
 
