@@ -158,7 +158,7 @@ def load_sora_from_db():
 
 def _get_ura_token(access_key: str) -> str:
     r = requests.get(
-        f'{URA_BASE}/insertNewToken.action',
+        f'{URA_BASE}/insertNewToken/v1',
         headers={'AccessKey': access_key},
         timeout=30,
     )

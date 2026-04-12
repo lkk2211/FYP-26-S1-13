@@ -1954,34 +1954,19 @@ def sync_ura():
         if 'HIGH' in fl: return 25.0
         return 10.0
 
-    # Try known token endpoint paths in order
-    _TOKEN_PATHS = [
-        '/insertNewToken.action',
-        '/v1/insertNewToken.action',
-        '/insertNewToken.action/v1',
-        '/token',
-    ]
-    token = None
-    token_error = None
-    for _path in _TOKEN_PATHS:
-        token_url = f'{URA_BASE}{_path}'
-        try:
-            req = urllib.request.Request(token_url, headers={'AccessKey': access_key})
-            r = urllib.request.urlopen(req, timeout=15)
-            raw_text = r.read().decode('utf-8', errors='replace').strip()
-            if not raw_text or raw_text.startswith('<'):
-                token_error = f'Path {_path} returned HTML/empty — trying next'
-                continue
-            token_data = json.loads(raw_text)
-            if token_data.get('Status') == 'Success':
-                token = token_data['Result']
-                break
-            token_error = f'Path {_path} returned: {token_data}'
-        except Exception as e:
-            token_error = f'Path {_path} error: {e}'
-            continue
-    if not token:
-        return jsonify({'error': f'Could not get URA token from any known endpoint. Last error: {token_error}. Please check URA API docs for the correct token URL and update URA_BASE in server.py.'}), 500
+    try:
+        token_url = f'{URA_BASE}/insertNewToken/v1'
+        req = urllib.request.Request(token_url, headers={'AccessKey': access_key})
+        r = urllib.request.urlopen(req, timeout=30)
+        raw_text = r.read().decode('utf-8', errors='replace').strip()
+        if not raw_text or raw_text.startswith('<'):
+            return jsonify({'error': f'URA token endpoint returned unexpected response: {raw_text[:200]}'}), 500
+        token_data = json.loads(raw_text)
+        if token_data.get('Status') != 'Success':
+            return jsonify({'error': f'URA token error: {token_data}'}), 500
+        token = token_data['Result']
+    except Exception as e:
+        return jsonify({'error': f'URA token request failed: {e}'}), 500
 
     batch_id = datetime.datetime.utcnow().isoformat()
     inserted = 0
