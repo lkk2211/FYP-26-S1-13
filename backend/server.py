@@ -1956,11 +1956,17 @@ def sync_ura():
 
     try:
         # Get URA token
-        r = urllib.request.urlopen(urllib.request.Request(
-            f'{URA_BASE}/insertNewToken.action',
-            headers={'AccessKey': access_key}
-        ), timeout=30)
-        token_data = json.loads(r.read())
+        token_url = f'{URA_BASE}/insertNewToken.action'
+        req = urllib.request.Request(token_url, headers={'AccessKey': access_key})
+        r = urllib.request.urlopen(req, timeout=30)
+        raw = r.read()
+        raw_text = raw.decode('utf-8', errors='replace').strip()
+        if not raw_text:
+            return jsonify({'error': f'URA token endpoint returned empty response. URL: {token_url}'}), 500
+        try:
+            token_data = json.loads(raw_text)
+        except Exception:
+            return jsonify({'error': f'URA token response is not JSON. URL: {token_url} | Response: {raw_text[:300]}'}), 500
         if token_data.get('Status') != 'Success':
             return jsonify({'error': f'URA token error: {token_data}'}), 500
         token = token_data['Result']
