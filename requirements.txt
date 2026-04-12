@@ -11,3 +11,4 @@ catboost
 requests
 gunicorn
 reportlab
+openpyxl

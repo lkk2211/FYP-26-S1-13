@@ -1086,20 +1086,23 @@
                 <!-- Admin Data Tab -->
                 <div id="admin-tab-data" class="admin-tab-content hidden space-y-6">
                     <div class="bg-white p-10 rounded-[40px] border border-slate-100 shadow-sm">
-                        <h3 class="text-xl font-bold text-slate-900 mb-2">Upload Transaction Data</h3>
-                        <p class="text-sm text-slate-500 mb-8">Upload monthly HDB resale or private property transaction CSV files to update the database for model training.</p>
+                        <h3 class="text-xl font-bold text-slate-900 mb-2">Upload Dataset</h3>
+                        <p class="text-sm text-slate-500 mb-8">Upload CSV or XLSX files to update the database. Select the dataset type before uploading.</p>
 
                         <div class="space-y-6">
                             <!-- Type selector -->
                             <div>
-                                <label class="text-xs font-bold text-slate-700 uppercase mb-2 block">Property Type</label>
-                                <div class="flex gap-3">
+                                <label class="text-xs font-bold text-slate-700 uppercase mb-2 block">Dataset</label>
+                                <div class="flex flex-wrap gap-3">
                                     <button id="upload-type-hdb" onclick="setUploadType('hdb')" class="px-5 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-bold transition-all">HDB Resale</button>
                                     <button id="upload-type-private" onclick="setUploadType('private')" class="px-5 py-2.5 bg-slate-100 text-slate-600 rounded-xl text-sm font-bold transition-all hover:bg-slate-200">Private Property</button>
+                                    <button id="upload-type-geocoded" onclick="setUploadType('geocoded')" class="px-5 py-2.5 bg-slate-100 text-slate-600 rounded-xl text-sm font-bold transition-all hover:bg-slate-200">Geocoded Addresses</button>
+                                    <button id="upload-type-policy" onclick="setUploadType('policy')" class="px-5 py-2.5 bg-slate-100 text-slate-600 rounded-xl text-sm font-bold transition-all hover:bg-slate-200">Policy Changes</button>
+                                    <button id="upload-type-sora" onclick="setUploadType('sora')" class="px-5 py-2.5 bg-slate-100 text-slate-600 rounded-xl text-sm font-bold transition-all hover:bg-slate-200">SORA Rates</button>
                                 </div>
                             </div>
 
-                            <!-- CSV Format hint -->
+                            <!-- Format hint -->
                             <div id="upload-format-hint" class="bg-slate-50 rounded-2xl p-4 text-xs text-slate-500 font-mono">
                                 <p class="font-bold text-slate-700 mb-1 font-sans">Expected HDB CSV columns:</p>
                                 month, town, flat_type, flat_model, floor_area_sqm, storey_range, resale_price, remaining_lease, lease_commence_date
@@ -1107,12 +1110,12 @@
 
                             <!-- File input -->
                             <div>
-                                <label class="text-xs font-bold text-slate-700 uppercase mb-2 block">CSV File</label>
+                                <label class="text-xs font-bold text-slate-700 uppercase mb-2 block">File</label>
                                 <div class="border-2 border-dashed border-slate-200 rounded-2xl p-8 text-center hover:border-blue-300 transition-all cursor-pointer" onclick="document.getElementById('tx-csv-input').click()">
                                     <i data-lucide="upload-cloud" class="w-8 h-8 text-slate-400 mx-auto mb-2"></i>
-                                    <p class="text-sm font-medium text-slate-500" id="upload-file-label">Click to select a CSV file</p>
-                                    <p class="text-xs text-slate-400 mt-1">Supports .csv format</p>
-                                    <input type="file" id="tx-csv-input" accept=".csv" class="hidden" onchange="onCsvFileSelected(event)" />
+                                    <p class="text-sm font-medium text-slate-500" id="upload-file-label">Click to select a file</p>
+                                    <p class="text-xs text-slate-400 mt-1">Supports .csv and .xlsx</p>
+                                    <input type="file" id="tx-csv-input" accept=".csv,.xlsx,.xls" class="hidden" onchange="onCsvFileSelected(event)" />
                                 </div>
                             </div>
 
@@ -1126,18 +1129,30 @@
                         </div>
                     </div>
 
-                    <!-- Upload history -->
+                    <!-- Record counts -->
                     <div class="bg-white p-10 rounded-[40px] border border-slate-100 shadow-sm">
-                        <h3 class="text-xl font-bold text-slate-900 mb-2">Transaction Record Counts</h3>
-                        <p class="text-sm text-slate-500 mb-6">Current records available for model training.</p>
-                        <div class="grid grid-cols-2 gap-6">
+                        <h3 class="text-xl font-bold text-slate-900 mb-2">Dataset Record Counts</h3>
+                        <p class="text-sm text-slate-500 mb-6">Current records available in the database.</p>
+                        <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
                             <div class="bg-slate-50 rounded-2xl p-6 text-center">
                                 <p class="text-3xl font-bold text-slate-900" id="data-hdb-count">-</p>
-                                <p class="text-sm text-slate-500 mt-1">HDB Transaction Records</p>
+                                <p class="text-sm text-slate-500 mt-1">HDB Resale Records</p>
                             </div>
                             <div class="bg-slate-50 rounded-2xl p-6 text-center">
                                 <p class="text-3xl font-bold text-slate-900" id="data-private-count">-</p>
                                 <p class="text-sm text-slate-500 mt-1">Private Property Records</p>
+                            </div>
+                            <div class="bg-slate-50 rounded-2xl p-6 text-center">
+                                <p class="text-3xl font-bold text-slate-900" id="data-geocoded-count">-</p>
+                                <p class="text-sm text-slate-500 mt-1">Geocoded Addresses</p>
+                            </div>
+                            <div class="bg-slate-50 rounded-2xl p-6 text-center">
+                                <p class="text-3xl font-bold text-slate-900" id="data-policy-count">-</p>
+                                <p class="text-sm text-slate-500 mt-1">Policy Change Records</p>
+                            </div>
+                            <div class="bg-slate-50 rounded-2xl p-6 text-center">
+                                <p class="text-3xl font-bold text-slate-900" id="data-sora-count">-</p>
+                                <p class="text-sm text-slate-500 mt-1">SORA Rate Records</p>
                             </div>
                         </div>
                     </div>

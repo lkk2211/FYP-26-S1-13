@@ -157,6 +157,33 @@ SQLITE_SCHEMA = """
         upload_batch    TEXT,
         uploaded_at     TEXT NOT NULL DEFAULT (datetime('now'))
     );
+    CREATE TABLE IF NOT EXISTS geocoded_addresses (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        postal_code     TEXT,
+        address         TEXT,
+        latitude        REAL,
+        longitude       REAL,
+        town            TEXT,
+        planning_area   TEXT,
+        upload_batch    TEXT,
+        uploaded_at     TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS policy_changes (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        policy_date     TEXT,
+        direction       TEXT,
+        severity        REAL,
+        description     TEXT,
+        upload_batch    TEXT,
+        uploaded_at     TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS sora_rates (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        rate_date       TEXT,
+        published_rate  REAL,
+        upload_batch    TEXT,
+        uploaded_at     TEXT NOT NULL DEFAULT (datetime('now'))
+    );
 """
 
 POSTGRES_SCHEMA = """
@@ -258,6 +285,33 @@ POSTGRES_SCHEMA = """
         upload_batch    TEXT,
         uploaded_at     TIMESTAMP NOT NULL DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS geocoded_addresses (
+        id              SERIAL PRIMARY KEY,
+        postal_code     TEXT,
+        address         TEXT,
+        latitude        REAL,
+        longitude       REAL,
+        town            TEXT,
+        planning_area   TEXT,
+        upload_batch    TEXT,
+        uploaded_at     TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS policy_changes (
+        id              SERIAL PRIMARY KEY,
+        policy_date     TEXT,
+        direction       TEXT,
+        severity        REAL,
+        description     TEXT,
+        upload_batch    TEXT,
+        uploaded_at     TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS sora_rates (
+        id              SERIAL PRIMARY KEY,
+        rate_date       TEXT,
+        published_rate  REAL,
+        upload_batch    TEXT,
+        uploaded_at     TIMESTAMP NOT NULL DEFAULT NOW()
+    );
 """
 
 def init_db():
@@ -275,12 +329,19 @@ def init_db():
     conn.close()
 
 def migrate_db():
-    """Add columns introduced after initial deploy without breaking existing DBs."""
+    """Add columns introduced after initial deploy without breaking existing DBs.
+    Also drops legacy duplicate tables from earlier schema versions."""
     conn = get_db()
     try:
         if USE_POSTGRES:
             cur = _cursor(conn)
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()")
+            # Drop legacy duplicate tables
+            for tbl in ('hdb_transactions', 'private_transactions', 'sync_log'):
+                try:
+                    cur.execute(f"DROP TABLE IF EXISTS {tbl}")
+                except Exception:
+                    pass
             conn.commit()
         else:
             try:
@@ -288,6 +349,13 @@ def migrate_db():
                 conn.commit()
             except Exception:
                 pass  # column already exists
+            # Drop legacy duplicate tables
+            for tbl in ('hdb_transactions', 'private_transactions', 'sync_log'):
+                try:
+                    conn.execute(f"DROP TABLE IF EXISTS {tbl}")
+                except Exception:
+                    pass
+            conn.commit()
     except Exception as e:
         print(f"migrate_db warning: {e}")
     finally:
@@ -932,6 +1000,15 @@ def stats():
     try:
         cur.execute("SELECT COUNT(*) AS n FROM ura_transactions"); priv_tx_count = dict(cur.fetchone())['n']
     except: priv_tx_count = 0
+    try:
+        cur.execute("SELECT COUNT(*) AS n FROM geocoded_addresses"); geocoded_count = dict(cur.fetchone())['n']
+    except: geocoded_count = 0
+    try:
+        cur.execute("SELECT COUNT(*) AS n FROM policy_changes"); policy_count = dict(cur.fetchone())['n']
+    except: policy_count = 0
+    try:
+        cur.execute("SELECT COUNT(*) AS n FROM sora_rates"); sora_count = dict(cur.fetchone())['n']
+    except: sora_count = 0
 
     cur.execute("SELECT id, full_name, email FROM users ORDER BY id DESC LIMIT 5")
     recent_users = _rows(cur)
@@ -996,6 +1073,7 @@ def stats():
         "total_users": total_users, "total_predictions": total_predictions,
         "total_records": total_records, "db_size": db_size,
         "hdb_tx_count": hdb_tx_count, "priv_tx_count": priv_tx_count,
+        "geocoded_count": geocoded_count, "policy_count": policy_count, "sora_count": sora_count,
         "recent_users": recent_users, "all_users": all_users,
         "predictions_by_type": predictions_by_type,
         "predictions_by_town": predictions_by_town,
@@ -1209,17 +1287,23 @@ def update_profile(user_id):
 @app.route('/api/admin/upload-transactions', methods=['POST'])
 def upload_transactions():
     import csv, io
-    tx_type = request.form.get('type', 'hdb').lower()  # 'hdb' or 'private'
-    file    = request.files.get('file')
+    tx_type  = request.form.get('type', 'hdb').lower()
+    file     = request.files.get('file')
     if not file:
         return jsonify({'error': 'No file provided'}), 400
 
+    filename = (file.filename or '').lower()
     try:
-        content = file.read().decode('utf-8-sig')
-        reader  = csv.DictReader(io.StringIO(content))
-        rows    = list(reader)
+        if filename.endswith('.xlsx') or filename.endswith('.xls'):
+            import pandas as pd
+            df   = pd.read_excel(io.BytesIO(file.read()))
+            rows = df.fillna('').astype(str).to_dict('records')
+        else:
+            content = file.read().decode('utf-8-sig')
+            reader  = csv.DictReader(io.StringIO(content))
+            rows    = list(reader)
     except Exception as e:
-        return jsonify({'error': f'CSV parse error: {e}'}), 400
+        return jsonify({'error': f'File parse error: {e}'}), 400
 
     if not rows:
         return jsonify({'error': 'CSV is empty'}), 400
@@ -1259,7 +1343,7 @@ def upload_transactions():
                     inserted += 1
                 except Exception:
                     continue
-        else:
+        elif tx_type == 'private':
             # URA private property CSV format:
             # Project Name, Transacted Price ($), Area (SQFT), Unit Price ($ PSF),
             # Sale Date, Street Name, Type of Sale, Type of Area, Area (SQM),
@@ -1300,6 +1384,59 @@ def upload_transactions():
                         _get(r,'tenure'),
                         _safe_int(_get(r,'number of units','numunits')),
                         _get(r,'sale date','saledate','contract date','contractdate'),
+                        batch_id
+                    ))
+                    inserted += 1
+                except Exception:
+                    continue
+
+        elif tx_type == 'geocoded':
+            for r in rows:
+                try:
+                    cur.execute(_q("""
+                        INSERT INTO geocoded_addresses
+                            (postal_code, address, latitude, longitude, town, planning_area, upload_batch)
+                        VALUES (?,?,?,?,?,?,?)
+                    """), (
+                        _get(r,'postal_code','postal','postalcode'),
+                        _get(r,'address','full_address','building'),
+                        float(_get(r,'latitude','lat') or 0) or None,
+                        float(_get(r,'longitude','lon','lng') or 0) or None,
+                        _get(r,'town'),
+                        _get(r,'planning_area','planningarea','planning area'),
+                        batch_id
+                    ))
+                    inserted += 1
+                except Exception:
+                    continue
+
+        elif tx_type == 'policy':
+            for r in rows:
+                try:
+                    cur.execute(_q("""
+                        INSERT INTO policy_changes
+                            (policy_date, direction, severity, description, upload_batch)
+                        VALUES (?,?,?,?,?)
+                    """), (
+                        _get(r,'date','policy_date','policydate','policy date','effective_date'),
+                        _get(r,'direction','effect','effect_direction'),
+                        float(_get(r,'severity','severity_score','score') or 0) or None,
+                        _get(r,'description','policy','measure','details'),
+                        batch_id
+                    ))
+                    inserted += 1
+                except Exception:
+                    continue
+
+        elif tx_type == 'sora':
+            for r in rows:
+                try:
+                    cur.execute(_q("""
+                        INSERT INTO sora_rates (rate_date, published_rate, upload_batch)
+                        VALUES (?,?,?)
+                    """), (
+                        _get(r,'date','rate_date','ratedate','published_date','end_of_month'),
+                        float(str(_get(r,'rate','published_rate','sora','sora_rate','compounded_sora') or '').replace(',','') or 0) or None,
                         batch_id
                     ))
                     inserted += 1
