@@ -166,6 +166,16 @@ _private_pipelines = None
 _private_meta = None
 
 
+def reset_model_cache():
+    """Called after live retraining to force reload on next prediction."""
+    global _pipelines, _meta, _private_pipelines, _private_meta
+    _pipelines = None
+    _meta = None
+    _private_pipelines = None
+    _private_meta = None
+    print("[predict] Model cache reset — will reload fresh .joblib files on next prediction")
+
+
 def _load_models():
     global _pipelines, _meta
     if _pipelines is not None:

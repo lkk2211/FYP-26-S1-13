@@ -16,6 +16,68 @@ import urllib.request
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from predict import predict_price
+import predict as _predict_module
+
+# ─── Live retraining state ────────────────────────────────────────────────────
+
+_BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+
+_retrain_status = {
+    'hdb':     {'state': 'idle', 'message': 'Not yet trained this session', 'finished_at': None},
+    'private': {'state': 'idle', 'message': 'Not yet trained this session', 'finished_at': None},
+}
+_retrain_lock = threading.Lock()
+
+
+def _run_training_thread(model_type):
+    """Background thread: run training script as subprocess, then reset model cache."""
+    script = 'train_model.py' if model_type == 'hdb' else 'train_model_private.py'
+    script_path = os.path.join(_BACKEND_DIR, script)
+
+    with _retrain_lock:
+        _retrain_status[model_type] = {
+            'state': 'running', 'message': 'Initialising…', 'finished_at': None,
+        }
+
+    try:
+        import subprocess
+        env = os.environ.copy()
+        proc = subprocess.Popen(
+            [sys.executable, script_path, '--from-db'],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, env=env, cwd=_BACKEND_DIR,
+        )
+        last_line = ''
+        for line in proc.stdout:
+            line = line.rstrip()
+            if line:
+                last_line = line
+                with _retrain_lock:
+                    _retrain_status[model_type]['message'] = line
+        proc.wait()
+        finished = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
+        if proc.returncode == 0:
+            _predict_module.reset_model_cache()
+            with _retrain_lock:
+                _retrain_status[model_type] = {
+                    'state': 'success',
+                    'message': last_line or 'Training complete',
+                    'finished_at': finished,
+                }
+        else:
+            with _retrain_lock:
+                _retrain_status[model_type] = {
+                    'state': 'error',
+                    'message': last_line or 'Training failed — check server logs',
+                    'finished_at': finished,
+                }
+    except Exception as e:
+        with _retrain_lock:
+            _retrain_status[model_type] = {
+                'state': 'error',
+                'message': str(e),
+                'finished_at': datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC'),
+            }
 
 app = Flask(__name__, static_folder='../frontend')
 CORS(app)
@@ -1817,6 +1879,32 @@ def upload_transactions():
 
     conn.close()
     return jsonify({'inserted': inserted, 'total_rows': len(rows), 'batch_id': batch_id})
+
+
+@app.route('/api/admin/retrain', methods=['POST'])
+def retrain_models():
+    data = request.get_json(force=True) or {}
+    model_type = data.get('type', 'both')  # 'hdb', 'private', or 'both'
+    types = ['hdb', 'private'] if model_type == 'both' else [model_type]
+
+    started = []
+    for t in types:
+        with _retrain_lock:
+            if _retrain_status[t]['state'] == 'running':
+                continue
+        thread = threading.Thread(target=_run_training_thread, args=(t,), daemon=True)
+        thread.start()
+        started.append(t)
+
+    if not started:
+        return jsonify({'message': 'Training already in progress', 'started': []}), 200
+    return jsonify({'started': started, 'message': f'Training started for: {", ".join(started)}'})
+
+
+@app.route('/api/admin/retrain-status', methods=['GET'])
+def retrain_status():
+    with _retrain_lock:
+        return jsonify(dict(_retrain_status))
 
 
 @app.route('/api/admin/sync-ura', methods=['POST'])

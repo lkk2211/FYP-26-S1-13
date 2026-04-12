@@ -1885,6 +1885,16 @@ async function loadDataTabStats() {
             if (el) el.textContent = (val || 0).toLocaleString();
         }
     } catch (e) { /* silent */ }
+
+    // Refresh retrain status dots
+    try {
+        const res  = await fetch('/api/admin/retrain-status');
+        const data = await res.json();
+        const anyRunning = _updateRetrainStatusUI(data);
+        if (anyRunning && !_retrainPollInterval) {
+            _retrainPollInterval = setInterval(_pollRetrainStatus, 3000);
+        }
+    } catch (e) { /* silent */ }
 }
 
 // ── Admin: URA Sync ───────────────────────────────────────────
@@ -1916,6 +1926,89 @@ async function handleUraSync() {
     btn.disabled = false;
     btn.innerHTML = '<i data-lucide="refresh-cw" class="w-4 h-4"></i> Sync URA Data Now';
     lucide.createIcons();
+}
+
+// ── Retrain Models ────────────────────────────────────────────
+
+let _retrainPollInterval = null;
+
+async function handleRetrain(type) {
+    ['hdb', 'both', 'private'].forEach(t => {
+        const b = document.getElementById(`retrain-${t}-btn`);
+        if (b) { b.disabled = true; b.classList.add('opacity-50'); }
+    });
+    try {
+        const res  = await fetch('/api/admin/retrain', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            alert(`Could not start training: ${data.error || data.message || 'Unknown error'}`);
+            _retrainEnableButtons();
+            return;
+        }
+    } catch (e) {
+        alert('Network error — could not reach the server.');
+        _retrainEnableButtons();
+        return;
+    }
+    // Start polling
+    if (_retrainPollInterval) clearInterval(_retrainPollInterval);
+    _retrainPollInterval = setInterval(_pollRetrainStatus, 3000);
+    _pollRetrainStatus();
+}
+
+async function _pollRetrainStatus() {
+    try {
+        const res  = await fetch('/api/admin/retrain-status');
+        const data = await res.json();
+        const anyRunning = _updateRetrainStatusUI(data);
+        if (!anyRunning) {
+            clearInterval(_retrainPollInterval);
+            _retrainPollInterval = null;
+            _retrainEnableButtons();
+        }
+    } catch (_) {}
+}
+
+function _updateRetrainStatusUI(data) {
+    let anyRunning = false;
+    for (const [key, info] of Object.entries(data)) {
+        const dot   = document.getElementById(`retrain-${key}-dot`);
+        const state = document.getElementById(`retrain-${key}-state`);
+        const msg   = document.getElementById(`retrain-${key}-msg`);
+        if (!dot) continue;
+        const s = info.state;
+        if (s === 'running') {
+            dot.className   = 'w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse';
+            state.textContent = 'Training…';
+            state.className   = 'text-xs font-bold text-amber-600';
+            anyRunning = true;
+        } else if (s === 'success') {
+            dot.className   = 'w-2.5 h-2.5 rounded-full bg-emerald-500';
+            state.textContent = `Done · ${info.finished_at || ''}`;
+            state.className   = 'text-xs font-bold text-emerald-600';
+        } else if (s === 'error') {
+            dot.className   = 'w-2.5 h-2.5 rounded-full bg-rose-500';
+            state.textContent = `Error · ${info.finished_at || ''}`;
+            state.className   = 'text-xs font-bold text-rose-600';
+        } else {
+            dot.className   = 'w-2.5 h-2.5 rounded-full bg-slate-300';
+            state.textContent = 'Idle';
+            state.className   = 'text-xs font-bold text-slate-500';
+        }
+        if (msg) msg.textContent = info.message || '';
+    }
+    return anyRunning;
+}
+
+function _retrainEnableButtons() {
+    ['hdb', 'both', 'private'].forEach(t => {
+        const b = document.getElementById(`retrain-${t}-btn`);
+        if (b) { b.disabled = false; b.classList.remove('opacity-50'); }
+    });
 }
 
 // ── Auth ─────────────────────────────────────────────────────

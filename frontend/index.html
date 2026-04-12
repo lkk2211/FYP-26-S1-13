@@ -1215,6 +1215,45 @@
                         <div id="ura-sync-status" class="hidden mt-4 text-sm rounded-xl p-4"></div>
                     </div>
 
+                    <!-- Retrain Models -->
+                    <div class="bg-white p-10 rounded-[40px] border border-slate-100 shadow-sm">
+                        <h3 class="text-xl font-bold text-slate-900 mb-2">Retrain ML Models</h3>
+                        <p class="text-sm text-slate-500 mb-6">Retrain models live from the current database without redeploying. Upload or sync your data first, then retrain. This runs in the background and may take a few minutes.</p>
+                        <div class="flex flex-wrap gap-3 mb-6">
+                            <button onclick="handleRetrain('hdb')" id="retrain-hdb-btn" class="px-6 py-3 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-black transition-all flex items-center gap-2">
+                                <i data-lucide="cpu" class="w-4 h-4"></i> Retrain HDB Model
+                            </button>
+                            <button onclick="handleRetrain('private')" id="retrain-private-btn" class="px-6 py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 transition-all flex items-center gap-2">
+                                <i data-lucide="cpu" class="w-4 h-4"></i> Retrain Private Model
+                            </button>
+                            <button onclick="handleRetrain('both')" id="retrain-both-btn" class="px-6 py-3 bg-emerald-600 text-white rounded-xl text-sm font-bold hover:bg-emerald-700 transition-all flex items-center gap-2">
+                                <i data-lucide="zap" class="w-4 h-4"></i> Retrain Both
+                            </button>
+                        </div>
+                        <div class="space-y-3" id="retrain-status-panel">
+                            <div class="flex items-center justify-between py-3 px-4 bg-slate-50 rounded-2xl">
+                                <div class="flex items-center gap-3">
+                                    <span id="retrain-hdb-dot" class="w-2.5 h-2.5 rounded-full bg-slate-300"></span>
+                                    <span class="text-sm font-semibold text-slate-700">HDB Model</span>
+                                </div>
+                                <div class="text-right">
+                                    <p class="text-xs font-bold text-slate-500" id="retrain-hdb-state">Idle</p>
+                                    <p class="text-xs text-slate-400 mt-0.5 max-w-xs truncate" id="retrain-hdb-msg">Not yet trained this session</p>
+                                </div>
+                            </div>
+                            <div class="flex items-center justify-between py-3 px-4 bg-slate-50 rounded-2xl">
+                                <div class="flex items-center gap-3">
+                                    <span id="retrain-private-dot" class="w-2.5 h-2.5 rounded-full bg-slate-300"></span>
+                                    <span class="text-sm font-semibold text-slate-700">Private Model</span>
+                                </div>
+                                <div class="text-right">
+                                    <p class="text-xs font-bold text-slate-500" id="retrain-private-state">Idle</p>
+                                    <p class="text-xs text-slate-400 mt-0.5 max-w-xs truncate" id="retrain-private-msg">Not yet trained this session</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Record counts -->
                     <div class="bg-white p-10 rounded-[40px] border border-slate-100 shadow-sm">
                         <h3 class="text-xl font-bold text-slate-900 mb-2">Dataset Record Counts</h3>
