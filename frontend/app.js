@@ -2430,6 +2430,113 @@ loadProfilePhoto();
 loadPreferencesForm();
 restoreLastView();
 lucide.createIcons();
+startMarketTicker();
+
+// ── Market ticker (floating price badge) ─────────────────────
+const _TICKER_ITEMS = [
+    { label: 'Avg CCR Condo PSF',       value: 'S$2,142', change: '↑ 3.1%', up: true,  sub: 'Q1 2026 · Marina / Orchard' },
+    { label: 'OCR HDB 4-Room Avg',      value: 'S$598k',  change: '↑ 1.8%', up: true,  sub: 'Q1 2026 · Woodlands' },
+    { label: 'RCR Condo Avg PSF',       value: 'S$1,890', change: '↑ 2.4%', up: true,  sub: 'Q1 2026 · Queenstown' },
+    { label: 'D15 Landed Avg PSF',      value: 'S$1,720', change: '↑ 0.9%', up: true,  sub: 'Q1 2026 · East Coast' },
+    { label: 'Bishan HDB 5-Room Avg',   value: 'S$824k',  change: '↑ 2.2%', up: true,  sub: 'Q1 2026 · Bishan' },
+    { label: 'Sentosa Condo Avg PSF',   value: 'S$2,680', change: '↓ 0.5%', up: false, sub: 'Q1 2026 · Sentosa Cove' },
+];
+
+let _tickerIdx  = 0;
+let _tickerBusy = false;
+
+function startMarketTicker() {
+    setInterval(() => {
+        const viewport = document.getElementById('market-ticker-viewport');
+        if (!viewport || _tickerBusy) return;
+        _tickerBusy = true;
+
+        const next = (_tickerIdx + 1) % _TICKER_ITEMS.length;
+        const item = _TICKER_ITEMS[next];
+
+        // Build incoming slide
+        const incoming = document.createElement('div');
+        incoming.className = 'market-ticker-slide slide-enter';
+        incoming.innerHTML = `
+            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">${item.label}</p>
+            <p class="text-lg font-bold text-slate-900 dark:text-white leading-tight">
+                ${item.value} <span class="text-sm font-normal ${item.up ? 'text-emerald-500' : 'text-rose-500'}">${item.change}</span>
+            </p>
+            <p class="text-[9px] text-slate-400 mt-0.5">${item.sub}</p>
+        `;
+        viewport.appendChild(incoming);
+
+        // Trigger transition on next paint
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                const current = viewport.querySelector('.slide-active');
+                if (current) current.classList.add('slide-exit');
+                incoming.classList.remove('slide-enter');
+                incoming.classList.add('slide-active');
+
+                setTimeout(() => {
+                    if (current) current.remove();
+                    _tickerIdx  = next;
+                    _tickerBusy = false;
+                }, 500);
+            });
+        });
+    }, 4000);
+}
+
+// ── Feedback form ─────────────────────────────────────────────
+async function submitFeedback() {
+    const name    = document.getElementById('feedback-name')?.value.trim();
+    const email   = document.getElementById('feedback-email')?.value.trim();
+    const message = document.getElementById('feedback-message')?.value.trim();
+    const status  = document.getElementById('feedback-status');
+    const btn     = document.getElementById('feedback-submit-btn');
+
+    if (!name || !email || !message) {
+        status.className = 'rounded-2xl px-4 py-3 text-sm font-medium bg-rose-50 text-rose-600';
+        status.textContent = 'Please fill in all fields before submitting.';
+        status.classList.remove('hidden');
+        return;
+    }
+    const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRe.test(email)) {
+        status.className = 'rounded-2xl px-4 py-3 text-sm font-medium bg-rose-50 text-rose-600';
+        status.textContent = 'Please enter a valid email address.';
+        status.classList.remove('hidden');
+        return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Sending…';
+    lucide.createIcons();
+    status.classList.add('hidden');
+
+    try {
+        const res  = await fetch('/api/feedback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, email, message }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+            status.className = 'rounded-2xl px-4 py-3 text-sm font-medium bg-emerald-50 text-emerald-700';
+            status.textContent = 'Thank you! Your feedback has been sent to our team.';
+            document.getElementById('feedback-name').value    = '';
+            document.getElementById('feedback-email').value   = '';
+            document.getElementById('feedback-message').value = '';
+        } else {
+            throw new Error(data.error || 'Failed to send feedback.');
+        }
+    } catch (e) {
+        status.className = 'rounded-2xl px-4 py-3 text-sm font-medium bg-rose-50 text-rose-600';
+        status.textContent = `Error: ${e.message}`;
+    } finally {
+        status.classList.remove('hidden');
+        btn.disabled = false;
+        btn.innerHTML = '<i data-lucide="send" class="w-4 h-4"></i> Send Feedback';
+        lucide.createIcons();
+    }
+}
 
 
 

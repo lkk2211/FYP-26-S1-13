@@ -1779,6 +1779,62 @@ def sync_ura():
     return jsonify({'inserted': inserted, 'batch_id': batch_id, 'message': f'Synced {inserted} new URA records'})
 
 
+@app.route('/api/feedback', methods=['POST'])
+def submit_feedback():
+    """Send user feedback to the project's Gmail address via SMTP."""
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+
+    data    = request.get_json(force=True) or {}
+    name    = str(data.get('name', '')).strip()
+    email   = str(data.get('email', '')).strip()
+    message = str(data.get('message', '')).strip()
+
+    if not name or not email or not message:
+        return jsonify({'error': 'All fields are required.'}), 400
+
+    RECIPIENT  = 'fyp.26.s1.13@gmail.com'
+    SENDER     = os.environ.get('GMAIL_USER', RECIPIENT)
+    APP_PASS   = os.environ.get('GMAIL_APP_PASSWORD', '')
+
+    if not APP_PASS:
+        # Fallback: log to console so it's not silently lost during dev
+        print(f"[FEEDBACK] From: {name} <{email}>\n{message}", flush=True)
+        return jsonify({'ok': True, 'note': 'logged (SMTP not configured)'}), 200
+
+    msg = MIMEMultipart('alternative')
+    msg['Subject'] = f'[PropAI.sg Feedback] from {name}'
+    msg['From']    = SENDER
+    msg['To']      = RECIPIENT
+    msg['Reply-To'] = email
+
+    body_text = f"Name: {name}\nEmail: {email}\n\nFeedback:\n{message}"
+    body_html = f"""
+    <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
+      <h2 style="color:#1e40af">PropAI.sg — New Feedback</h2>
+      <table style="width:100%;border-collapse:collapse">
+        <tr><td style="padding:8px 0;color:#64748b;width:80px"><b>Name</b></td><td>{name}</td></tr>
+        <tr><td style="padding:8px 0;color:#64748b"><b>Email</b></td><td><a href="mailto:{email}">{email}</a></td></tr>
+      </table>
+      <hr style="margin:16px 0;border:none;border-top:1px solid #e2e8f0"/>
+      <p style="color:#0f172a;white-space:pre-wrap">{message}</p>
+    </div>"""
+
+    msg.attach(MIMEText(body_text, 'plain'))
+    msg.attach(MIMEText(body_html, 'html'))
+
+    try:
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=10) as smtp:
+            smtp.login(SENDER, APP_PASS)
+            smtp.sendmail(SENDER, RECIPIENT, msg.as_string())
+    except Exception as e:
+        print(f"[FEEDBACK SMTP ERROR] {e}", flush=True)
+        return jsonify({'error': f'Email delivery failed: {e}'}), 500
+
+    return jsonify({'ok': True})
+
+
 @app.route('/api/admin/export-report', methods=['GET'])
 def export_report():
     try:

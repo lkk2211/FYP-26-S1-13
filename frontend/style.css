@@ -157,6 +157,25 @@ body {
 /* ── Hero Section ───────────────────────────────────────────── */
 .hero-section {
     position: relative;
+    overflow: hidden;
+}
+
+/* Singapore skyline background image overlay */
+.hero-skyline-bg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center 70%;
+    opacity: 0.055;
+    pointer-events: none;
+    z-index: 0;
+    user-select: none;
+}
+
+.dark .hero-skyline-bg {
+    opacity: 0.09;
 }
 
 .hero-section::before {
@@ -299,6 +318,40 @@ body {
 .dark .floating-price-badge {
     background: #111D30;
     border-color: #1A2840;
+}
+
+/* Market ticker slide-up animation */
+.floating-price-badge {
+    overflow: hidden;
+}
+
+.market-ticker-viewport {
+    height: 52px;
+    overflow: hidden;
+    position: relative;
+}
+
+.market-ticker-slide {
+    position: absolute;
+    width: 100%;
+    transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.45s ease;
+    transform: translateY(0);
+    opacity: 1;
+}
+
+.market-ticker-slide.slide-exit {
+    transform: translateY(-100%);
+    opacity: 0;
+}
+
+.market-ticker-slide.slide-enter {
+    transform: translateY(100%);
+    opacity: 0;
+}
+
+.market-ticker-slide.slide-active {
+    transform: translateY(0);
+    opacity: 1;
 }
 
 .stat-row {

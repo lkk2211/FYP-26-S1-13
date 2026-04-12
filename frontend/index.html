@@ -33,6 +33,7 @@
                 <button onclick="showView('predict')" class="nav-link px-4 py-1.5 rounded-lg text-sm font-medium text-slate-500 dark:text-slate-400 transition-all hover:text-slate-900 dark:hover:text-white" id="nav-predict">Predict</button>
                 <button onclick="showView('map')" class="nav-link px-4 py-1.5 rounded-lg text-sm font-medium text-slate-500 dark:text-slate-400 transition-all hover:text-slate-900 dark:hover:text-white" id="nav-map">Map</button>
                 <button onclick="showView('trend')" class="nav-link px-4 py-1.5 rounded-lg text-sm font-medium text-slate-500 dark:text-slate-400 transition-all hover:text-slate-900 dark:hover:text-white" id="nav-trend">Trend</button>
+                <button onclick="showView('feedback')" class="nav-link px-4 py-1.5 rounded-lg text-sm font-medium text-slate-500 dark:text-slate-400 transition-all hover:text-slate-900 dark:hover:text-white" id="nav-feedback">Feedback</button>
             </div>
             
             <!-- Dark mode toggle: always visible -->
@@ -82,6 +83,7 @@
 
                 <!-- Hero: Split Layout -->
                 <div class="hero-section hero-content py-14 md:py-20">
+                <img src="https://images.unsplash.com/photo-1525625293386-3f8f99389edd?w=1600&q=70&fit=crop" alt="" class="hero-skyline-bg" aria-hidden="true" />
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-10 lg:gap-16 items-center">
 
                         <!-- Left: Text + Hero Search -->
@@ -154,23 +156,31 @@
                         <div class="relative animate-fade-in hidden lg:block" style="animation-delay:0.2s">
                             <div class="prop-img-grid">
                                 <div class="prop-img-wrap">
-                                    <img src="https://picsum.photos/seed/sg-arch-1/480/300" alt="Singapore Property" loading="lazy" class="w-full h-full object-cover" />
+                                    <img src="https://images.unsplash.com/photo-1525625293386-3f8f99389edd?w=600&h=380&q=80&fit=crop" alt="Singapore CBD Skyline" loading="lazy" class="w-full h-full object-cover" />
                                 </div>
                                 <div class="prop-img-wrap">
-                                    <img src="https://picsum.photos/seed/sg-arch-2/480/300" alt="Singapore Property" loading="lazy" class="w-full h-full object-cover" />
+                                    <img src="https://images.unsplash.com/photo-1508964942454-1a56651d54ac?w=600&h=380&q=80&fit=crop" alt="Gardens by the Bay" loading="lazy" class="w-full h-full object-cover" />
                                 </div>
                                 <div class="prop-img-wrap">
-                                    <img src="https://picsum.photos/seed/sg-arch-3/480/300" alt="Singapore Property" loading="lazy" class="w-full h-full object-cover" />
+                                    <img src="https://images.unsplash.com/photo-1565967511849-76a60a516170?w=600&h=380&q=80&fit=crop" alt="Singapore HDB Flats" loading="lazy" class="w-full h-full object-cover" />
                                 </div>
                                 <div class="prop-img-wrap">
-                                    <img src="https://picsum.photos/seed/sg-arch-4/480/300" alt="Singapore Property" loading="lazy" class="w-full h-full object-cover" />
+                                    <img src="https://images.unsplash.com/photo-1510414842594-a61c69b5ae57?w=600&h=380&q=80&fit=crop" alt="Marina Bay Sands" loading="lazy" class="w-full h-full object-cover" />
                                 </div>
                             </div>
-                            <!-- Floating price badge -->
-                            <div class="floating-price-badge animate-fade-in" style="animation-delay:0.4s">
-                                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Avg CCR Condo PSF</p>
-                                <p class="text-xl font-bold text-slate-900 dark:text-white">S$2,142 <span class="text-sm font-normal text-emerald-500">↑ 3.1%</span></p>
-                                <p class="text-[10px] text-slate-400 mt-0.5">Q1 2026 · Marina / Orchard</p>
+                            <!-- Floating market ticker badge -->
+                            <div class="floating-price-badge animate-fade-in" style="animation-delay:0.4s; min-width:188px">
+                                <div class="flex items-center gap-1.5 mb-2">
+                                    <span class="relative flex h-1.5 w-1.5"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span><span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span></span>
+                                    <p class="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Live Market Data</p>
+                                </div>
+                                <div class="market-ticker-viewport" id="market-ticker-viewport">
+                                    <div class="market-ticker-slide slide-active" id="market-ticker-slide">
+                                        <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5" id="ticker-label">Avg CCR Condo PSF</p>
+                                        <p class="text-lg font-bold text-slate-900 dark:text-white leading-tight" id="ticker-value">S$2,142 <span class="text-sm font-normal text-emerald-500">↑ 3.1%</span></p>
+                                        <p class="text-[9px] text-slate-400 mt-0.5" id="ticker-sub">Q1 2026 · Marina / Orchard</p>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1318,6 +1328,7 @@
                         <li><a href="#" onclick="showView('predict');return false" class="hover:text-white transition-colors">Price Prediction</a></li>
                         <li><a href="#" onclick="showView('map');return false" class="hover:text-white transition-colors">Property Map</a></li>
                         <li><a href="#" onclick="showView('trend');return false" class="hover:text-white transition-colors">Market Trends</a></li>
+                        <li><a href="#" onclick="showView('feedback');return false" class="hover:text-white transition-colors">Feedback</a></li>
                     </ul>
                 </div>
 
@@ -1327,7 +1338,7 @@
                     <ul class="space-y-3 text-sm text-slate-400">
                         <li><a href="#" onclick="showFooterModal('about');return false" class="hover:text-white transition-colors">About Us</a></li>
                         <li><a href="#" onclick="showFooterModal('team');return false" class="hover:text-white transition-colors">Who We Are</a></li>
-                        <li><a href="#" onclick="showFooterModal('feedback');return false" class="hover:text-white transition-colors">Feedback</a></li>
+                        <li><a href="#" onclick="showView('feedback');return false" class="hover:text-white transition-colors">Feedback</a></li>
                     </ul>
                 </div>
 
@@ -1348,6 +1359,48 @@
             </div>
         </div>
     </footer>
+
+    <!-- Feedback View -->
+    <section id="view-feedback" class="view-section">
+        <main class="max-w-2xl mx-auto px-6 py-16">
+            <div class="text-center mb-12">
+                <div class="inline-flex items-center gap-2 px-4 py-1.5 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 rounded-full border border-blue-100 dark:border-blue-800/50 mb-5">
+                    <i data-lucide="message-circle" class="w-3.5 h-3.5"></i>
+                    <span class="text-xs font-bold uppercase tracking-wider">Share Your Thoughts</span>
+                </div>
+                <h1 class="text-4xl font-bold tracking-tight mb-3">We'd love your <span class="text-gradient">feedback</span></h1>
+                <p class="text-slate-500 dark:text-slate-400 text-base leading-relaxed">Help us improve PropAI.sg. Every suggestion matters to our team.</p>
+            </div>
+
+            <div class="bg-white dark:bg-slate-800/80 rounded-[40px] border border-slate-100 dark:border-slate-700/60 card-shadow p-10 space-y-6">
+                <div>
+                    <label class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-2 block">Your Name</label>
+                    <input id="feedback-name" type="text" placeholder="e.g. Tan Wei Ming"
+                        class="w-full px-4 py-3.5 rounded-2xl bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all text-sm font-medium dark:text-white dark:placeholder-slate-500" />
+                </div>
+                <div>
+                    <label class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-2 block">Email Address</label>
+                    <input id="feedback-email" type="email" placeholder="you@example.com"
+                        class="w-full px-4 py-3.5 rounded-2xl bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all text-sm font-medium dark:text-white dark:placeholder-slate-500" />
+                </div>
+                <div>
+                    <label class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-2 block">Your Feedback</label>
+                    <textarea id="feedback-message" rows="6" placeholder="Tell us what you think — what's working well, what could be better, or any features you'd like to see…"
+                        class="w-full px-4 py-3.5 rounded-2xl bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all text-sm font-medium dark:text-white dark:placeholder-slate-500 resize-none"></textarea>
+                </div>
+
+                <div id="feedback-status" class="hidden rounded-2xl px-4 py-3 text-sm font-medium"></div>
+
+                <button onclick="submitFeedback()" id="feedback-submit-btn"
+                    class="w-full py-4 rounded-2xl text-sm font-bold text-white btn-gradient flex items-center justify-center gap-2 transition-all hover:opacity-90">
+                    <i data-lucide="send" class="w-4 h-4"></i>
+                    Send Feedback
+                </button>
+
+                <p class="text-center text-xs text-slate-400">Your feedback is sent directly to our team at fyp.26.s1.13@gmail.com</p>
+            </div>
+        </main>
+    </section>
 
     <!-- Footer Modal -->
     <div id="footer-modal" class="fixed inset-0 z-[9999] hidden items-center justify-center p-6 bg-black/60 backdrop-blur-sm" onclick="if(event.target===this)closeFooterModal()">
