@@ -1733,19 +1733,27 @@ def upload_transactions():
 
         def _norm_date(raw):
             """Normalise any date-like value to a YYYY-MM-DD string.
-            Handles: pandas Timestamp, 'YYYY-MM-DD HH:MM:SS', 'YYYY-MM-DD', 'YYYY-MM'.
+            Handles: pandas Timestamp, 'YYYY-MM-DD HH:MM:SS', 'YYYY-MM-DD',
+                     'YYYY-MM', 'DD Mon YYYY' (e.g. '04 Jan 2017').
             Returns None for missing/invalid values."""
-            if raw is None or str(raw).strip() in ('', 'None', 'nan', 'NaT'):
+            import datetime as _dt
+            if raw is None or str(raw).strip() in ('', 'None', 'nan', 'NaT', '-'):
                 return None
             if hasattr(raw, 'strftime'):          # pandas Timestamp or datetime
                 return raw.strftime('%Y-%m-%d')
             s = str(raw).strip()
-            # Strip time component: "2017-01-01 00:00:00" or "2017-01-01T00:00:00"
+            # ISO with time: "2017-01-04 00:00:00" or "2017-01-04T00:00:00"
             if len(s) >= 10 and s[4] == '-' and s[7] == '-':
                 return s[:10]
             # "YYYY-MM" → "YYYY-MM-01"
             if len(s) == 7 and s[4] == '-':
                 return s + '-01'
+            # "DD Mon YYYY" e.g. "04 Jan 2017"
+            for fmt in ('%d %b %Y', '%d %B %Y', '%d-%b-%Y', '%d-%B-%Y'):
+                try:
+                    return _dt.datetime.strptime(s, fmt).strftime('%Y-%m-%d')
+                except ValueError:
+                    pass
             return s or None
 
         def _norm_month(raw):
@@ -1842,11 +1850,13 @@ def upload_transactions():
 
         elif tx_type == 'sora':
             for r in rows:
-                # Try "SORA Value Date" first (the actual reference date), fall back to Publication Date
+                # "SORA Publication Date" holds the full date string ("04 Jan 2017");
+                # "SORA Value Date" is a merged header whose first sub-column is year-only — use it as fallback
                 rate_date = _norm_date(_get(r,
-                    'sora value date', 'soravaluedate',
                     'sora publication date', 'sorapublicationdate',
-                    'date', 'rate_date', 'ratedate', 'published_date'))
+                    'published_date', 'publication date', 'publicationdate',
+                    'sora value date', 'soravaluedate',
+                    'date', 'rate_date', 'ratedate'))
                 ok = _row_exec(cur, _q("""
                         INSERT INTO sora_rates (rate_date, published_rate, upload_batch)
                         VALUES (?,?,?)
