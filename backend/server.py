@@ -121,7 +121,7 @@ SQLITE_SCHEMA = """
         articles   TEXT NOT NULL,
         fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
-    CREATE TABLE IF NOT EXISTS hdb_transactions (
+    CREATE TABLE IF NOT EXISTS hdb_resale (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
         month           TEXT,
         town            TEXT,
@@ -135,19 +135,25 @@ SQLITE_SCHEMA = """
         upload_batch    TEXT,
         uploaded_at     TEXT NOT NULL DEFAULT (datetime('now'))
     );
-    CREATE TABLE IF NOT EXISTS private_transactions (
+    CREATE TABLE IF NOT EXISTS ura_transactions (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
         project         TEXT,
         street          TEXT,
         property_type   TEXT,
         market_segment  TEXT,
-        district        TEXT,
+        postal_district TEXT,
+        floor_level     TEXT,
         floor_area_sqft REAL,
-        floor_range     TEXT,
+        floor_area_sqm  REAL,
         type_of_sale    TEXT,
-        contract_date   TEXT,
-        price           REAL,
-        unit_price      REAL,
+        type_of_area    TEXT,
+        transacted_price REAL,
+        unit_price_psf  REAL,
+        unit_price_psm  REAL,
+        nett_price      REAL,
+        tenure          TEXT,
+        num_units       INTEGER,
+        sale_date       TEXT,
         upload_batch    TEXT,
         uploaded_at     TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -216,7 +222,7 @@ POSTGRES_SCHEMA = """
         articles   TEXT NOT NULL,
         fetched_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
-    CREATE TABLE IF NOT EXISTS hdb_transactions (
+    CREATE TABLE IF NOT EXISTS hdb_resale (
         id              SERIAL PRIMARY KEY,
         month           TEXT,
         town            TEXT,
@@ -230,19 +236,25 @@ POSTGRES_SCHEMA = """
         upload_batch    TEXT,
         uploaded_at     TIMESTAMP NOT NULL DEFAULT NOW()
     );
-    CREATE TABLE IF NOT EXISTS private_transactions (
+    CREATE TABLE IF NOT EXISTS ura_transactions (
         id              SERIAL PRIMARY KEY,
         project         TEXT,
         street          TEXT,
         property_type   TEXT,
         market_segment  TEXT,
-        district        TEXT,
+        postal_district TEXT,
+        floor_level     TEXT,
         floor_area_sqft REAL,
-        floor_range     TEXT,
+        floor_area_sqm  REAL,
         type_of_sale    TEXT,
-        contract_date   TEXT,
-        price           REAL,
-        unit_price      REAL,
+        type_of_area    TEXT,
+        transacted_price REAL,
+        unit_price_psf  REAL,
+        unit_price_psm  REAL,
+        nett_price      REAL,
+        tenure          TEXT,
+        num_units       INTEGER,
+        sale_date       TEXT,
         upload_batch    TEXT,
         uploaded_at     TIMESTAMP NOT NULL DEFAULT NOW()
     );
@@ -915,10 +927,10 @@ def stats():
 
     # New table counts
     try:
-        cur.execute("SELECT COUNT(*) AS n FROM hdb_transactions"); hdb_tx_count = dict(cur.fetchone())['n']
+        cur.execute("SELECT COUNT(*) AS n FROM hdb_resale"); hdb_tx_count = dict(cur.fetchone())['n']
     except: hdb_tx_count = 0
     try:
-        cur.execute("SELECT COUNT(*) AS n FROM private_transactions"); priv_tx_count = dict(cur.fetchone())['n']
+        cur.execute("SELECT COUNT(*) AS n FROM ura_transactions"); priv_tx_count = dict(cur.fetchone())['n']
     except: priv_tx_count = 0
 
     cur.execute("SELECT id, full_name, email FROM users ORDER BY id DESC LIMIT 5")
@@ -1017,14 +1029,20 @@ def trend():
     avg    = statistics.mean(prices)
     rng    = random.Random(int(avg))
     today  = date.today()
+    def _mo(base_date, months_back):
+        m = base_date.month - months_back
+        y = base_date.year + (m - 1) // 12
+        m = ((m - 1) % 12) + 1
+        return date(y, m, 1).strftime("%b '%y")
+
     trend_data, p = [], avg * 0.94
     for i in range(6, 0, -1):
-        mo = (today.replace(day=1) - timedelta(days=30*(i-1))).strftime("%b %Y")
+        mo = _mo(today, i - 1)
         p  = p * rng.uniform(1.005, 1.025)
         trend_data.append({"month": mo, "price": int(p)})
     similar = []
     for idx, r in enumerate(sorted(rows, key=lambda r: abs(r["price_sgd"] - avg))[:5]):
-        mo   = (today.replace(day=1) - timedelta(days=30*[1,2,2,3,4][idx])).strftime("%b %Y")
+        mo   = _mo(today, [1,2,2,3,4][idx])
         meta = POSTAL_META.get(str(r["postal_code"]), {})
         pt   = r.get("property_type") or meta.get("property_type", "HDB")
         beds = r.get("num_bedrooms") or 0
@@ -1212,54 +1230,78 @@ def upload_transactions():
     inserted = 0
 
     try:
+        def _get(row, *keys, default=None):
+            """Case-insensitive key lookup across multiple candidate keys."""
+            for k in keys:
+                for col in row:
+                    if col.strip().lower().replace(' ', '').replace('(', '').replace(')', '').replace('$', '').replace('#', '') == k.lower().replace(' ', '').replace('(', '').replace(')', '').replace('$', '').replace('#', ''):
+                        v = row[col]
+                        return v if v not in ('', None) else default
+            return default
+
         if tx_type == 'hdb':
             for r in rows:
-                def g(k, default=None):
-                    for key in r:
-                        if key.strip().lower() == k.lower():
-                            v = r[key]
-                            return v if v != '' else default
-                    return default
                 try:
                     cur.execute(_q("""
-                        INSERT INTO hdb_transactions
+                        INSERT INTO hdb_resale
                             (month, town, flat_type, flat_model, floor_area_sqm,
                              storey_range, resale_price, remaining_lease,
                              lease_commence_date, upload_batch)
                         VALUES (?,?,?,?,?,?,?,?,?,?)
-                    """), (g('month'), g('town'), g('flat_type'), g('flat_model'),
-                           float(g('floor_area_sqm') or 0),
-                           g('storey_range'), float(g('resale_price') or 0),
-                           g('remaining_lease'),
-                           int(float(g('lease_commence_date') or 0)) or None,
+                    """), (_get(r,'month'), _get(r,'town'), _get(r,'flat_type','flattype'),
+                           _get(r,'flat_model','flatmodel'),
+                           float(_get(r,'floor_area_sqm','floorareasqm') or 0),
+                           _get(r,'storey_range','storeyrange'),
+                           float(_get(r,'resale_price','resaleprice') or 0),
+                           _get(r,'remaining_lease','remaininglease'),
+                           int(float(_get(r,'lease_commence_date','leasecommencedate') or 0)) or None,
                            batch_id))
                     inserted += 1
                 except Exception:
                     continue
         else:
+            # URA private property CSV format:
+            # Project Name, Transacted Price ($), Area (SQFT), Unit Price ($ PSF),
+            # Sale Date, Street Name, Type of Sale, Type of Area, Area (SQM),
+            # Unit Price ($ PSM), Nett Price($), Property Type, Number of Units,
+            # Tenure, Postal District, Market Segment, Floor Level
             for r in rows:
-                def gp(k, default=None):
-                    for key in r:
-                        if key.strip().lower() == k.lower():
-                            v = r[key]
-                            return v if v != '' else default
-                    return default
                 try:
+                    def _safe_float(v):
+                        try: return float(str(v).replace(',','')) if v else None
+                        except: return None
+                    def _safe_int(v):
+                        try: return int(float(str(v).replace(',',''))) if v else None
+                        except: return None
+
                     cur.execute(_q("""
-                        INSERT INTO private_transactions
+                        INSERT INTO ura_transactions
                             (project, street, property_type, market_segment,
-                             district, floor_area_sqft, floor_range,
-                             type_of_sale, contract_date, price, unit_price, upload_batch)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-                    """), (gp('project'), gp('street'), gp('property_type') or gp('propertytype'),
-                           gp('market_segment') or gp('marketsegment'),
-                           gp('district'), float(gp('area') or gp('floor_area_sqft') or 0),
-                           gp('floor_range') or gp('floorrange'),
-                           gp('type_of_sale') or gp('typeofsale'),
-                           gp('contract_date') or gp('contractdate'),
-                           float(gp('price') or 0),
-                           float(gp('unit_price') or gp('unitprice') or 0),
-                           batch_id))
+                             postal_district, floor_level, floor_area_sqft, floor_area_sqm,
+                             type_of_sale, type_of_area, transacted_price,
+                             unit_price_psf, unit_price_psm, nett_price,
+                             tenure, num_units, sale_date, upload_batch)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """), (
+                        _get(r,'project name','project'),
+                        _get(r,'street name','street'),
+                        _get(r,'property type','propertytype'),
+                        _get(r,'market segment','marketsegment'),
+                        _get(r,'postal district','postaldistrict'),
+                        _get(r,'floor level','floorlevel'),
+                        _safe_float(_get(r,'area sqft','floorareasqft')),
+                        _safe_float(_get(r,'area sqm','floorareasqm')),
+                        _get(r,'type of sale','typeofsale'),
+                        _get(r,'type of area','typeofarea'),
+                        _safe_float(_get(r,'transacted price','price')),
+                        _safe_float(_get(r,'unit price psf','unitpricepsf')),
+                        _safe_float(_get(r,'unit price psm','unitpricepsm')),
+                        _safe_float(_get(r,'nett price','nettprice')),
+                        _get(r,'tenure'),
+                        _safe_int(_get(r,'number of units','numunits')),
+                        _get(r,'sale date','saledate','contract date','contractdate'),
+                        batch_id
+                    ))
                     inserted += 1
                 except Exception:
                     continue
@@ -1302,8 +1344,8 @@ def export_report():
     total_users  = cnt('users')
     total_preds  = cnt('predictions')
     total_recs   = cnt('price_records')
-    hdb_txs      = cnt('hdb_transactions')
-    priv_txs     = cnt('private_transactions')
+    hdb_txs      = cnt('hdb_resale')
+    priv_txs     = cnt('ura_transactions')
 
     # Users by role
     cur.execute("SELECT role, COUNT(*) AS n FROM users GROUP BY role")
@@ -1489,8 +1531,8 @@ def export_report():
         ['users',               str(total_users)],
         ['predictions',         str(total_preds)],
         ['price_records',       str(total_recs)],
-        ['hdb_transactions',    str(hdb_txs)],
-        ['private_transactions', str(priv_txs)],
+        ['hdb_resale',       str(hdb_txs)],
+        ['ura_transactions', str(priv_txs)],
     ]
     story.append(tbl(db_data, [W*0.6, W*0.4]))
     story.append(Spacer(1, 0.3*cm))

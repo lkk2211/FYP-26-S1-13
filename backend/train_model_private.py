@@ -1,10 +1,20 @@
 #!/usr/bin/env python3
 """
 Train private property (condo/apartment/landed) price prediction model.
-Downloads transaction data from URA API and trains an XGBoost + LightGBM + CatBoost ensemble.
+
+Two data sources supported:
+  1. URA API direct download (set URA_ACCESS_KEY env var)
+  2. Uploaded ura_transactions table in the database (--from-db flag)
+
+URA CSV column format (from ura_transactions table):
+  Project Name, Transacted Price ($), Area (SQFT), Unit Price ($ PSF),
+  Sale Date, Street Name, Type of Sale, Type of Area, Area (SQM),
+  Unit Price ($ PSM), Nett Price($), Property Type, Number of Units,
+  Tenure, Postal District, Market Segment, Floor Level
 
 Usage:
-    URA_ACCESS_KEY=<your-key> python train_model_private.py
+    URA_ACCESS_KEY=<key> python train_model_private.py          # from URA API
+    DATABASE_URL=<url>   python train_model_private.py --from-db # from Supabase
 
 Models saved to ./models/ as:
     xgb_private_pipeline.joblib
@@ -14,7 +24,7 @@ Models saved to ./models/ as:
 """
 import os
 import re
-import json
+import sys
 import joblib
 import requests
 import numpy as np
@@ -28,19 +38,64 @@ from xgboost import XGBRegressor
 from lightgbm import LGBMRegressor
 from catboost import CatBoostRegressor
 
-MODELS_DIR    = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
-URA_BASE      = 'https://www.ura.gov.sg/uraDataService'
-ACCESS_KEY    = os.environ.get('URA_ACCESS_KEY', '')
+MODELS_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
+URA_BASE    = 'https://www.ura.gov.sg/uraDataService'
+ACCESS_KEY  = os.environ.get('URA_ACCESS_KEY', '')
+DATABASE_URL = os.environ.get('DATABASE_URL', '')
 
-CATEGORICAL_COLS = ['property_type', 'market_segment', 'type_of_sale', 'district']
+# Features used by the model
+CATEGORICAL_COLS = ['property_type', 'market_segment', 'type_of_sale', 'postal_district']
 NUMERICAL_COLS   = ['floor_area_sqft', 'floor_level_num', 'year', 'quarter', 'time_idx']
 ALL_FEATURES     = CATEGORICAL_COLS + NUMERICAL_COLS
 
-_FLOOR_LEVEL_MAP = {'low': 4, 'mid': 13, 'high': 25}
-_TYPE_OF_SALE_MAP = {'1': 'New Sale', '2': 'Sub Sale', '3': 'Resale'}
+_TYPE_OF_SALE_API = {'1': 'New Sale', '2': 'Sub Sale', '3': 'Resale'}
 
 
-# ─── URA API helpers ─────────────────────────────────────────────────────────
+# ─── Floor level helpers ─────────────────────────────────────────────────────
+
+def _parse_floor_level(fl_raw) -> float:
+    """Parse URA floor level strings to a numeric value."""
+    fl = str(fl_raw or '').strip().upper()
+    # Basement
+    if fl.startswith('B'):
+        return 0.0
+    # Range like "01 TO 05" or "01-05"
+    nums = re.findall(r'\d+', fl)
+    if len(nums) >= 2:
+        return (int(nums[0]) + int(nums[1])) / 2
+    if len(nums) == 1:
+        return float(nums[0])
+    # Text descriptors (from API)
+    fl_lower = fl.lower()
+    if 'low' in fl_lower:  return 4.0
+    if 'mid' in fl_lower:  return 13.0
+    if 'high' in fl_lower: return 25.0
+    return 10.0
+
+
+def _parse_sale_date(raw) -> tuple:
+    """Return (year, quarter) from sale date strings like 'Jan-25', '2025-01', '01/2025'."""
+    raw = str(raw or '').strip()
+    # Try "Jan-25" / "Jan '25"
+    m = re.match(r'([A-Za-z]{3})[\-\s\'](\d{2,4})', raw)
+    if m:
+        month_str, yr = m.group(1), m.group(2)
+        month = datetime.strptime(month_str, '%b').month
+        year  = 2000 + int(yr) if len(yr) == 2 else int(yr)
+        return year, (month - 1) // 3 + 1
+    # Try "2025-01" or "01/2025"
+    m2 = re.match(r'(\d{4})[-/](\d{1,2})', raw)
+    if m2:
+        year, month = int(m2.group(1)), int(m2.group(2))
+        return year, (month - 1) // 3 + 1
+    m3 = re.match(r'(\d{1,2})[-/](\d{4})', raw)
+    if m3:
+        month, year = int(m3.group(1)), int(m3.group(2))
+        return year, (month - 1) // 3 + 1
+    return None, None
+
+
+# ─── URA API download ────────────────────────────────────────────────────────
 
 def _get_ura_token(access_key: str) -> str:
     r = requests.get(
@@ -49,7 +104,7 @@ def _get_ura_token(access_key: str) -> str:
         timeout=30,
     )
     if r.status_code != 200:
-        raise ValueError(f'Token request failed: HTTP {r.status_code}\n{r.text[:300]}')
+        raise ValueError(f'Token request HTTP {r.status_code}:\n{r.text[:300]}')
     try:
         data = r.json()
     except Exception:
@@ -60,7 +115,6 @@ def _get_ura_token(access_key: str) -> str:
 
 
 def _fetch_batch(access_key: str, token: str, batch: int) -> list:
-    """Fetch one batch (1-4) of PMI_Resi_Transaction data."""
     r = requests.get(
         f'{URA_BASE}/invokeUraDS',
         params={'service': 'PMI_Resi_Transaction', 'batch': batch},
@@ -70,54 +124,84 @@ def _fetch_batch(access_key: str, token: str, batch: int) -> list:
     r.raise_for_status()
     data = r.json()
     if data.get('Status') != 'Success':
-        print(f'  Batch {batch}: URA returned status={data.get("Status")}')
+        print(f'  Batch {batch}: status={data.get("Status")}')
         return []
     return data.get('Result', [])
 
 
-def download_ura_transactions(access_key: str) -> pd.DataFrame:
-    """Download all 4 batches and flatten to a per-transaction DataFrame."""
+def download_from_ura_api(access_key: str) -> pd.DataFrame:
+    """Download all 4 batches from URA API and return flat DataFrame."""
     print('Getting URA token...')
     token = _get_ura_token(access_key)
-    print('Token obtained.')
-
-    rows = []
+    rows  = []
     for batch in range(1, 5):
         print(f'  Fetching batch {batch}/4...', end=' ')
         projects = _fetch_batch(access_key, token, batch)
         for proj in projects:
             market_seg = proj.get('marketSegment', '')
             for det in proj.get('details', []):
-                # Parse contractDate "MM/YY" → year/quarter
                 cd = det.get('contractDate', '')
                 try:
                     mo, yr = int(cd.split('/')[0]), int(cd.split('/')[1])
-                    year  = 2000 + yr if yr < 100 else yr
+                    year   = 2000 + yr if yr < 100 else yr
                     quarter = (mo - 1) // 3 + 1
                 except Exception:
                     continue
-
-                fl_raw = (det.get('floorLevel') or det.get('floorRange') or 'low').lower()
-                fl_num = _FLOOR_LEVEL_MAP.get(fl_raw[:3], 10)
-                # Try to parse numeric floor range
-                fl_match = re.search(r'(\d+)', fl_raw)
-                if fl_match:
-                    fl_num = int(fl_match.group(1))
-
                 rows.append({
-                    'property_type':  det.get('propertyType', proj.get('propertyType', '')),
-                    'market_segment': market_seg,
-                    'type_of_sale':   _TYPE_OF_SALE_MAP.get(str(det.get('typeOfSale', '3')), 'Resale'),
-                    'district':       str(det.get('district', '0')).zfill(2),
+                    'property_type':   det.get('propertyType', ''),
+                    'market_segment':  market_seg,
+                    'type_of_sale':    _TYPE_OF_SALE_API.get(str(det.get('typeOfSale', '3')), 'Resale'),
+                    'postal_district': str(det.get('district', '0')).zfill(2),
                     'floor_area_sqft': float(det.get('area') or 0),
-                    'floor_level_num': fl_num,
-                    'year':           year,
-                    'quarter':        quarter,
-                    'contract_date':  f'{year}-{mo:02d}',
-                    'price':          float(det.get('price') or 0),
+                    'floor_level_num': _parse_floor_level(det.get('floorLevel') or det.get('floorRange')),
+                    'year':            year,
+                    'quarter':         quarter,
+                    'sale_date':       f'{year}-{mo:02d}',
+                    'transacted_price': float(det.get('price') or 0),
                 })
-        print(f'{len(rows):,} transactions so far')
+        print(f'{len(rows):,} so far')
+    return pd.DataFrame(rows)
 
+
+# ─── Load from uploaded DB table ─────────────────────────────────────────────
+
+def load_from_db() -> pd.DataFrame:
+    """Read ura_transactions table and return a flat DataFrame."""
+    if DATABASE_URL:
+        import psycopg2
+        import psycopg2.extras
+        conn = psycopg2.connect(DATABASE_URL)
+        cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    else:
+        import sqlite3
+        DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'propaisg.db')
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+    cur.execute("SELECT * FROM ura_transactions")
+    rows_raw = [dict(r) for r in cur.fetchall()]
+    conn.close()
+
+    if not rows_raw:
+        raise ValueError('ura_transactions table is empty — upload CSV data first.')
+
+    rows = []
+    for r in rows_raw:
+        year, quarter = _parse_sale_date(r.get('sale_date'))
+        if year is None:
+            continue
+        rows.append({
+            'property_type':    str(r.get('property_type') or '').strip().upper(),
+            'market_segment':   str(r.get('market_segment') or '').strip().upper(),
+            'type_of_sale':     str(r.get('type_of_sale') or 'Resale').strip(),
+            'postal_district':  str(r.get('postal_district') or '0').strip().zfill(2),
+            'floor_area_sqft':  float(r.get('floor_area_sqft') or 0),
+            'floor_level_num':  _parse_floor_level(r.get('floor_level')),
+            'year':             year,
+            'quarter':          quarter,
+            'transacted_price': float(r.get('transacted_price') or 0),
+        })
     return pd.DataFrame(rows)
 
 
@@ -125,23 +209,14 @@ def download_ura_transactions(access_key: str) -> pd.DataFrame:
 
 def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-
-    # Normalise text categoricals
     for col in ['property_type', 'market_segment', 'type_of_sale']:
         df[col] = df[col].astype(str).str.strip().str.upper().str.replace(r'\s+', ' ', regex=True)
-
-    # District zero-padded string
-    df['district'] = df['district'].astype(str).str.strip().str.zfill(2)
-
-    # Numeric
+    df['postal_district'] = df['postal_district'].astype(str).str.strip().str.zfill(2)
     df['floor_area_sqft'] = pd.to_numeric(df['floor_area_sqft'], errors='coerce')
     df['floor_level_num'] = pd.to_numeric(df['floor_level_num'], errors='coerce').fillna(10)
-    df['price']           = pd.to_numeric(df['price'], errors='coerce')
-
-    # Time index
-    df['time_idx_raw'] = df['year'] * 12 + df['quarter'] * 3
-
-    return df.dropna(subset=ALL_FEATURES + ['price'])
+    df['transacted_price'] = pd.to_numeric(df['transacted_price'], errors='coerce')
+    df['time_idx_raw']    = df['year'] * 12 + df['quarter'] * 3
+    return df.dropna(subset=ALL_FEATURES + ['transacted_price'])
 
 
 # ─── Training ────────────────────────────────────────────────────────────────
@@ -154,57 +229,43 @@ def _build_pipeline(model):
     return Pipeline(steps=[('preprocessor', preprocessor), ('model', model)])
 
 
-def train(access_key: str):
+def train(df_raw: pd.DataFrame):
     os.makedirs(MODELS_DIR, exist_ok=True)
 
-    print('Downloading URA private property transactions...')
-    df = download_ura_transactions(access_key)
-    print(f'Raw records: {len(df):,}')
-
     print('Engineering features...')
-    df = engineer_features(df)
+    df = engineer_features(df_raw)
 
-    # Remove outliers (price <= 0 or unreasonably high/low per sqft)
-    df = df[(df['price'] > 100_000) & (df['floor_area_sqft'] > 10)]
-    df = df[df['price'] < 100_000_000]
-    print(f'After cleaning: {len(df):,}')
+    # Remove outliers
+    df = df[(df['transacted_price'] > 50_000) & (df['floor_area_sqft'] > 10)]
+    df = df[df['transacted_price'] < 200_000_000]
+    print(f'After cleaning: {len(df):,} records')
 
     time_idx_min = int(df['time_idx_raw'].min())
     df['time_idx'] = df['time_idx_raw'] - time_idx_min
 
+    # Train/test split
     train_df = df[df['year'] < 2025]
     test_df  = df[df['year'] >= 2025]
-    X_train, y_train = train_df[ALL_FEATURES], train_df['price']
-    X_test,  y_test  = test_df[ALL_FEATURES],  test_df['price']
-    print(f'Train: {len(X_train):,} | Test: {len(X_test):,}')
+    if len(test_df) < 50:
+        split   = int(len(df) * 0.9)
+        df_s    = df.sort_values('time_idx_raw')
+        train_df, test_df = df_s.iloc[:split], df_s.iloc[split:]
 
-    if len(X_test) == 0:
-        # Not enough 2025 data — use last 10% as test
-        split = int(len(df) * 0.9)
-        df_s  = df.sort_values('time_idx_raw')
-        train_df = df_s.iloc[:split]
-        test_df  = df_s.iloc[split:]
-        X_train, y_train = train_df[ALL_FEATURES], train_df['price']
-        X_test,  y_test  = test_df[ALL_FEATURES],  test_df['price']
-        print(f'Adjusted split → Train: {len(X_train):,} | Test: {len(X_test):,}')
+    X_train, y_train = train_df[ALL_FEATURES], train_df['transacted_price']
+    X_test,  y_test  = test_df[ALL_FEATURES],  test_df['transacted_price']
+    print(f'Train: {len(X_train):,} | Test: {len(X_test):,}')
 
     y_train_log = np.log(y_train)
 
     model_specs = {
-        'xgb_private': XGBRegressor(
-            n_estimators=200, learning_rate=0.05, max_depth=6,
-            subsample=0.8, colsample_bytree=0.8, random_state=42,
-            objective='reg:squarederror',
-        ),
-        'lgbm_private': LGBMRegressor(
-            n_estimators=200, learning_rate=0.05, num_leaves=31,
-            subsample=0.8, colsample_bytree=0.8, random_state=42,
-            verbose=-1,
-        ),
-        'cat_private': CatBoostRegressor(
-            iterations=200, learning_rate=0.05, depth=6,
-            loss_function='RMSE', random_seed=42, verbose=0,
-        ),
+        'xgb_private':  XGBRegressor(n_estimators=200, learning_rate=0.05, max_depth=6,
+                                       subsample=0.8, colsample_bytree=0.8, random_state=42,
+                                       objective='reg:squarederror'),
+        'lgbm_private': LGBMRegressor(n_estimators=200, learning_rate=0.05, num_leaves=31,
+                                        subsample=0.8, colsample_bytree=0.8, random_state=42,
+                                        verbose=-1),
+        'cat_private':  CatBoostRegressor(iterations=200, learning_rate=0.05, depth=6,
+                                            loss_function='RMSE', random_seed=42, verbose=0),
     }
 
     trained = {}
@@ -221,19 +282,16 @@ def train(access_key: str):
     ens = np.mean([np.exp(p.predict(X_test)) for p in trained.values()], axis=0)
     print(f'Ensemble: MAE=S${mean_absolute_error(y_test, ens):,.0f}  R²={r2_score(y_test, ens):.4f}')
 
-    # Medians per district/type for inference defaults
     medians = (
-        df.groupby(['district', 'property_type'])[['floor_area_sqft', 'floor_level_num']]
-        .median()
-        .to_dict('index')
+        df.groupby(['postal_district', 'property_type'])[['floor_area_sqft', 'floor_level_num']]
+        .median().to_dict('index')
     )
-
     meta = {
-        'time_idx_min':           time_idx_min,
-        'medians_by_dist_type':   medians,
-        'categorical_cols':       CATEGORICAL_COLS,
-        'numerical_cols':         NUMERICAL_COLS,
-        'trained_at':             datetime.utcnow().isoformat(),
+        'time_idx_min':         time_idx_min,
+        'medians_by_dist_type': medians,
+        'categorical_cols':     CATEGORICAL_COLS,
+        'numerical_cols':       NUMERICAL_COLS,
+        'trained_at':           datetime.utcnow().isoformat(),
     }
 
     for name, pipeline in trained.items():
@@ -246,9 +304,19 @@ def train(access_key: str):
 
 
 if __name__ == '__main__':
-    key = ACCESS_KEY
-    if not key:
-        import sys
-        print('ERROR: Set URA_ACCESS_KEY environment variable before running.')
-        sys.exit(1)
-    train(key)
+    from_db = '--from-db' in sys.argv
+
+    if from_db:
+        print('Loading from ura_transactions database table...')
+        df_raw = load_from_db()
+        print(f'Loaded {len(df_raw):,} records from DB')
+    else:
+        key = ACCESS_KEY
+        if not key:
+            print('ERROR: Set URA_ACCESS_KEY env var, or use --from-db to train from uploaded CSV data.')
+            sys.exit(1)
+        print('Downloading from URA API...')
+        df_raw = download_from_ura_api(key)
+        print(f'Downloaded {len(df_raw):,} records')
+
+    train(df_raw)

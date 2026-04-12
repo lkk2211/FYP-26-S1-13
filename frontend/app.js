@@ -1584,7 +1584,7 @@ function setUploadType(type) {
     } else {
         privBtn.className = 'px-5 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-bold transition-all';
         hdbBtn.className  = 'px-5 py-2.5 bg-slate-100 text-slate-600 rounded-xl text-sm font-bold transition-all hover:bg-slate-200';
-        if (hint) hint.innerHTML = '<p class="font-bold text-slate-700 mb-1 font-sans">Expected Private Property CSV columns:</p>project, street, property_type, market_segment, district, area, floor_range, type_of_sale, contract_date, price, unit_price';
+        if (hint) hint.innerHTML = '<p class="font-bold text-slate-700 mb-1 font-sans">Expected URA Private Property CSV columns:</p>Project Name, Transacted Price ($), Area (SQFT), Unit Price ($ PSF), Sale Date, Street Name, Type of Sale, Type of Area, Area (SQM), Unit Price ($ PSM), Nett Price($), Property Type, Number of Units, Tenure, Postal District, Market Segment, Floor Level';
     }
 }
 
