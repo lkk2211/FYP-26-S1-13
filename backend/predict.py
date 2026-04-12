@@ -175,6 +175,12 @@ def _load_models():
         meta = joblib.load(os.path.join(MODELS_DIR, 'meta.joblib'))
         _pipelines = [xgb, lgbm, cat]
         _meta = meta
+        # Refresh policy/SORA from DB (overrides values baked into meta)
+        pol, sor = _load_latest_policy_sora()
+        if pol:
+            _meta['latest_policy'] = pol
+        if sor is not None:
+            _meta['latest_sora'] = sor
         print("[predict] ML models loaded successfully")
         return True
     except Exception as e:
@@ -183,6 +189,45 @@ def _load_models():
 
 
 # ─── OneMap geocoding ─────────────────────────────────────────────────────────
+
+def _load_latest_policy_sora():
+    """Try to load latest policy and SORA from DB for inference."""
+    try:
+        import os
+        DATABASE_URL = os.environ.get('DATABASE_URL', '')
+        if DATABASE_URL:
+            import psycopg2, psycopg2.extras
+            conn = psycopg2.connect(DATABASE_URL)
+            cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            ph   = '%s'
+        else:
+            import sqlite3
+            DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'propaisg.db')
+            conn = sqlite3.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
+            cur  = conn.cursor()
+            ph   = '?'
+
+        # Latest policy
+        cur.execute("SELECT direction, severity FROM policy_changes WHERE effective_month IS NOT NULL ORDER BY effective_month DESC LIMIT 1")
+        pol = cur.fetchone()
+        if pol:
+            pol = dict(pol)
+            d, s = float(pol.get('direction') or 0), float(pol.get('severity') or 0)
+            policy_vals = {'direction': d, 'severity': s, 'policy_impact': d * s,
+                           'months_since_policy_change': 0}
+        else:
+            policy_vals = None
+
+        # Latest SORA
+        cur.execute("SELECT published_rate FROM sora_rates WHERE rate_date IS NOT NULL ORDER BY rate_date DESC LIMIT 1")
+        sor = cur.fetchone()
+        sora_val = float(dict(sor).get('published_rate', 3.5)) if sor else None
+        conn.close()
+        return policy_vals, sora_val
+    except Exception:
+        return None, None
+
 
 def _geocode_postal(postal):
     """Returns (town_upper, lat, lon) or (None, None, None)."""
@@ -239,8 +284,8 @@ def _predict_ml(features):
     flat_type = _BEDROOMS_TO_FLAT_TYPE.get(bedrooms, 'EXECUTIVE' if bedrooms >= 6 else '5 ROOM')
     flat_model = _FLAT_TYPE_TO_MODEL.get(flat_type, 'MODEL A')
 
-    # Geocode
-    town, _lat, _lon = _geocode_postal(postal)
+    # Geocode → town + lat/lon
+    town, lat, lon = _geocode_postal(postal)
     if not town:
         return None  # fall back to rule-based
 
@@ -251,27 +296,40 @@ def _predict_ml(features):
     time_idx_raw = year * 12 + now.month
     time_idx = time_idx_raw - _meta['time_idx_min']
 
-    # Storey mid (treat floor as mid of its storey band)
     storey_mid = float(floor)
 
     # Lease/age defaults from training medians
     key = (town, flat_type)
     med = _meta['medians_by_town_type'].get(key, {})
     remaining_lease_years = float(med.get('remaining_lease_years', 65.0))
-    flat_age_years = float(med.get('flat_age_years', 34.0))
+    flat_age_years        = float(med.get('flat_age_years', 34.0))
+    lat_med = float(med.get('lat', lat or 1.35))
+    lon_med = float(med.get('lon', lon or 103.82))
 
-    row = pd.DataFrame([{
-        'town': town,
-        'flat_type': flat_type,
-        'flat_model': flat_model,
-        'floor_area_sqm': area_sqm,
-        'year': year,
-        'quarter': quarter,
-        'time_idx': time_idx,
-        'storey_mid': storey_mid,
+    # Latest policy + SORA (from meta, refreshed from DB at load time)
+    pol = _meta.get('latest_policy', {})
+    sora = float(_meta.get('latest_sora', 3.5))
+
+    # Build feature row using exactly the columns the model was trained on
+    num_cols = _meta.get('numerical_cols', [])
+    feat = {
+        'town': town, 'flat_type': flat_type, 'flat_model': flat_model,
+        'floor_area_sqm':        area_sqm,
+        'year':                  year,
+        'quarter':               quarter,
+        'time_idx':              time_idx,
+        'storey_mid':            storey_mid,
         'remaining_lease_years': remaining_lease_years,
-        'flat_age_years': flat_age_years,
-    }])
+        'flat_age_years':        flat_age_years,
+        'direction':             float(pol.get('direction', 0)),
+        'severity':              float(pol.get('severity', 0)),
+        'policy_impact':         float(pol.get('policy_impact', 0)),
+        'months_since_policy_change': int(pol.get('months_since_policy_change', 0)),
+        'sora':                  sora,
+        'lat':                   lat or lat_med,
+        'lon':                   lon or lon_med,
+    }
+    row = pd.DataFrame([{k: feat[k] for k in (_meta.get('categorical_cols', ['town','flat_type','flat_model']) + num_cols) if k in feat}])
 
     preds_log = [p.predict(row)[0] for p in _pipelines]
     ensemble_log = np.mean(preds_log)

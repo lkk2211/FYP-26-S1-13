@@ -159,10 +159,11 @@ SQLITE_SCHEMA = """
     );
     CREATE TABLE IF NOT EXISTS geocoded_addresses (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        search_text     TEXT,
+        lat             REAL,
+        lon             REAL,
         postal_code     TEXT,
         address         TEXT,
-        latitude        REAL,
-        longitude       REAL,
         town            TEXT,
         planning_area   TEXT,
         upload_batch    TEXT,
@@ -170,10 +171,11 @@ SQLITE_SCHEMA = """
     );
     CREATE TABLE IF NOT EXISTS policy_changes (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
-        policy_date     TEXT,
-        direction       TEXT,
+        effective_month TEXT,
+        policy_name     TEXT,
+        category        TEXT,
+        direction       REAL,
         severity        REAL,
-        description     TEXT,
         upload_batch    TEXT,
         uploaded_at     TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -287,10 +289,11 @@ POSTGRES_SCHEMA = """
     );
     CREATE TABLE IF NOT EXISTS geocoded_addresses (
         id              SERIAL PRIMARY KEY,
+        search_text     TEXT,
+        lat             REAL,
+        lon             REAL,
         postal_code     TEXT,
         address         TEXT,
-        latitude        REAL,
-        longitude       REAL,
         town            TEXT,
         planning_area   TEXT,
         upload_batch    TEXT,
@@ -298,10 +301,11 @@ POSTGRES_SCHEMA = """
     );
     CREATE TABLE IF NOT EXISTS policy_changes (
         id              SERIAL PRIMARY KEY,
-        policy_date     TEXT,
-        direction       TEXT,
+        effective_month TEXT,
+        policy_name     TEXT,
+        category        TEXT,
+        direction       REAL,
         severity        REAL,
-        description     TEXT,
         upload_batch    TEXT,
         uploaded_at     TIMESTAMP NOT NULL DEFAULT NOW()
     );
@@ -330,31 +334,60 @@ def init_db():
 
 def migrate_db():
     """Add columns introduced after initial deploy without breaking existing DBs.
-    Also drops legacy duplicate tables from earlier schema versions."""
+    Also drops legacy duplicate tables and adds new columns to existing tables."""
     conn = get_db()
     try:
         if USE_POSTGRES:
             cur = _cursor(conn)
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()")
-            # Drop legacy duplicate tables
+            # Drop legacy tables
             for tbl in ('hdb_transactions', 'private_transactions', 'sync_log'):
-                try:
-                    cur.execute(f"DROP TABLE IF EXISTS {tbl}")
-                except Exception:
-                    pass
+                try: cur.execute(f"DROP TABLE IF EXISTS {tbl}")
+                except Exception: pass
+            # Add new columns to geocoded_addresses (search_text, lat, lon)
+            for col_def in [
+                "ALTER TABLE geocoded_addresses ADD COLUMN IF NOT EXISTS search_text TEXT",
+                "ALTER TABLE geocoded_addresses ADD COLUMN IF NOT EXISTS lat REAL",
+                "ALTER TABLE geocoded_addresses ADD COLUMN IF NOT EXISTS lon REAL",
+            ]:
+                try: cur.execute(col_def)
+                except Exception: pass
+            # Add new columns to policy_changes (effective_month, policy_name, category)
+            for col_def in [
+                "ALTER TABLE policy_changes ADD COLUMN IF NOT EXISTS effective_month TEXT",
+                "ALTER TABLE policy_changes ADD COLUMN IF NOT EXISTS policy_name TEXT",
+                "ALTER TABLE policy_changes ADD COLUMN IF NOT EXISTS category TEXT",
+                "ALTER TABLE policy_changes ALTER COLUMN direction TYPE REAL USING direction::REAL",
+            ]:
+                try: cur.execute(col_def)
+                except Exception: pass
+            # Add block/street_name to hdb_resale for geocoding
+            for col_def in [
+                "ALTER TABLE hdb_resale ADD COLUMN IF NOT EXISTS block TEXT",
+                "ALTER TABLE hdb_resale ADD COLUMN IF NOT EXISTS street_name TEXT",
+            ]:
+                try: cur.execute(col_def)
+                except Exception: pass
             conn.commit()
         else:
-            try:
-                conn.execute("ALTER TABLE users ADD COLUMN created_at TEXT DEFAULT (datetime('now'))")
-                conn.commit()
-            except Exception:
-                pass  # column already exists
-            # Drop legacy duplicate tables
-            for tbl in ('hdb_transactions', 'private_transactions', 'sync_log'):
+            for stmt in [
+                "ALTER TABLE users ADD COLUMN created_at TEXT DEFAULT (datetime('now'))",
+                "ALTER TABLE geocoded_addresses ADD COLUMN search_text TEXT",
+                "ALTER TABLE geocoded_addresses ADD COLUMN lat REAL",
+                "ALTER TABLE geocoded_addresses ADD COLUMN lon REAL",
+                "ALTER TABLE policy_changes ADD COLUMN effective_month TEXT",
+                "ALTER TABLE policy_changes ADD COLUMN policy_name TEXT",
+                "ALTER TABLE policy_changes ADD COLUMN category TEXT",
+                "ALTER TABLE hdb_resale ADD COLUMN block TEXT",
+                "ALTER TABLE hdb_resale ADD COLUMN street_name TEXT",
+            ]:
                 try:
-                    conn.execute(f"DROP TABLE IF EXISTS {tbl}")
+                    conn.execute(stmt)
                 except Exception:
-                    pass
+                    pass  # column already exists
+            for tbl in ('hdb_transactions', 'private_transactions', 'sync_log'):
+                try: conn.execute(f"DROP TABLE IF EXISTS {tbl}")
+                except Exception: pass
             conn.commit()
     except Exception as e:
         print(f"migrate_db warning: {e}")
@@ -1549,15 +1582,17 @@ def upload_transactions():
         elif tx_type == 'geocoded':
             for r in rows:
                 try:
+                    lat_v = float(str(_get(r,'lat','latitude') or '').replace(',','') or 0) or None
+                    lon_v = float(str(_get(r,'lon','lng','longitude') or '').replace(',','') or 0) or None
                     cur.execute(_q("""
                         INSERT INTO geocoded_addresses
-                            (postal_code, address, latitude, longitude, town, planning_area, upload_batch)
-                        VALUES (?,?,?,?,?,?,?)
+                            (search_text, lat, lon, postal_code, address, town, planning_area, upload_batch)
+                        VALUES (?,?,?,?,?,?,?,?)
                     """), (
+                        _get(r,'search_text','searchtext','search text'),
+                        lat_v, lon_v,
                         _get(r,'postal_code','postal','postalcode'),
                         _get(r,'address','full_address','building'),
-                        float(_get(r,'latitude','lat') or 0) or None,
-                        float(_get(r,'longitude','lon','lng') or 0) or None,
                         _get(r,'town'),
                         _get(r,'planning_area','planningarea','planning area'),
                         batch_id
@@ -1571,13 +1606,14 @@ def upload_transactions():
                 try:
                     cur.execute(_q("""
                         INSERT INTO policy_changes
-                            (policy_date, direction, severity, description, upload_batch)
-                        VALUES (?,?,?,?,?)
+                            (effective_month, policy_name, category, direction, severity, upload_batch)
+                        VALUES (?,?,?,?,?,?)
                     """), (
-                        _get(r,'date','policy_date','policydate','policy date','effective_date'),
-                        _get(r,'direction','effect','effect_direction'),
-                        float(_get(r,'severity','severity_score','score') or 0) or None,
-                        _get(r,'description','policy','measure','details'),
+                        _get(r,'effective_month','effectivemonth','date','policy_date','policydate'),
+                        _get(r,'policy_name','policyname','name','description','measure'),
+                        _get(r,'category'),
+                        float(str(_get(r,'direction','effect') or '0').replace(',','') or 0),
+                        float(str(_get(r,'severity','severity_score','score') or '0').replace(',','') or 0),
                         batch_id
                     ))
                     inserted += 1
@@ -1591,13 +1627,31 @@ def upload_transactions():
                         INSERT INTO sora_rates (rate_date, published_rate, upload_batch)
                         VALUES (?,?,?)
                     """), (
-                        _get(r,'date','rate_date','ratedate','published_date','end_of_month'),
-                        float(str(_get(r,'rate','published_rate','sora','sora_rate','compounded_sora') or '').replace(',','') or 0) or None,
+                        _get(r,'sora publication date','sorapublicationdate','date','rate_date','ratedate','published_date'),
+                        float(str(_get(r,'compound sora - 3 month','compoundsora-3month','sora_3m','sora','published_rate','rate') or '').replace(',','') or 0) or None,
                         batch_id
                     ))
                     inserted += 1
                 except Exception:
                     continue
+
+        # Delete records older than 10 years from transaction tables
+        if tx_type == 'hdb':
+            try:
+                if USE_POSTGRES:
+                    cur.execute("DELETE FROM hdb_resale WHERE month IS NOT NULL AND CAST(month AS DATE) < NOW() - INTERVAL '10 years'")
+                else:
+                    cur.execute("DELETE FROM hdb_resale WHERE month IS NOT NULL AND month < date('now', '-10 years')")
+            except Exception:
+                pass
+        elif tx_type == 'private':
+            try:
+                if USE_POSTGRES:
+                    cur.execute("DELETE FROM ura_transactions WHERE uploaded_at < NOW() - INTERVAL '10 years'")
+                else:
+                    cur.execute("DELETE FROM ura_transactions WHERE uploaded_at < date('now', '-10 years')")
+            except Exception:
+                pass
 
         conn.commit()
     except Exception as e:
@@ -1607,6 +1661,110 @@ def upload_transactions():
 
     conn.close()
     return jsonify({'inserted': inserted, 'total_rows': len(rows), 'batch_id': batch_id})
+
+
+@app.route('/api/admin/sync-ura', methods=['POST'])
+def sync_ura():
+    """Fetch latest URA private property transactions and insert new records into ura_transactions."""
+    access_key = os.environ.get('URA_ACCESS_KEY', '')
+    if not access_key:
+        return jsonify({'error': 'URA_ACCESS_KEY not configured'}), 400
+
+    URA_BASE = 'https://www.ura.gov.sg/uraDataService'
+    _TYPE_MAP = {'1': 'New Sale', '2': 'Sub Sale', '3': 'Resale'}
+
+    def _re_parse_floor(fl):
+        import re as _re
+        fl = str(fl or '').strip().upper()
+        if fl.startswith('B'): return 0.0
+        nums = _re.findall(r'\d+', fl)
+        if len(nums) >= 2: return (int(nums[0]) + int(nums[1])) / 2
+        if len(nums) == 1: return float(nums[0])
+        if 'LOW' in fl: return 4.0
+        if 'MID' in fl: return 13.0
+        if 'HIGH' in fl: return 25.0
+        return 10.0
+
+    try:
+        # Get URA token
+        r = urllib.request.urlopen(urllib.request.Request(
+            f'{URA_BASE}/insertNewToken.action',
+            headers={'AccessKey': access_key}
+        ), timeout=30)
+        token_data = json.loads(r.read())
+        if token_data.get('Status') != 'Success':
+            return jsonify({'error': f'URA token error: {token_data}'}), 500
+        token = token_data['Result']
+    except Exception as e:
+        return jsonify({'error': f'URA token request failed: {e}'}), 500
+
+    batch_id = datetime.datetime.utcnow().isoformat()
+    conn = get_db(); cur = _cursor(conn)
+    inserted = 0
+
+    try:
+        import urllib.parse
+        for batch in range(1, 5):
+            try:
+                req = urllib.request.Request(
+                    f'{URA_BASE}/invokeUraDS?service=PMI_Resi_Transaction&batch={batch}',
+                    headers={'AccessKey': access_key, 'Token': token}
+                )
+                r = urllib.request.urlopen(req, timeout=60)
+                data = json.loads(r.read())
+                if data.get('Status') != 'Success':
+                    continue
+                for proj in data.get('Result', []):
+                    mkt = proj.get('marketSegment', '')
+                    for det in proj.get('details', []):
+                        cd = str(det.get('contractDate', ''))
+                        try:
+                            mo, yr = int(cd.split('/')[0]), int(cd.split('/')[1])
+                            year = 2000 + yr if yr < 100 else yr
+                        except Exception:
+                            continue
+                        sale_date = f'{year}-{mo:02d}'
+                        cur.execute(_q("""
+                            INSERT INTO ura_transactions
+                                (project, street, property_type, market_segment,
+                                 postal_district, floor_level, floor_area_sqft, floor_area_sqm,
+                                 type_of_sale, transacted_price, unit_price_psf, unit_price_psm,
+                                 tenure, num_units, sale_date, upload_batch)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        """), (
+                            proj.get('project', ''),
+                            det.get('street', ''),
+                            det.get('propertyType', ''),
+                            mkt,
+                            str(det.get('district', '0')).zfill(2),
+                            det.get('floorLevel') or det.get('floorRange', ''),
+                            float(det.get('area') or 0),
+                            float(det.get('area') or 0) / 10.764,
+                            _TYPE_MAP.get(str(det.get('typeOfSale', '3')), 'Resale'),
+                            float(det.get('price') or 0),
+                            float(det.get('unitPrice') or 0),
+                            None, det.get('tenure', ''),
+                            int(float(det.get('noOfUnits') or 1)),
+                            sale_date, batch_id
+                        ))
+                        inserted += 1
+            except Exception:
+                continue
+
+        # Delete records older than 10 years
+        if USE_POSTGRES:
+            cur.execute("DELETE FROM ura_transactions WHERE uploaded_at < NOW() - INTERVAL '10 years'")
+        else:
+            cur.execute("DELETE FROM ura_transactions WHERE uploaded_at < date('now', '-10 years')")
+
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return jsonify({'error': str(e)}), 500
+
+    conn.close()
+    return jsonify({'inserted': inserted, 'batch_id': batch_id, 'message': f'Synced {inserted} new URA records'})
 
 
 @app.route('/api/admin/export-report', methods=['GET'])

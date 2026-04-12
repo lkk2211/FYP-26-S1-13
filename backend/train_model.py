@@ -1,12 +1,24 @@
 #!/usr/bin/env python3
 """
-Train HDB resale price prediction model.
-Downloads data from data.gov.sg and trains an XGBoost + LightGBM + CatBoost ensemble.
-Run once: python train_model.py
-Models saved to ./models/
+Train HDB resale price prediction model with policy + SORA + geocoding features.
+
+Data sources (loaded from Supabase DB tables):
+  - hdb_resale         — HDB transaction records (uploaded CSV)
+  - policy_changes     — Government policy changes (effective_month, direction, severity)
+  - sora_rates         — SORA 3-month compound rates
+  - geocoded_addresses — Block+street → lat/lon mapping
+
+Falls back to data.gov.sg API for transactions if hdb_resale is empty.
+A temp checkpoint is saved after feature engineering and after each model
+in case training is interrupted.
+
+Usage:
+    python train_model.py            # auto (DB first, then API)
+    python train_model.py --from-db  # force DB mode
 """
 import os
 import re
+import sys
 import joblib
 import requests
 import numpy as np
@@ -20,12 +32,31 @@ from xgboost import XGBRegressor
 from lightgbm import LGBMRegressor
 from catboost import CatBoostRegressor
 
-MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
+MODELS_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
+TEMP_PATH   = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_progress.csv')
 RESOURCE_ID = 'f1765b54-a209-4718-8d38-a39237f502b3'
-MIN_YEAR = 2019  # Use data from 2019 onwards
+MIN_YEAR    = 2017
 
 CATEGORICAL_COLS = ["town", "flat_type", "flat_model"]
-NUMERICAL_COLS = [
+# Full feature set matching the notebook (lat/lon + policy + SORA)
+NUMERICAL_COLS_FULL = [
+    "floor_area_sqm",
+    "direction",
+    "severity",
+    "policy_impact",
+    "months_since_policy_change",
+    "sora",
+    "year",
+    "quarter",
+    "time_idx",
+    "storey_mid",
+    "remaining_lease_years",
+    "flat_age_years",
+    "lat",
+    "lon",
+]
+# Minimal fallback (no geo, no policy, no SORA — same as original model)
+NUMERICAL_COLS_MIN = [
     "floor_area_sqm",
     "year",
     "quarter",
@@ -34,24 +65,45 @@ NUMERICAL_COLS = [
     "remaining_lease_years",
     "flat_age_years",
 ]
-ALL_FEATURES = CATEGORICAL_COLS + NUMERICAL_COLS
 
 
-# ─── Data sources ─────────────────────────────────────────────────────────────
+# ─── DB connection helper ─────────────────────────────────────────────────────
+
+def _get_db_conn():
+    url = os.environ.get('DATABASE_URL', '')
+    if url:
+        import psycopg2, psycopg2.extras
+        return psycopg2.connect(url), 'postgres'
+    DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'propaisg.db')
+    import sqlite3
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn, 'sqlite'
+
+
+def _query(sql, params=()):
+    conn, kind = _get_db_conn()
+    if kind == 'postgres':
+        import psycopg2.extras
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(sql.replace('?', '%s'), params)
+    else:
+        cur = conn.cursor()
+        cur.execute(sql, params)
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+# ─── Data loaders ─────────────────────────────────────────────────────────────
 
 def download_hdb_data():
-    """Paginate through data.gov.sg datastore API and return full DataFrame."""
+    """Paginate through data.gov.sg datastore API."""
     base_url = 'https://data.gov.sg/api/action/datastore_search'
-    all_records = []
-    limit = 10000
-    offset = 0
-    total = None
-
+    all_records, limit, offset, total = [], 10000, 0, None
     while True:
         r = requests.get(base_url, params={
-            'resource_id': RESOURCE_ID,
-            'limit': limit,
-            'offset': offset,
+            'resource_id': RESOURCE_ID, 'limit': limit, 'offset': offset,
         }, timeout=60)
         r.raise_for_status()
         result = r.json()['result']
@@ -63,45 +115,69 @@ def download_hdb_data():
         if len(records) < limit:
             break
         offset += limit
-
     print()
     return pd.DataFrame(all_records)
 
 
-def load_from_db():
-    """Load HDB resale data from the hdb_resale database table.
-    Returns a DataFrame or None if the table is empty."""
-    DATABASE_URL_ENV = os.environ.get('DATABASE_URL', '')
-    DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'propaisg.db')
-
+def load_hdb_from_db():
     try:
-        if DATABASE_URL_ENV:
-            import psycopg2
-            conn = psycopg2.connect(DATABASE_URL_ENV)
-            cur  = conn.cursor()
-        else:
-            import sqlite3
-            conn = sqlite3.connect(DB_PATH)
-            cur  = conn.cursor()
-
-        cur.execute("""
+        rows = _query("""
             SELECT month, town, flat_type, flat_model, floor_area_sqm,
-                   storey_range, resale_price, remaining_lease, lease_commence_date
+                   storey_range, resale_price, remaining_lease, lease_commence_date,
+                   block, street_name
             FROM hdb_resale
         """)
-        rows = cur.fetchall()
-        conn.close()
+        if not rows:
+            return None
+        return pd.DataFrame(rows)
     except Exception as e:
-        print(f"  DB load error: {e}")
+        print(f"  hdb_resale load error: {e}")
         return None
 
-    if not rows:
+
+def load_policy_from_db():
+    try:
+        rows = _query("""
+            SELECT effective_month, policy_name, category, direction, severity
+            FROM policy_changes
+            WHERE effective_month IS NOT NULL
+        """)
+        if not rows:
+            return None
+        return pd.DataFrame(rows)
+    except Exception as e:
+        print(f"  policy_changes load error: {e}")
         return None
 
-    return pd.DataFrame(rows, columns=[
-        'month', 'town', 'flat_type', 'flat_model', 'floor_area_sqm',
-        'storey_range', 'resale_price', 'remaining_lease', 'lease_commence_date',
-    ])
+
+def load_sora_from_db():
+    try:
+        rows = _query("SELECT rate_date, published_rate FROM sora_rates WHERE rate_date IS NOT NULL")
+        if not rows:
+            return None
+        df = pd.DataFrame(rows)
+        df['date'] = pd.to_datetime(df['rate_date'], errors='coerce')
+        df['sora_3m'] = pd.to_numeric(df['published_rate'], errors='coerce')
+        df = df.dropna(subset=['date', 'sora_3m'])
+        df['month'] = df['date'].dt.to_period('M').dt.to_timestamp()
+        return df.groupby('month', as_index=False)['sora_3m'].mean().rename(columns={'sora_3m': 'sora'})
+    except Exception as e:
+        print(f"  sora_rates load error: {e}")
+        return None
+
+
+def load_geocoded_from_db():
+    try:
+        rows = _query("""
+            SELECT search_text, lat, lon FROM geocoded_addresses
+            WHERE search_text IS NOT NULL AND lat IS NOT NULL AND lon IS NOT NULL
+        """)
+        if not rows:
+            return None
+        return pd.DataFrame(rows)
+    except Exception as e:
+        print(f"  geocoded_addresses load error: {e}")
+        return None
 
 
 # ─── Feature engineering ──────────────────────────────────────────────────────
@@ -126,131 +202,237 @@ def _remaining_lease_years(rl):
     return years + months / 12
 
 
-def engineer_features(df):
+def engineer_features(df, policy_df, sora_df, geo_df):
+    """Full feature engineering matching the notebook."""
     df = df.copy()
 
+    # Month / time features
     df['month'] = pd.to_datetime(df['month'].astype(str).str[:7] + '-01')
-    df['year'] = df['month'].dt.year
+    df['year']  = df['month'].dt.year
     df['quarter'] = df['month'].dt.quarter
     df['time_idx_raw'] = df['year'] * 12 + df['month'].dt.month
 
+    # Storey
     df['storey_mid'] = df['storey_range'].apply(_storey_mid)
+
+    # Lease
     df['remaining_lease_years'] = df['remaining_lease'].apply(_remaining_lease_years)
+    df['lease_commence_date']   = pd.to_numeric(df['lease_commence_date'], errors='coerce')
+    df['flat_age_years']        = df['year'] - df['lease_commence_date']
 
-    df['lease_commence_date'] = pd.to_numeric(df['lease_commence_date'], errors='coerce')
-    df['flat_age_years'] = df['year'] - df['lease_commence_date']
-
+    # Numeric price/area
     df['floor_area_sqm'] = pd.to_numeric(df['floor_area_sqm'], errors='coerce')
-    df['resale_price'] = pd.to_numeric(df['resale_price'], errors='coerce')
+    df['resale_price']   = pd.to_numeric(df['resale_price'],   errors='coerce')
 
+    # String normalization
     for col in ['town', 'flat_type', 'flat_model']:
-        df[col] = (df[col].astype(str).str.strip()
-                   .str.upper().str.replace(r'\s+', ' ', regex=True))
+        df[col] = df[col].astype(str).str.strip().str.upper().str.replace(r'\s+', ' ', regex=True)
 
-    return df.dropna(subset=ALL_FEATURES + ['resale_price'])
+    # ── Policy merge (merge_asof backward) ──────────────────────────────────
+    if policy_df is not None and len(policy_df) > 0:
+        pol = policy_df.copy()
+        pol['effective_month'] = pd.to_datetime(pol['effective_month'], errors='coerce')
+        pol['direction'] = pd.to_numeric(pol['direction'], errors='coerce').fillna(0)
+        pol['severity']  = pd.to_numeric(pol['severity'],  errors='coerce').fillna(0)
+        pol = pol.dropna(subset=['effective_month']).sort_values('effective_month')
+        df  = df.sort_values('month')
+        df  = pd.merge_asof(
+            df,
+            pol[['effective_month', 'policy_name', 'category', 'direction', 'severity']],
+            left_on='month', right_on='effective_month',
+            direction='backward',
+        )
+        df['policy_impact'] = df['direction'] * df['severity']
+        df['months_since_policy_change'] = (
+            (df['month'].dt.to_period('M') - df['effective_month'].dt.to_period('M'))
+            .apply(lambda x: x.n if pd.notna(x) else 0)
+        )
+    else:
+        df['direction'] = 0.0
+        df['severity']  = 0.0
+        df['policy_impact'] = 0.0
+        df['months_since_policy_change'] = 0
+
+    # ── SORA merge ──────────────────────────────────────────────────────────
+    if sora_df is not None and len(sora_df) > 0:
+        df = df.merge(sora_df, on='month', how='left')
+        df['sora'] = df['sora'].fillna(df['sora'].median())
+    else:
+        df['sora'] = 0.0
+
+    # ── Geocoding merge ─────────────────────────────────────────────────────
+    has_geo = False
+    if geo_df is not None and len(geo_df) > 0:
+        if 'block' in df.columns and 'street_name' in df.columns:
+            df['search_text'] = (
+                df['block'].fillna('').astype(str) + ' ' +
+                df['street_name'].fillna('').astype(str)
+            ).str.strip().str.upper()
+        else:
+            df['search_text'] = df.get('search_text', '').astype(str).str.strip().str.upper()
+
+        geo_clean = geo_df[['search_text', 'lat', 'lon']].dropna()
+        df = df.merge(geo_clean, on='search_text', how='left')
+        df = df.dropna(subset=['lat', 'lon'])
+        has_geo = len(df) > 0
+        if not has_geo:
+            print("  Warning: no lat/lon matches after geo merge; dropping geo features")
+    if not has_geo:
+        df['lat'] = 0.0
+        df['lon'] = 0.0
+
+    return df, has_geo
 
 
 # ─── Training ─────────────────────────────────────────────────────────────────
 
-def _build_pipeline(model):
-    preprocessor = ColumnTransformer(transformers=[
-        ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), CATEGORICAL_COLS),
-        ('num', 'passthrough', NUMERICAL_COLS),
-    ])
-    return Pipeline(steps=[('preprocessor', preprocessor), ('model', model)])
-
-
 def train(from_db=False):
     os.makedirs(MODELS_DIR, exist_ok=True)
 
+    # 1. Load HDB transactions
     df = None
     if from_db or os.environ.get('DATABASE_URL'):
-        print("Attempting to load HDB resale data from database...")
-        df = load_from_db()
+        print("Loading HDB resale data from database...")
+        df = load_hdb_from_db()
         if df is not None and len(df) > 0:
-            print(f"Loaded {len(df):,} records from hdb_resale table")
+            print(f"  Loaded {len(df):,} records from hdb_resale table")
         else:
             df = None
             if from_db:
-                raise ValueError("hdb_resale table is empty — upload CSV data first.")
-            print("hdb_resale table empty, falling back to data.gov.sg API download...")
-
+                raise ValueError("hdb_resale table is empty — upload CSV first.")
+            print("  hdb_resale empty, falling back to data.gov.sg API...")
     if df is None:
         print("Downloading HDB resale data from data.gov.sg...")
         df = download_hdb_data()
     print(f"Raw records: {len(df):,}")
 
+    # 2. Load supplementary datasets
+    print("Loading policy, SORA, and geocoding data from database...")
+    policy_df = load_policy_from_db()
+    sora_df   = load_sora_from_db()
+    geo_df    = load_geocoded_from_db()
+    print(f"  Policy rows: {len(policy_df) if policy_df is not None else 0}")
+    print(f"  SORA rows:   {len(sora_df)   if sora_df   is not None else 0}")
+    print(f"  Geo rows:    {len(geo_df)    if geo_df    is not None else 0}")
+
+    # 3. Feature engineering
     print("Engineering features...")
-    df = engineer_features(df)
-    df = df[df['year'] >= MIN_YEAR].copy()
-    print(f"After filter (year >= {MIN_YEAR}): {len(df):,}")
+    df_feat, has_geo = engineer_features(df, policy_df, sora_df, geo_df)
+    df_feat = df_feat[df_feat['year'] >= MIN_YEAR].copy()
 
-    time_idx_min = int(df['time_idx_raw'].min())
-    df['time_idx'] = df['time_idx_raw'] - time_idx_min
+    # Determine which numerical cols are actually available
+    has_policy = policy_df is not None and len(policy_df) > 0
+    has_sora   = sora_df   is not None and len(sora_df)   > 0
+    actual_num = [c for c in NUMERICAL_COLS_FULL if c in df_feat.columns and
+                  not (c in ('lat', 'lon') and not has_geo) and
+                  not (c in ('direction', 'severity', 'policy_impact',
+                             'months_since_policy_change') and not has_policy) and
+                  not (c == 'sora' and not has_sora)]
+    if not has_geo:
+        actual_num = [c for c in actual_num if c not in ('lat', 'lon')]
+    all_features = CATEGORICAL_COLS + actual_num
+    print(f"After filtering: {len(df_feat):,} records | Features: {len(all_features)}")
 
-    train_df = df[df['year'] < 2025]
-    test_df  = df[df['year'] >= 2025]
-    X_train, y_train = train_df[ALL_FEATURES], train_df['resale_price']
-    X_test,  y_test  = test_df[ALL_FEATURES],  test_df['resale_price']
+    # Checkpoint: save feature-engineered data in case training is interrupted
+    print(f"Saving checkpoint to {TEMP_PATH}...")
+    ckpt_cols = [c for c in all_features + ['resale_price', 'time_idx_raw']
+                 if c in df_feat.columns]
+    df_feat[ckpt_cols].to_csv(TEMP_PATH, index=False)
+
+    # time_idx normalization
+    time_idx_min = int(df_feat['time_idx_raw'].min())
+    df_feat['time_idx'] = df_feat['time_idx_raw'] - time_idx_min
+
+    # 4. Train / test split
+    train_df = df_feat[df_feat['year'] < 2025]
+    test_df  = df_feat[df_feat['year'] >= 2025]
+    if len(test_df) < 100:
+        split    = int(len(df_feat) * 0.9)
+        df_s     = df_feat.sort_values('time_idx_raw')
+        train_df, test_df = df_s.iloc[:split], df_s.iloc[split:]
+    X_train, y_train = train_df[all_features], train_df['resale_price']
+    X_test,  y_test  = test_df[all_features],  test_df['resale_price']
     print(f"Train: {len(X_train):,} | Test: {len(X_test):,}")
 
     y_train_log = np.log(y_train)
 
+    # 5. Build preprocessor
+    preprocessor = ColumnTransformer(transformers=[
+        ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), CATEGORICAL_COLS),
+        ('num', 'passthrough', actual_num),
+    ])
+
     model_specs = {
-        'xgb': XGBRegressor(
-            n_estimators=200, learning_rate=0.05, max_depth=6,
-            subsample=0.8, colsample_bytree=0.8, random_state=42,
-            objective='reg:squarederror',
-        ),
-        'lgbm': LGBMRegressor(
-            n_estimators=200, learning_rate=0.05, num_leaves=31,
-            subsample=0.8, colsample_bytree=0.8, random_state=42,
-            verbose=-1,
-        ),
-        'cat': CatBoostRegressor(
-            iterations=200, learning_rate=0.05, depth=6,
-            loss_function='RMSE', random_seed=42, verbose=0,
-        ),
+        'xgb':  XGBRegressor(n_estimators=300, learning_rate=0.05, max_depth=6,
+                              subsample=0.8, colsample_bytree=0.8, random_state=42,
+                              objective='reg:squarederror'),
+        'lgbm': LGBMRegressor(n_estimators=300, learning_rate=0.05, num_leaves=31,
+                               subsample=0.8, colsample_bytree=0.8, random_state=42,
+                               verbose=-1),
+        'cat':  CatBoostRegressor(iterations=300, learning_rate=0.05, depth=6,
+                                   loss_function='RMSE', random_seed=42, verbose=0),
     }
 
     trained = {}
     for name, model in model_specs.items():
         print(f"Training {name}...")
-        pipeline = _build_pipeline(model)
-        pipeline.fit(X_train, y_train_log)
-        preds = np.exp(pipeline.predict(X_test))
-        mae = mean_absolute_error(y_test, preds)
-        r2  = r2_score(y_test, preds)
+        pipe = Pipeline(steps=[('preprocessor', preprocessor), ('model', model)])
+        pipe.fit(X_train, y_train_log)
+        preds = np.exp(pipe.predict(X_test))
+        mae   = mean_absolute_error(y_test, preds)
+        r2    = r2_score(y_test, preds)
         print(f"  {name}: MAE=S${mae:,.0f}  R²={r2:.4f}")
-        trained[name] = pipeline
+        trained[name] = pipe
+        # Save each pipeline immediately (checkpoint)
+        joblib.dump(pipe, os.path.join(MODELS_DIR, f'{name}_pipeline.joblib'))
+        print(f"  Saved {name}_pipeline.joblib")
 
     ens = np.mean([np.exp(p.predict(X_test)) for p in trained.values()], axis=0)
     print(f"Ensemble: MAE=S${mean_absolute_error(y_test, ens):,.0f}  R²={r2_score(y_test, ens):.4f}")
 
-    # Per-town/flat-type medians for inference defaults
+    # 6. Meta: store medians + latest policy/SORA for inference
     medians = (
-        df.groupby(['town', 'flat_type'])[['remaining_lease_years', 'flat_age_years']]
-        .median()
-        .to_dict('index')
+        df_feat.groupby(['town', 'flat_type'])[['remaining_lease_years', 'flat_age_years', 'lat', 'lon']]
+        .median().to_dict('index')
     )
 
+    # Latest policy for inference
+    latest_policy = {'direction': 0.0, 'severity': 0.0, 'policy_impact': 0.0,
+                     'months_since_policy_change': 0}
+    if policy_df is not None and len(policy_df) > 0:
+        pol = policy_df.copy()
+        pol['effective_month'] = pd.to_datetime(pol['effective_month'], errors='coerce')
+        pol = pol.sort_values('effective_month').iloc[-1]
+        d = float(pol.get('direction', 0) or 0)
+        s = float(pol.get('severity', 0) or 0)
+        latest_policy = {'direction': d, 'severity': s, 'policy_impact': d * s,
+                         'months_since_policy_change': 0}
+
+    # Latest SORA for inference
+    latest_sora = 3.5
+    if sora_df is not None and len(sora_df) > 0:
+        latest_sora = float(sora_df.sort_values('month').iloc[-1]['sora'])
+
     meta = {
-        'time_idx_min': time_idx_min,
+        'time_idx_min':         time_idx_min,
         'medians_by_town_type': medians,
-        'categorical_cols': CATEGORICAL_COLS,
-        'numerical_cols': NUMERICAL_COLS,
-        'trained_at': datetime.utcnow().isoformat(),
+        'categorical_cols':     CATEGORICAL_COLS,
+        'numerical_cols':       actual_num,
+        'has_geo':              has_geo,
+        'has_policy':           has_policy,
+        'has_sora':             has_sora,
+        'latest_policy':        latest_policy,
+        'latest_sora':          latest_sora,
+        'trained_at':           datetime.utcnow().isoformat(),
     }
-
-    for name, pipeline in trained.items():
-        path = os.path.join(MODELS_DIR, f'{name}_pipeline.joblib')
-        joblib.dump(pipeline, path)
-        print(f"Saved {path}")
-
     joblib.dump(meta, os.path.join(MODELS_DIR, 'meta.joblib'))
-    print("All models saved to", MODELS_DIR)
+    print("All HDB models saved to", MODELS_DIR)
+
+    # Clean up temp checkpoint on success
+    if os.path.exists(TEMP_PATH):
+        os.remove(TEMP_PATH)
+        print("Temp checkpoint removed.")
 
 
 if __name__ == '__main__':
-    import sys
     train(from_db='--from-db' in sys.argv)

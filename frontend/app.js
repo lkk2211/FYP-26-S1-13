@@ -157,6 +157,24 @@ async function handlePostalSearch() {
         const building = result.BUILDING && result.BUILDING !== 'NIL' ? result.BUILDING : address;
         const postal = result.POSTAL && result.POSTAL !== 'NIL' ? result.POSTAL : searchVal;
 
+        // Reject non-residential properties
+        const NON_RESIDENTIAL_KEYWORDS = [
+            'MRT STATION', ' MRT', 'LRT STATION', ' LRT', 'SHOPPING MALL', 'SHOPPING CENTRE',
+            'SHOPPING CENTER', 'RETAIL MALL', 'OFFICE', 'INDUSTRIAL', 'COMMERCIAL',
+            'HOSPITAL', 'POLYCLINIC', 'CLINIC', 'HOTEL', 'SERVICED APARTMENT',
+            'AIRPORT', 'TERMINAL', 'BUS INTERCHANGE', 'INTERCHANGE', 'COMMUNITY CLUB',
+            'COMMUNITY CENTRE', 'COMMUNITY CENTER', 'SCHOOL', 'UNIVERSITY', 'POLYTECHNIC',
+            'INSTITUTE', 'LIBRARY', 'MOSQUE', 'TEMPLE', 'CHURCH', 'SYNAGOGUE',
+            'MILITARY', 'CAMP', 'BARRACKS', 'PRISON', 'REMAND', 'STADIUM',
+        ];
+        const buildingUpper = building.toUpperCase();
+        const isNonResidential = NON_RESIDENTIAL_KEYWORDS.some(kw => buildingUpper.includes(kw));
+        if (isNonResidential) {
+            errorEl.textContent = 'Please enter a valid residential property address. Shopping malls, MRT stations, offices, and institutions are not supported.';
+            errorEl.classList.remove('hidden');
+            return;
+        }
+
         document.getElementById('display-address').innerText = address;
         document.getElementById('display-building').innerText = building;
         document.getElementById('input-postal').value = postal;
@@ -238,9 +256,21 @@ async function handlePredict() {
         }
 
         const insightEl = document.getElementById('output-insight');
-        if (insightEl) insightEl.innerText = data.insight || '';
         const recEl = document.getElementById('output-recommendation');
-        if (recEl) recEl.innerText = data.recommendation || '';
+        if (insightEl || recEl) {
+            const rawInsight = data.insight || '';
+            const rawRec    = data.recommendation || '';
+            const isSell = _userIntent === 'sell';
+            const intentInsight = isSell
+                ? `As a seller: ${rawInsight}`
+                : `As a buyer: ${rawInsight}`;
+            const intentRec = isSell
+                ? rawRec.replace(/\bOffer\b/gi, 'List at').replace(/\bbudget\b/gi, 'asking price').replace(/\b(consider|look for)\b/gi, 'highlight')
+                    .replace(/^/, 'Seller tip: ')
+                : `Buyer tip: ${rawRec}`;
+            if (insightEl) insightEl.innerText = intentInsight;
+            if (recEl)     recEl.innerText     = intentRec;
+        }
 
         const mapTitle = document.getElementById('map-title');
         if (mapTitle) mapTitle.innerText = document.getElementById('display-address').innerText;
@@ -694,29 +724,24 @@ async function reverseGeocodeAndShow(lat, lng) {
 }
 
 function showPinResultBar(postal, address, lat, lng) {
+    // Show popup anchored to the pin instead of the bottom bar
+    if (!_draggablePin) return;
+    const predictHtml = postal
+        ? `<button onclick="usePostalFromMap('${postal}')" style="background:linear-gradient(135deg,#2563eb,#7c3aed);color:white;border:none;padding:6px 14px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;margin-right:6px">Predict</button>`
+        : '';
+    const popupHtml = `
+        <div style="min-width:200px;font-family:inherit">
+            <p style="font-weight:700;font-size:13px;color:#0f172a;margin:0 0 4px">${postal ? '📮 ' + postal : '📍 Location'}</p>
+            <p style="font-size:11px;color:#64748b;margin:0 0 10px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${address}">${address}</p>
+            <div style="display:flex;gap:6px">
+                ${predictHtml}
+                <button onclick="(function(){document.querySelector('.leaflet-popup-close-button')&&document.querySelector('.leaflet-popup-close-button').click();loadAmenities(${lat},${lng},'${postal||''}');})()" style="background:none;border:1.5px solid #f97316;color:#f97316;padding:6px 14px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer">Explore</button>
+            </div>
+        </div>`;
+    _draggablePin.bindPopup(popupHtml, { offset: [0, -30], closeButton: true, maxWidth: 260 }).openPopup();
+    // Also hide the bottom bar if visible
     const bar = document.getElementById('pin-result-bar');
-    const postalEl = document.getElementById('pin-postal-label');
-    const addrEl = document.getElementById('pin-address-label');
-    const predictBtn = document.getElementById('pin-predict-btn');
-    const exploreBtn = document.getElementById('pin-explore-btn');
-    if (!bar) return;
-    if (postalEl) postalEl.innerText = postal ? `📮 Postal Code: ${postal}` : '📍 Location';
-    if (addrEl) addrEl.innerText = address;
-    if (predictBtn) {
-        if (postal) {
-            predictBtn.classList.remove('hidden');
-            predictBtn.onclick = () => usePostalFromMap(postal);
-        } else {
-            predictBtn.classList.add('hidden');
-        }
-    }
-    if (exploreBtn) {
-        exploreBtn.onclick = () => {
-            bar.classList.add('hidden');
-            loadAmenities(lat, lng, postal || '');
-        };
-    }
-    bar.classList.remove('hidden');
+    if (bar) bar.classList.add('hidden');
     lucide.createIcons();
 }
 
@@ -1637,6 +1662,67 @@ async function exportAdminReport(btn) {
     }
 }
 
+// ── Buying / Selling Intent ───────────────────────────────────
+let _userIntent = 'buy';
+
+function setIntent(intent) {
+    _userIntent = intent;
+    const buyBtn  = document.getElementById('intent-buy');
+    const sellBtn = document.getElementById('intent-sell');
+    const active  = 'flex-1 py-2.5 rounded-xl text-sm font-bold border-2 border-blue-600 bg-blue-600 text-white transition-all';
+    const inactive = 'flex-1 py-2.5 rounded-xl text-sm font-bold border-2 border-slate-200 text-slate-500 hover:border-slate-300 transition-all';
+    if (buyBtn)  buyBtn.className  = intent === 'buy'  ? active : inactive;
+    if (sellBtn) sellBtn.className = intent === 'sell' ? active : inactive;
+}
+
+
+// ── Footer Modal ──────────────────────────────────────────────
+const _FOOTER_CONTENT = {
+    about: {
+        title: 'About PropAI.sg',
+        body: `<p>PropAI.sg is an AI-powered property valuation platform built for Singapore. We combine real HDB and private property transaction data with government policy signals and interest rate trends to deliver data-driven price estimates.</p><p>Our ensemble machine learning model (XGBoost + LightGBM + CatBoost) is trained on historical Singapore resale transactions from 2017 onwards.</p>`,
+    },
+    team: {
+        title: 'Who We Are',
+        body: `<p>PropAI.sg was developed as a Final Year Project by a team of Singapore Polytechnic students passionate about making property market intelligence accessible to everyone.</p><p>We believe that transparent, data-driven valuations help buyers and sellers make more informed decisions.</p>`,
+    },
+    feedback: {
+        title: 'Feedback',
+        body: `<p>We value your feedback! If you've found an issue, have a feature suggestion, or simply want to share your experience, please reach out.</p><p class="font-medium text-slate-900">📧 Contact your administrator or leave a note in the platform's admin panel.</p>`,
+    },
+    terms: {
+        title: 'Terms & Conditions',
+        body: `<p><strong>Use of Service:</strong> PropAI.sg provides property valuation estimates for informational purposes only. By using this platform you agree not to rely solely on these estimates for financial or legal decisions.</p><p><strong>Accuracy:</strong> Estimates are generated by machine learning models trained on historical data. Actual market prices may vary significantly.</p><p><strong>No Warranty:</strong> This service is provided "as is" without warranty of any kind.</p>`,
+    },
+    privacy: {
+        title: 'Privacy Policy',
+        body: `<p><strong>Data Collection:</strong> We collect your name, email, and search activity to personalise your experience and improve our models.</p><p><strong>Data Use:</strong> Your data is never sold to third parties. Prediction history is stored to enable your valuation history and aggregate analytics.</p><p><strong>Cookies:</strong> We use local storage to maintain your session and theme preference.</p>`,
+    },
+    disclaimer: {
+        title: 'Disclaimer',
+        body: `<p>Property valuations shown on PropAI.sg are AI-generated estimates and do not constitute financial, legal, or real estate advice.</p><p>Always consult a licensed property agent or financial advisor before making any property investment decisions. Past transaction prices are not a guarantee of future values.</p>`,
+    },
+};
+
+function showFooterModal(key) {
+    const modal = document.getElementById('footer-modal');
+    const title = document.getElementById('footer-modal-title');
+    const body  = document.getElementById('footer-modal-body');
+    const c     = _FOOTER_CONTENT[key];
+    if (!modal || !c) return;
+    title.textContent = c.title;
+    body.innerHTML    = c.body;
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    lucide.createIcons();
+}
+
+function closeFooterModal() {
+    const modal = document.getElementById('footer-modal');
+    if (modal) { modal.classList.add('hidden'); modal.classList.remove('flex'); }
+}
+
+
 // ── Admin: CSV Upload ─────────────────────────────────────────
 let _uploadType = 'hdb';
 
@@ -1721,6 +1807,37 @@ async function loadDataTabStats() {
             if (el) el.textContent = (val || 0).toLocaleString();
         }
     } catch (e) { /* silent */ }
+}
+
+// ── Admin: URA Sync ───────────────────────────────────────────
+async function handleUraSync() {
+    const btn    = document.getElementById('ura-sync-btn');
+    const status = document.getElementById('ura-sync-status');
+    if (!btn || !status) return;
+    btn.disabled = true;
+    btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Syncing…';
+    lucide.createIcons();
+    status.className = 'mt-4 text-sm rounded-xl p-4 bg-slate-50 text-slate-600';
+    status.textContent = 'Contacting URA API — this may take up to a minute…';
+    status.classList.remove('hidden');
+    try {
+        const res  = await fetch('/api/admin/sync-ura', { method: 'POST' });
+        const data = await res.json();
+        if (res.ok) {
+            status.className = 'mt-4 text-sm rounded-xl p-4 bg-emerald-50 text-emerald-700 font-medium';
+            status.textContent = `Sync complete. ${data.inserted ?? 0} new records inserted, ${data.deleted ?? 0} old records removed.`;
+            loadDataTabStats();
+        } else {
+            status.className = 'mt-4 text-sm rounded-xl p-4 bg-rose-50 text-rose-700 font-medium';
+            status.textContent = `Sync failed: ${data.error || 'Unknown error.'}`;
+        }
+    } catch (e) {
+        status.className = 'mt-4 text-sm rounded-xl p-4 bg-rose-50 text-rose-700 font-medium';
+        status.textContent = 'Network error — could not reach the server.';
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<i data-lucide="refresh-cw" class="w-4 h-4"></i> Sync URA Data Now';
+    lucide.createIcons();
 }
 
 // ── Auth ─────────────────────────────────────────────────────
