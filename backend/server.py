@@ -132,6 +132,8 @@ SQLITE_SCHEMA = """
         resale_price    REAL,
         remaining_lease TEXT,
         lease_commence_date INTEGER,
+        block           TEXT,
+        street_name     TEXT,
         upload_batch    TEXT,
         uploaded_at     TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -172,10 +174,12 @@ SQLITE_SCHEMA = """
     CREATE TABLE IF NOT EXISTS policy_changes (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
         effective_month TEXT,
+        effective_date  TEXT,
         policy_name     TEXT,
         category        TEXT,
         direction       REAL,
         severity        REAL,
+        source          TEXT,
         upload_batch    TEXT,
         uploaded_at     TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -262,6 +266,8 @@ POSTGRES_SCHEMA = """
         resale_price    REAL,
         remaining_lease TEXT,
         lease_commence_date INTEGER,
+        block           TEXT,
+        street_name     TEXT,
         upload_batch    TEXT,
         uploaded_at     TIMESTAMP NOT NULL DEFAULT NOW()
     );
@@ -302,10 +308,12 @@ POSTGRES_SCHEMA = """
     CREATE TABLE IF NOT EXISTS policy_changes (
         id              SERIAL PRIMARY KEY,
         effective_month TEXT,
+        effective_date  TEXT,
         policy_name     TEXT,
         category        TEXT,
         direction       REAL,
         severity        REAL,
+        source          TEXT,
         upload_batch    TEXT,
         uploaded_at     TIMESTAMP NOT NULL DEFAULT NOW()
     );
@@ -352,12 +360,15 @@ def migrate_db():
             ]:
                 try: cur.execute(col_def)
                 except Exception: pass
-            # Add new columns to policy_changes (effective_month, policy_name, category)
+            # Add new columns to policy_changes
             for col_def in [
                 "ALTER TABLE policy_changes ADD COLUMN IF NOT EXISTS effective_month TEXT",
+                "ALTER TABLE policy_changes ADD COLUMN IF NOT EXISTS effective_date TEXT",
                 "ALTER TABLE policy_changes ADD COLUMN IF NOT EXISTS policy_name TEXT",
                 "ALTER TABLE policy_changes ADD COLUMN IF NOT EXISTS category TEXT",
+                "ALTER TABLE policy_changes ADD COLUMN IF NOT EXISTS source TEXT",
                 "ALTER TABLE policy_changes ALTER COLUMN direction TYPE REAL USING direction::REAL",
+                "ALTER TABLE policy_changes ALTER COLUMN severity TYPE REAL USING severity::REAL",
             ]:
                 try: cur.execute(col_def)
                 except Exception: pass
@@ -376,8 +387,10 @@ def migrate_db():
                 "ALTER TABLE geocoded_addresses ADD COLUMN lat REAL",
                 "ALTER TABLE geocoded_addresses ADD COLUMN lon REAL",
                 "ALTER TABLE policy_changes ADD COLUMN effective_month TEXT",
+                "ALTER TABLE policy_changes ADD COLUMN effective_date TEXT",
                 "ALTER TABLE policy_changes ADD COLUMN policy_name TEXT",
                 "ALTER TABLE policy_changes ADD COLUMN category TEXT",
+                "ALTER TABLE policy_changes ADD COLUMN source TEXT",
                 "ALTER TABLE hdb_resale ADD COLUMN block TEXT",
                 "ALTER TABLE hdb_resale ADD COLUMN street_name TEXT",
             ]:
@@ -1519,8 +1532,8 @@ def upload_transactions():
                         INSERT INTO hdb_resale
                             (month, town, flat_type, flat_model, floor_area_sqm,
                              storey_range, resale_price, remaining_lease,
-                             lease_commence_date, upload_batch)
-                        VALUES (?,?,?,?,?,?,?,?,?,?)
+                             lease_commence_date, block, street_name, upload_batch)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
                     """), (_get(r,'month'), _get(r,'town'), _get(r,'flat_type','flattype'),
                            _get(r,'flat_model','flatmodel'),
                            float(_get(r,'floor_area_sqm','floorareasqm') or 0),
@@ -1528,6 +1541,8 @@ def upload_transactions():
                            float(_get(r,'resale_price','resaleprice') or 0),
                            _get(r,'remaining_lease','remaininglease'),
                            int(float(_get(r,'lease_commence_date','leasecommencedate') or 0)) or None,
+                           str(_get(r,'block') or '').strip() or None,
+                           _get(r,'street_name','streetname','street name'),
                            batch_id))
                     inserted += 1
                 except Exception:
@@ -1604,16 +1619,35 @@ def upload_transactions():
         elif tx_type == 'policy':
             for r in rows:
                 try:
+                    # effective_month: store as YYYY-MM (first day of month)
+                    eff_month_raw = _get(r,'effective_month','effectivemonth','date','policy_date','policydate')
+                    if hasattr(eff_month_raw, 'strftime'):
+                        eff_month = eff_month_raw.strftime('%Y-%m')
+                    elif eff_month_raw:
+                        eff_month = str(eff_month_raw)[:7]  # trim to YYYY-MM
+                    else:
+                        eff_month = None
+                    # effective_date: full date string
+                    eff_date_raw = _get(r,'effective_date','effectivedate')
+                    if hasattr(eff_date_raw, 'strftime'):
+                        eff_date = eff_date_raw.strftime('%Y-%m-%d')
+                    elif eff_date_raw:
+                        eff_date = str(eff_date_raw)[:10]
+                    else:
+                        eff_date = None
                     cur.execute(_q("""
                         INSERT INTO policy_changes
-                            (effective_month, policy_name, category, direction, severity, upload_batch)
-                        VALUES (?,?,?,?,?,?)
+                            (effective_month, effective_date, policy_name, category,
+                             direction, severity, source, upload_batch)
+                        VALUES (?,?,?,?,?,?,?,?)
                     """), (
-                        _get(r,'effective_month','effectivemonth','date','policy_date','policydate'),
+                        eff_month,
+                        eff_date,
                         _get(r,'policy_name','policyname','name','description','measure'),
                         _get(r,'category'),
                         float(str(_get(r,'direction','effect') or '0').replace(',','') or 0),
                         float(str(_get(r,'severity','severity_score','score') or '0').replace(',','') or 0),
+                        _get(r,'source','url','reference'),
                         batch_id
                     ))
                     inserted += 1
