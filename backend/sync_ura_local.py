@@ -56,6 +56,11 @@ for batch in range(1, 5):
                 year = 2000 + yr if yr < 100 else yr
             except Exception:
                 continue
+            area_sqft = float(det.get('area') or 0)
+            area_sqm  = area_sqft / 10.764
+            price     = float(det.get('price') or 0)
+            unit_psf  = (price / area_sqft) if area_sqft else 0.0
+            unit_psm  = (price / area_sqm)  if area_sqm  else 0.0
             rows.append((
                 proj.get('project', ''),
                 det.get('street', proj.get('street', '')),
@@ -63,12 +68,12 @@ for batch in range(1, 5):
                 mkt,
                 str(det.get('district', '0')).zfill(2),
                 det.get('floorRange') or det.get('floorLevel', ''),
-                float(det.get('area') or 0),
-                float(det.get('area') or 0) / 10.764,
+                area_sqft,
+                area_sqm,
                 TYPE_MAP.get(str(det.get('typeOfSale', '3')), 'Resale'),
-                float(det.get('price') or 0),
-                float(det.get('unitPrice') or 0),
-                None,
+                price,
+                unit_psf,
+                unit_psm,
                 det.get('tenure', ''),
                 int(float(det.get('noOfUnits') or 1)),
                 f'{year}-{mo:02d}',

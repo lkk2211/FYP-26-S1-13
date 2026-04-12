@@ -200,26 +200,23 @@ SQLITE_SCHEMA = """
         uploaded_at     TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS ura_transactions (
-        id              INTEGER PRIMARY KEY AUTOINCREMENT,
-        project         TEXT,
-        street          TEXT,
-        property_type   TEXT,
-        market_segment  TEXT,
-        postal_district TEXT,
-        floor_level     TEXT,
-        floor_area_sqft REAL,
-        floor_area_sqm  REAL,
-        type_of_sale    TEXT,
-        type_of_area    TEXT,
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        project          TEXT,
+        street           TEXT,
+        property_type    TEXT,
+        market_segment   TEXT,
+        postal_district  TEXT,
+        floor_level      TEXT,
+        floor_area_sqft  REAL,
+        floor_area_sqm   REAL,
+        type_of_sale     TEXT,
         transacted_price REAL,
-        unit_price_psf  REAL,
-        unit_price_psm  REAL,
-        nett_price      REAL,
-        tenure          TEXT,
-        num_units       INTEGER,
-        sale_date       TEXT,
-        upload_batch    TEXT,
-        uploaded_at     TEXT NOT NULL DEFAULT (datetime('now'))
+        unit_price_psf   REAL,
+        unit_price_psm   REAL,
+        tenure           TEXT,
+        num_units        INTEGER,
+        sale_date        TEXT,
+        upload_batch     TEXT
     );
     CREATE TABLE IF NOT EXISTS geocoded_addresses (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -334,26 +331,23 @@ POSTGRES_SCHEMA = """
         uploaded_at     TIMESTAMP NOT NULL DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS ura_transactions (
-        id              SERIAL PRIMARY KEY,
-        project         TEXT,
-        street          TEXT,
-        property_type   TEXT,
-        market_segment  TEXT,
-        postal_district TEXT,
-        floor_level     TEXT,
-        floor_area_sqft REAL,
-        floor_area_sqm  REAL,
-        type_of_sale    TEXT,
-        type_of_area    TEXT,
-        transacted_price REAL,
-        unit_price_psf  REAL,
-        unit_price_psm  REAL,
-        nett_price      REAL,
-        tenure          TEXT,
-        num_units       INTEGER,
-        sale_date       TEXT,
-        upload_batch    TEXT,
-        uploaded_at     TIMESTAMP NOT NULL DEFAULT NOW()
+        id               BIGSERIAL PRIMARY KEY,
+        project          TEXT,
+        street           TEXT,
+        property_type    TEXT,
+        market_segment   TEXT,
+        postal_district  TEXT,
+        floor_level      TEXT,
+        floor_area_sqft  FLOAT,
+        floor_area_sqm   FLOAT,
+        type_of_sale     TEXT,
+        transacted_price FLOAT,
+        unit_price_psf   FLOAT,
+        unit_price_psm   FLOAT,
+        tenure           TEXT,
+        num_units        INT,
+        sale_date        TEXT,
+        upload_batch     TEXT
     );
     CREATE TABLE IF NOT EXISTS geocoded_addresses (
         id              SERIAL PRIMARY KEY,
@@ -441,10 +435,30 @@ def migrate_db():
             ]:
                 try: cur.execute(col_def)
                 except Exception: pass
-            # Add upload_batch to all dataset tables (migration for existing Supabase tables)
+            # Ensure ura_transactions has all required columns (new schema, no uploaded_at)
+            for col_def in [
+                "ALTER TABLE ura_transactions ADD COLUMN IF NOT EXISTS project TEXT",
+                "ALTER TABLE ura_transactions ADD COLUMN IF NOT EXISTS street TEXT",
+                "ALTER TABLE ura_transactions ADD COLUMN IF NOT EXISTS property_type TEXT",
+                "ALTER TABLE ura_transactions ADD COLUMN IF NOT EXISTS market_segment TEXT",
+                "ALTER TABLE ura_transactions ADD COLUMN IF NOT EXISTS postal_district TEXT",
+                "ALTER TABLE ura_transactions ADD COLUMN IF NOT EXISTS floor_level TEXT",
+                "ALTER TABLE ura_transactions ADD COLUMN IF NOT EXISTS floor_area_sqft FLOAT",
+                "ALTER TABLE ura_transactions ADD COLUMN IF NOT EXISTS floor_area_sqm FLOAT",
+                "ALTER TABLE ura_transactions ADD COLUMN IF NOT EXISTS type_of_sale TEXT",
+                "ALTER TABLE ura_transactions ADD COLUMN IF NOT EXISTS transacted_price FLOAT",
+                "ALTER TABLE ura_transactions ADD COLUMN IF NOT EXISTS unit_price_psf FLOAT",
+                "ALTER TABLE ura_transactions ADD COLUMN IF NOT EXISTS unit_price_psm FLOAT",
+                "ALTER TABLE ura_transactions ADD COLUMN IF NOT EXISTS tenure TEXT",
+                "ALTER TABLE ura_transactions ADD COLUMN IF NOT EXISTS num_units INT",
+                "ALTER TABLE ura_transactions ADD COLUMN IF NOT EXISTS sale_date TEXT",
+                "ALTER TABLE ura_transactions ADD COLUMN IF NOT EXISTS upload_batch TEXT",
+            ]:
+                try: cur.execute(col_def)
+                except Exception: pass
+            # Add upload_batch to other dataset tables
             for col_def in [
                 "ALTER TABLE hdb_resale ADD COLUMN IF NOT EXISTS upload_batch TEXT",
-                "ALTER TABLE ura_transactions ADD COLUMN IF NOT EXISTS upload_batch TEXT",
                 "ALTER TABLE geocoded_addresses ADD COLUMN IF NOT EXISTS upload_batch TEXT",
                 "ALTER TABLE policy_changes ADD COLUMN IF NOT EXISTS upload_batch TEXT",
                 "ALTER TABLE sora_rates ADD COLUMN IF NOT EXISTS upload_batch TEXT",
