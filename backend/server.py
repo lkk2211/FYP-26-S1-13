@@ -1816,23 +1816,14 @@ def upload_transactions():
     if not file:
         return jsonify({'error': 'No file provided'}), 400
 
-    filename = (file.filename or '').lower()
+    filename  = (file.filename or '').lower()
+    is_excel  = filename.endswith('.xlsx') or filename.endswith('.xls')
+    batch_id  = datetime.datetime.utcnow().isoformat()
+
     try:
-        if filename.endswith('.xlsx') or filename.endswith('.xls'):
-            import pandas as pd
-            df   = pd.read_excel(io.BytesIO(file.read()))
-            rows = df.fillna('').astype(str).to_dict('records')
-        else:
-            content = file.read().decode('utf-8-sig')
-            reader  = csv.DictReader(io.StringIO(content))
-            rows    = list(reader)
+        file_bytes = file.read()
     except Exception as e:
-        return jsonify({'error': f'File parse error: {e}'}), 400
-
-    if not rows:
-        return jsonify({'error': 'CSV is empty'}), 400
-
-    batch_id = datetime.datetime.utcnow().isoformat()
+        return jsonify({'error': f'File read error: {e}'}), 400
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -1929,74 +1920,78 @@ def upload_transactions():
                         pass
         return total
 
-    # ── ELT path: dump raw strings into staging, let Supabase RPC clean & move ─
-    # Postgres only. URA is handled below (full-refresh DELETE first).
-    if USE_POSTGRES and tx_type in ('hdb', 'geocoded', 'policy', 'sora'):
-        import psycopg2.extras as _pge
+    # ── ELT path: stream CSV in 5 000-row chunks → staging → RPC (Postgres only)
+    # Avoids loading 200 k+ rows into RAM all at once.  URA is handled below.
+    if USE_POSTGRES and tx_type in ('hdb', 'geocoded', 'policy', 'sora') and not is_excel:
+        import pandas as pd, psycopg2.extras as _pge
 
         if tx_type == 'hdb':
-            stage_sql  = "INSERT INTO stage_resale (month, town, flat_type, block, street_name, storey_range, floor_area_sqm, flat_model, lease_commence_date, remaining_lease, resale_price) VALUES %s"
-            stage_rows = [(
-                str(_get(r, 'month') or ''),
-                str(_get(r, 'town') or ''),
-                str(_get(r, 'flat_type') or ''),
-                str(_get(r, 'block') or '').strip(),
-                str(_get(r, 'street_name') or ''),
-                str(_get(r, 'storey_range') or ''),
-                str(_get(r, 'floor_area_sqm') or ''),
-                str(_get(r, 'flat_model') or ''),
-                str(_get(r, 'lease_commence_date') or ''),
-                str(_get(r, 'remaining_lease') or ''),
-                str(_get(r, 'resale_price') or ''),
-            ) for r in rows]
-
+            stage_sql = "INSERT INTO stage_resale (month, town, flat_type, block, street_name, storey_range, floor_area_sqm, flat_model, lease_commence_date, remaining_lease, resale_price) VALUES %s"
+            def _make_row(r):
+                return (str(_get(r,'month') or ''), str(_get(r,'town') or ''),
+                        str(_get(r,'flat_type') or ''), str(_get(r,'block') or '').strip(),
+                        str(_get(r,'street_name') or ''), str(_get(r,'storey_range') or ''),
+                        str(_get(r,'floor_area_sqm') or ''), str(_get(r,'flat_model') or ''),
+                        str(_get(r,'lease_commence_date') or ''), str(_get(r,'remaining_lease') or ''),
+                        str(_get(r,'resale_price') or ''))
         elif tx_type == 'sora':
-            stage_sql  = "INSERT INTO stage_sora (publication_date, compound_sora_3m, compound_sora_6m, highest_transacted_rate, lowest_transacted_rate) VALUES %s"
-            stage_rows = [(
-                str(_get(r, 'sora publication date', 'sorapublicationdate',
-                         'publication_date', 'publication date',
-                         'sora value date', 'soravaluedate', 'date', 'rate_date') or ''),
-                str(_get(r, 'compound sora - 3 month', 'compoundsora-3month',
-                         'compound_sora_3m', 'sora_3m', 'published_rate', 'rate') or ''),
-                str(_get(r, 'compound sora - 6 month', 'compoundsora-6month',
-                         'compound_sora_6m', 'sora_6m') or ''),
-                str(_get(r, 'highest transacted rate', 'highest_transacted_rate',
-                         'highesttransactedrate') or ''),
-                str(_get(r, 'lowest transacted rate', 'lowest_transacted_rate',
-                         'lowesttransactedrate') or ''),
-            ) for r in rows]
-
+            stage_sql = "INSERT INTO stage_sora (publication_date, compound_sora_3m, compound_sora_6m, highest_transacted_rate, lowest_transacted_rate) VALUES %s"
+            def _make_row(r):
+                return (str(_get(r,'sora publication date','sorapublicationdate','publication_date','publication date','sora value date','soravaluedate','date','rate_date') or ''),
+                        str(_get(r,'compound sora - 3 month','compoundsora-3month','compound_sora_3m','sora_3m','published_rate','rate') or ''),
+                        str(_get(r,'compound sora - 6 month','compoundsora-6month','compound_sora_6m','sora_6m') or ''),
+                        str(_get(r,'highest transacted rate','highest_transacted_rate','highesttransactedrate') or ''),
+                        str(_get(r,'lowest transacted rate','lowest_transacted_rate','lowesttransactedrate') or ''))
         elif tx_type == 'policy':
-            stage_sql  = "INSERT INTO stage_policy (effective_month, effective_date, policy_name, category, direction, severity, source) VALUES %s"
-            stage_rows = [(
-                str(_get(r, 'effective_month', 'effectivemonth', 'date', 'policy_date') or ''),
-                str(_get(r, 'effective_date', 'effectivedate') or ''),
-                str(_get(r, 'policy_name', 'policyname', 'name', 'description', 'measure') or ''),
-                str(_get(r, 'category') or ''),
-                str(_get(r, 'direction', 'effect') or ''),
-                str(_get(r, 'severity', 'severity_score', 'score') or ''),
-                str(_get(r, 'source', 'url', 'reference') or ''),
-            ) for r in rows]
-
+            stage_sql = "INSERT INTO stage_policy (effective_month, effective_date, policy_name, category, direction, severity, source) VALUES %s"
+            def _make_row(r):
+                return (str(_get(r,'effective_month','effectivemonth','date','policy_date') or ''),
+                        str(_get(r,'effective_date','effectivedate') or ''),
+                        str(_get(r,'policy_name','policyname','name','description','measure') or ''),
+                        str(_get(r,'category') or ''),
+                        str(_get(r,'direction','effect') or ''),
+                        str(_get(r,'severity','severity_score','score') or ''),
+                        str(_get(r,'source','url','reference') or ''))
         elif tx_type == 'geocoded':
-            stage_sql  = "INSERT INTO stage_geo (search_text, lat, lon) VALUES %s"
-            stage_rows = [(
-                str(_get(r, 'search_text', 'searchtext', 'search text') or ''),
-                str(_get(r, 'lat', 'latitude') or ''),
-                str(_get(r, 'lon', 'lng', 'longitude') or ''),
-            ) for r in rows]
+            stage_sql = "INSERT INTO stage_geo (search_text, lat, lon) VALUES %s"
+            def _make_row(r):
+                return (str(_get(r,'search_text','searchtext','search text') or ''),
+                        str(_get(r,'lat','latitude') or ''),
+                        str(_get(r,'lon','lng','longitude') or ''))
 
         conn = get_db(); cur = _cursor(conn)
+        total = 0
         try:
-            if stage_rows:
-                _pge.execute_values(cur, stage_sql, stage_rows, page_size=1000)
+            for chunk_df in pd.read_csv(io.BytesIO(file_bytes), chunksize=5000,
+                                        dtype=str, keep_default_na=False):
+                chunk_rows  = chunk_df.where(chunk_df.notna(), '').to_dict('records')
+                chunk_stage = [_make_row(r) for r in chunk_rows]
+                if chunk_stage:
+                    _pge.execute_values(cur, stage_sql, chunk_stage, page_size=1000)
+                    total += len(chunk_stage)
             cur.execute("SELECT process_uploaded_data()")
             conn.commit()
             conn.close()
-            return jsonify({'inserted': len(stage_rows), 'total_rows': len(rows), 'batch_id': batch_id})
+            return jsonify({'inserted': total, 'total_rows': total, 'batch_id': batch_id})
         except Exception as e:
             conn.rollback(); conn.close()
             return jsonify({'error': str(e)}), 500
+
+    # ── All other paths: parse file fully (Excel, SQLite, URA) ───────────────
+    try:
+        if is_excel:
+            import pandas as pd
+            df   = pd.read_excel(io.BytesIO(file_bytes))
+            rows = df.fillna('').astype(str).to_dict('records')
+        else:
+            content = file_bytes.decode('utf-8-sig')
+            reader  = csv.DictReader(io.StringIO(content))
+            rows    = list(reader)
+    except Exception as e:
+        return jsonify({'error': f'File parse error: {e}'}), 400
+
+    if not rows:
+        return jsonify({'error': 'CSV is empty'}), 400
 
     # ── Build params lists (pure Python — no DB calls yet) ───────────────────
     # Used for SQLite (local dev) and URA uploads (Postgres + SQLite).
