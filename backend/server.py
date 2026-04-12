@@ -240,6 +240,22 @@ SQLITE_SCHEMA = """
         highest_transacted_rate REAL,
         lowest_transacted_rate  REAL
     );
+    CREATE TABLE IF NOT EXISTS stage_resale (
+        month TEXT, town TEXT, flat_type TEXT, block TEXT, street_name TEXT,
+        storey_range TEXT, floor_area_sqm TEXT, flat_model TEXT,
+        lease_commence_date TEXT, remaining_lease TEXT, resale_price TEXT
+    );
+    CREATE TABLE IF NOT EXISTS stage_sora (
+        publication_date TEXT, compound_sora_3m TEXT, compound_sora_6m TEXT,
+        highest_transacted_rate TEXT, lowest_transacted_rate TEXT
+    );
+    CREATE TABLE IF NOT EXISTS stage_policy (
+        effective_month TEXT, effective_date TEXT, policy_name TEXT,
+        category TEXT, direction TEXT, severity TEXT, source TEXT
+    );
+    CREATE TABLE IF NOT EXISTS stage_geo (
+        search_text TEXT, lat TEXT, lon TEXT
+    );
 """
 
 POSTGRES_SCHEMA = """
@@ -362,6 +378,95 @@ POSTGRES_SCHEMA = """
         highest_transacted_rate NUMERIC,
         lowest_transacted_rate  NUMERIC
     );
+    CREATE TABLE IF NOT EXISTS stage_resale (
+        month TEXT, town TEXT, flat_type TEXT, block TEXT, street_name TEXT,
+        storey_range TEXT, floor_area_sqm TEXT, flat_model TEXT,
+        lease_commence_date TEXT, remaining_lease TEXT, resale_price TEXT
+    );
+    CREATE TABLE IF NOT EXISTS stage_sora (
+        publication_date TEXT, compound_sora_3m TEXT, compound_sora_6m TEXT,
+        highest_transacted_rate TEXT, lowest_transacted_rate TEXT
+    );
+    CREATE TABLE IF NOT EXISTS stage_policy (
+        effective_month TEXT, effective_date TEXT, policy_name TEXT,
+        category TEXT, direction TEXT, severity TEXT, source TEXT
+    );
+    CREATE TABLE IF NOT EXISTS stage_geo (
+        search_text TEXT, lat TEXT, lon TEXT
+    );
+"""
+
+# ── Supabase RPC: ELT cleaning function ──────────────────────────────────────
+# Executed once on startup via init_db(). Safe to re-run (CREATE OR REPLACE).
+_POSTGRES_RPC = """
+CREATE OR REPLACE FUNCTION process_uploaded_data()
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    -- 1. Migrate HDB Resale Data
+    INSERT INTO resale_flat_prices
+        (month, town, flat_type, block, street_name, storey_range,
+         floor_area_sqm, flat_model, lease_commence_date, remaining_lease, resale_price)
+    SELECT
+        month, town, flat_type, block, street_name, storey_range,
+        NULLIF(TRIM(floor_area_sqm),      '')::NUMERIC,
+        flat_model,
+        NULLIF(TRIM(lease_commence_date), '')::INTEGER,
+        remaining_lease,
+        NULLIF(TRIM(resale_price),        '')::NUMERIC
+    FROM stage_resale
+    WHERE month IS NOT NULL AND month <> '' AND month <> 'month';
+
+    -- 2. Migrate SORA Data (handles '-' nulls and DD Mon YYYY / ISO date formats)
+    INSERT INTO sora_rates
+        (publication_date, compound_sora_3m, compound_sora_6m,
+         highest_transacted_rate, lowest_transacted_rate)
+    SELECT
+        CASE
+            WHEN publication_date ~ E'^\\d{2} [A-Za-z]{3} \\d{4}$'
+                THEN TO_DATE(publication_date, 'DD Mon YYYY')
+            WHEN publication_date ~ E'^\\d{4}-\\d{2}-\\d{2}$'
+                THEN publication_date::DATE
+            ELSE NULL
+        END,
+        NULLIF(NULLIF(TRIM(compound_sora_3m),         ''), '-')::NUMERIC,
+        NULLIF(NULLIF(TRIM(compound_sora_6m),         ''), '-')::NUMERIC,
+        NULLIF(NULLIF(TRIM(highest_transacted_rate),  ''), '-')::NUMERIC,
+        NULLIF(NULLIF(TRIM(lowest_transacted_rate),   ''), '-')::NUMERIC
+    FROM stage_sora
+    WHERE publication_date IS NOT NULL
+      AND publication_date <> ''
+      AND publication_date NOT ILIKE '%publication%';
+
+    -- 3. Migrate Policy Data
+    INSERT INTO policy_changes
+        (effective_month, effective_date, policy_name, category, direction, severity, source)
+    SELECT
+        NULLIF(TRIM(effective_month), '')::DATE,
+        NULLIF(TRIM(effective_date),  '')::DATE,
+        policy_name, category,
+        NULLIF(TRIM(direction), '')::INTEGER,
+        NULLIF(TRIM(severity),  '')::INTEGER,
+        source
+    FROM stage_policy
+    WHERE effective_month IS NOT NULL
+      AND effective_month <> ''
+      AND effective_month <> 'effective_month';
+
+    -- 4. Migrate Geocoded Data
+    INSERT INTO geocoded_addresses (search_text, lat, lon)
+    SELECT
+        search_text,
+        NULLIF(TRIM(lat), '')::DOUBLE PRECISION,
+        NULLIF(TRIM(lon), '')::DOUBLE PRECISION
+    FROM stage_geo
+    WHERE search_text IS NOT NULL AND search_text <> '' AND lat <> 'lat';
+
+    -- 5. Clear staging tables for next upload
+    TRUNCATE TABLE stage_policy, stage_resale, stage_sora, stage_geo;
+END;
+$$
 """
 
 def init_db():
@@ -372,6 +477,11 @@ def init_db():
             s = statement.strip()
             if s:
                 cur.execute(s)
+        # Install / refresh the ELT cleaning RPC (idempotent — CREATE OR REPLACE)
+        try:
+            cur.execute(_POSTGRES_RPC)
+        except Exception as e:
+            print(f"[init_db] RPC install warning: {e}")
         conn.commit()
     else:
         conn.executescript(SQLITE_SCHEMA)
@@ -1819,7 +1929,77 @@ def upload_transactions():
                         pass
         return total
 
+    # ── ELT path: dump raw strings into staging, let Supabase RPC clean & move ─
+    # Postgres only. URA is handled below (full-refresh DELETE first).
+    if USE_POSTGRES and tx_type in ('hdb', 'geocoded', 'policy', 'sora'):
+        import psycopg2.extras as _pge
+
+        if tx_type == 'hdb':
+            stage_sql  = "INSERT INTO stage_resale (month, town, flat_type, block, street_name, storey_range, floor_area_sqm, flat_model, lease_commence_date, remaining_lease, resale_price) VALUES %s"
+            stage_rows = [(
+                str(_get(r, 'month') or ''),
+                str(_get(r, 'town') or ''),
+                str(_get(r, 'flat_type') or ''),
+                str(_get(r, 'block') or '').strip(),
+                str(_get(r, 'street_name') or ''),
+                str(_get(r, 'storey_range') or ''),
+                str(_get(r, 'floor_area_sqm') or ''),
+                str(_get(r, 'flat_model') or ''),
+                str(_get(r, 'lease_commence_date') or ''),
+                str(_get(r, 'remaining_lease') or ''),
+                str(_get(r, 'resale_price') or ''),
+            ) for r in rows]
+
+        elif tx_type == 'sora':
+            stage_sql  = "INSERT INTO stage_sora (publication_date, compound_sora_3m, compound_sora_6m, highest_transacted_rate, lowest_transacted_rate) VALUES %s"
+            stage_rows = [(
+                str(_get(r, 'sora publication date', 'sorapublicationdate',
+                         'publication_date', 'publication date',
+                         'sora value date', 'soravaluedate', 'date', 'rate_date') or ''),
+                str(_get(r, 'compound sora - 3 month', 'compoundsora-3month',
+                         'compound_sora_3m', 'sora_3m', 'published_rate', 'rate') or ''),
+                str(_get(r, 'compound sora - 6 month', 'compoundsora-6month',
+                         'compound_sora_6m', 'sora_6m') or ''),
+                str(_get(r, 'highest transacted rate', 'highest_transacted_rate',
+                         'highesttransactedrate') or ''),
+                str(_get(r, 'lowest transacted rate', 'lowest_transacted_rate',
+                         'lowesttransactedrate') or ''),
+            ) for r in rows]
+
+        elif tx_type == 'policy':
+            stage_sql  = "INSERT INTO stage_policy (effective_month, effective_date, policy_name, category, direction, severity, source) VALUES %s"
+            stage_rows = [(
+                str(_get(r, 'effective_month', 'effectivemonth', 'date', 'policy_date') or ''),
+                str(_get(r, 'effective_date', 'effectivedate') or ''),
+                str(_get(r, 'policy_name', 'policyname', 'name', 'description', 'measure') or ''),
+                str(_get(r, 'category') or ''),
+                str(_get(r, 'direction', 'effect') or ''),
+                str(_get(r, 'severity', 'severity_score', 'score') or ''),
+                str(_get(r, 'source', 'url', 'reference') or ''),
+            ) for r in rows]
+
+        elif tx_type == 'geocoded':
+            stage_sql  = "INSERT INTO stage_geo (search_text, lat, lon) VALUES %s"
+            stage_rows = [(
+                str(_get(r, 'search_text', 'searchtext', 'search text') or ''),
+                str(_get(r, 'lat', 'latitude') or ''),
+                str(_get(r, 'lon', 'lng', 'longitude') or ''),
+            ) for r in rows]
+
+        conn = get_db(); cur = _cursor(conn)
+        try:
+            if stage_rows:
+                _pge.execute_values(cur, stage_sql, stage_rows, page_size=1000)
+            cur.execute("SELECT process_uploaded_data()")
+            conn.commit()
+            conn.close()
+            return jsonify({'inserted': len(stage_rows), 'total_rows': len(rows), 'batch_id': batch_id})
+        except Exception as e:
+            conn.rollback(); conn.close()
+            return jsonify({'error': str(e)}), 500
+
     # ── Build params lists (pure Python — no DB calls yet) ───────────────────
+    # Used for SQLite (local dev) and URA uploads (Postgres + SQLite).
 
     params_list = []
 
