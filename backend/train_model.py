@@ -3,12 +3,12 @@
 Train HDB resale price prediction model with policy + SORA + geocoding features.
 
 Data sources (loaded from Supabase DB tables):
-  - hdb_resale         — HDB transaction records (uploaded CSV)
+  - resale_flat_prices         — HDB transaction records (uploaded CSV)
   - policy_changes     — Government policy changes (effective_month, direction, severity)
   - sora_rates         — SORA 3-month compound rates
   - geocoded_addresses — Block+street → lat/lon mapping
 
-Falls back to data.gov.sg API for transactions if hdb_resale is empty.
+Falls back to data.gov.sg API for transactions if resale_flat_prices is empty.
 A temp checkpoint is saved after feature engineering and after each model
 in case training is interrupted.
 
@@ -125,13 +125,13 @@ def load_hdb_from_db():
             SELECT month, town, flat_type, flat_model, floor_area_sqm,
                    storey_range, resale_price, remaining_lease, lease_commence_date,
                    block, street_name
-            FROM hdb_resale
+            FROM resale_flat_prices
         """)
         if not rows:
             return None
         return pd.DataFrame(rows)
     except Exception as e:
-        print(f"  hdb_resale load error: {e}")
+        print(f"  resale_flat_prices load error: {e}")
         return None
 
 
@@ -152,12 +152,12 @@ def load_policy_from_db():
 
 def load_sora_from_db():
     try:
-        rows = _query("SELECT rate_date, published_rate FROM sora_rates WHERE rate_date IS NOT NULL")
+        rows = _query("SELECT publication_date, compound_sora_3m FROM sora_rates WHERE publication_date IS NOT NULL")
         if not rows:
             return None
         df = pd.DataFrame(rows)
-        df['date'] = pd.to_datetime(df['rate_date'], errors='coerce')
-        df['sora_3m'] = pd.to_numeric(df['published_rate'], errors='coerce')
+        df['date'] = pd.to_datetime(df['publication_date'], errors='coerce')
+        df['sora_3m'] = pd.to_numeric(df['compound_sora_3m'], errors='coerce')
         df = df.dropna(subset=['date', 'sora_3m'])
         df['month'] = df['date'].dt.to_period('M').dt.to_timestamp()
         return df.groupby('month', as_index=False)['sora_3m'].mean().rename(columns={'sora_3m': 'sora'})
@@ -295,12 +295,12 @@ def train(from_db=False):
         print("Loading HDB resale data from database...")
         df = load_hdb_from_db()
         if df is not None and len(df) > 0:
-            print(f"  Loaded {len(df):,} records from hdb_resale table")
+            print(f"  Loaded {len(df):,} records from resale_flat_prices table")
         else:
             df = None
             if from_db:
-                raise ValueError("hdb_resale table is empty — upload CSV first.")
-            print("  hdb_resale empty, falling back to data.gov.sg API...")
+                raise ValueError("resale_flat_prices table is empty — upload CSV first.")
+            print("  resale_flat_prices empty, falling back to data.gov.sg API...")
     if df is None:
         print("Downloading HDB resale data from data.gov.sg...")
         df = download_hdb_data()

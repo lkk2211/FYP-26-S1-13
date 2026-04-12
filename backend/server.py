@@ -183,21 +183,19 @@ SQLITE_SCHEMA = """
         articles   TEXT NOT NULL,
         fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
-    CREATE TABLE IF NOT EXISTS hdb_resale (
-        id              INTEGER PRIMARY KEY AUTOINCREMENT,
-        month           TEXT,
-        town            TEXT,
-        flat_type       TEXT,
-        flat_model      TEXT,
-        floor_area_sqm  REAL,
-        storey_range    TEXT,
-        resale_price    REAL,
-        remaining_lease TEXT,
+    CREATE TABLE IF NOT EXISTS resale_flat_prices (
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        month               TEXT,
+        town                TEXT,
+        flat_type           TEXT,
+        block               TEXT,
+        street_name         TEXT,
+        storey_range        TEXT,
+        floor_area_sqm      REAL,
+        flat_model          TEXT,
         lease_commence_date INTEGER,
-        block           TEXT,
-        street_name     TEXT,
-        upload_batch    TEXT,
-        uploaded_at     TEXT NOT NULL DEFAULT (datetime('now'))
+        remaining_lease     TEXT,
+        resale_price        REAL
     );
     CREATE TABLE IF NOT EXISTS ura_transactions (
         id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -222,13 +220,7 @@ SQLITE_SCHEMA = """
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
         search_text     TEXT,
         lat             REAL,
-        lon             REAL,
-        postal_code     TEXT,
-        address         TEXT,
-        town            TEXT,
-        planning_area   TEXT,
-        upload_batch    TEXT,
-        uploaded_at     TEXT NOT NULL DEFAULT (datetime('now'))
+        lon             REAL
     );
     CREATE TABLE IF NOT EXISTS policy_changes (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -236,18 +228,17 @@ SQLITE_SCHEMA = """
         effective_date  TEXT,
         policy_name     TEXT,
         category        TEXT,
-        direction       REAL,
-        severity        REAL,
-        source          TEXT,
-        upload_batch    TEXT,
-        uploaded_at     TEXT NOT NULL DEFAULT (datetime('now'))
+        direction       INTEGER,
+        severity        INTEGER,
+        source          TEXT
     );
     CREATE TABLE IF NOT EXISTS sora_rates (
-        id              INTEGER PRIMARY KEY AUTOINCREMENT,
-        rate_date       TEXT,
-        published_rate  REAL,
-        upload_batch    TEXT,
-        uploaded_at     TEXT NOT NULL DEFAULT (datetime('now'))
+        id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+        publication_date        TEXT,
+        compound_sora_3m        REAL,
+        compound_sora_6m        REAL,
+        highest_transacted_rate REAL,
+        lowest_transacted_rate  REAL
     );
 """
 
@@ -314,24 +305,22 @@ POSTGRES_SCHEMA = """
         articles   TEXT NOT NULL,
         fetched_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
-    CREATE TABLE IF NOT EXISTS hdb_resale (
-        id              SERIAL PRIMARY KEY,
-        month           TEXT,
-        town            TEXT,
-        flat_type       TEXT,
-        flat_model      TEXT,
-        floor_area_sqm  REAL,
-        storey_range    TEXT,
-        resale_price    REAL,
-        remaining_lease TEXT,
+    CREATE TABLE IF NOT EXISTS resale_flat_prices (
+        id                  BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+        month               TEXT,
+        town                TEXT,
+        flat_type           TEXT,
+        block               TEXT,
+        street_name         TEXT,
+        storey_range        TEXT,
+        floor_area_sqm      NUMERIC,
+        flat_model          TEXT,
         lease_commence_date INTEGER,
-        block           TEXT,
-        street_name     TEXT,
-        upload_batch    TEXT,
-        uploaded_at     TIMESTAMP NOT NULL DEFAULT NOW()
+        remaining_lease     TEXT,
+        resale_price        NUMERIC
     );
     CREATE TABLE IF NOT EXISTS ura_transactions (
-        id               BIGSERIAL PRIMARY KEY,
+        id               BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
         project          TEXT,
         street           TEXT,
         property_type    TEXT,
@@ -350,35 +339,28 @@ POSTGRES_SCHEMA = """
         upload_batch     TEXT
     );
     CREATE TABLE IF NOT EXISTS geocoded_addresses (
-        id              SERIAL PRIMARY KEY,
-        search_text     TEXT,
-        lat             REAL,
-        lon             REAL,
-        postal_code     TEXT,
-        address         TEXT,
-        town            TEXT,
-        planning_area   TEXT,
-        upload_batch    TEXT,
-        uploaded_at     TIMESTAMP NOT NULL DEFAULT NOW()
+        id          BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+        search_text TEXT,
+        lat         DOUBLE PRECISION,
+        lon         DOUBLE PRECISION
     );
     CREATE TABLE IF NOT EXISTS policy_changes (
-        id              SERIAL PRIMARY KEY,
-        effective_month TEXT,
-        effective_date  TEXT,
+        id              BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+        effective_month DATE,
+        effective_date  DATE,
         policy_name     TEXT,
         category        TEXT,
-        direction       REAL,
-        severity        REAL,
-        source          TEXT,
-        upload_batch    TEXT,
-        uploaded_at     TIMESTAMP NOT NULL DEFAULT NOW()
+        direction       INTEGER,
+        severity        INTEGER,
+        source          TEXT
     );
     CREATE TABLE IF NOT EXISTS sora_rates (
-        id              SERIAL PRIMARY KEY,
-        rate_date       TEXT,
-        published_rate  REAL,
-        upload_batch    TEXT,
-        uploaded_at     TIMESTAMP NOT NULL DEFAULT NOW()
+        id                      BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+        publication_date        DATE,
+        compound_sora_3m        NUMERIC,
+        compound_sora_6m        NUMERIC,
+        highest_transacted_rate NUMERIC,
+        lowest_transacted_rate  NUMERIC
     );
 """
 
@@ -403,39 +385,58 @@ def migrate_db():
     try:
         if USE_POSTGRES:
             cur = _cursor(conn)
-            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()")
             # Drop legacy tables
-            for tbl in ('hdb_transactions', 'private_transactions', 'sync_log'):
+            for tbl in ('hdb_transactions', 'private_transactions', 'sync_log', 'hdb_resale'):
                 try: cur.execute(f"DROP TABLE IF EXISTS {tbl}")
                 except Exception: pass
-            # Add new columns to geocoded_addresses (search_text, lat, lon)
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()")
+            # Ensure resale_flat_prices has all columns
+            for col_def in [
+                "ALTER TABLE resale_flat_prices ADD COLUMN IF NOT EXISTS month TEXT",
+                "ALTER TABLE resale_flat_prices ADD COLUMN IF NOT EXISTS town TEXT",
+                "ALTER TABLE resale_flat_prices ADD COLUMN IF NOT EXISTS flat_type TEXT",
+                "ALTER TABLE resale_flat_prices ADD COLUMN IF NOT EXISTS block TEXT",
+                "ALTER TABLE resale_flat_prices ADD COLUMN IF NOT EXISTS street_name TEXT",
+                "ALTER TABLE resale_flat_prices ADD COLUMN IF NOT EXISTS storey_range TEXT",
+                "ALTER TABLE resale_flat_prices ADD COLUMN IF NOT EXISTS floor_area_sqm NUMERIC",
+                "ALTER TABLE resale_flat_prices ADD COLUMN IF NOT EXISTS flat_model TEXT",
+                "ALTER TABLE resale_flat_prices ADD COLUMN IF NOT EXISTS lease_commence_date INTEGER",
+                "ALTER TABLE resale_flat_prices ADD COLUMN IF NOT EXISTS remaining_lease TEXT",
+                "ALTER TABLE resale_flat_prices ADD COLUMN IF NOT EXISTS resale_price NUMERIC",
+            ]:
+                try: cur.execute(col_def)
+                except Exception: pass
+            # Ensure geocoded_addresses has correct columns
             for col_def in [
                 "ALTER TABLE geocoded_addresses ADD COLUMN IF NOT EXISTS search_text TEXT",
-                "ALTER TABLE geocoded_addresses ADD COLUMN IF NOT EXISTS lat REAL",
-                "ALTER TABLE geocoded_addresses ADD COLUMN IF NOT EXISTS lon REAL",
+                "ALTER TABLE geocoded_addresses ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION",
+                "ALTER TABLE geocoded_addresses ADD COLUMN IF NOT EXISTS lon DOUBLE PRECISION",
             ]:
                 try: cur.execute(col_def)
                 except Exception: pass
-            # Add new columns to policy_changes
+            # Ensure policy_changes has correct columns
             for col_def in [
-                "ALTER TABLE policy_changes ADD COLUMN IF NOT EXISTS effective_month TEXT",
-                "ALTER TABLE policy_changes ADD COLUMN IF NOT EXISTS effective_date TEXT",
+                "ALTER TABLE policy_changes ADD COLUMN IF NOT EXISTS effective_month DATE",
+                "ALTER TABLE policy_changes ADD COLUMN IF NOT EXISTS effective_date DATE",
                 "ALTER TABLE policy_changes ADD COLUMN IF NOT EXISTS policy_name TEXT",
                 "ALTER TABLE policy_changes ADD COLUMN IF NOT EXISTS category TEXT",
+                "ALTER TABLE policy_changes ADD COLUMN IF NOT EXISTS direction INTEGER",
+                "ALTER TABLE policy_changes ADD COLUMN IF NOT EXISTS severity INTEGER",
                 "ALTER TABLE policy_changes ADD COLUMN IF NOT EXISTS source TEXT",
-                "ALTER TABLE policy_changes ALTER COLUMN direction TYPE REAL USING direction::REAL",
-                "ALTER TABLE policy_changes ALTER COLUMN severity TYPE REAL USING severity::REAL",
             ]:
                 try: cur.execute(col_def)
                 except Exception: pass
-            # Add block/street_name to hdb_resale for geocoding
+            # Ensure sora_rates has new column schema
             for col_def in [
-                "ALTER TABLE hdb_resale ADD COLUMN IF NOT EXISTS block TEXT",
-                "ALTER TABLE hdb_resale ADD COLUMN IF NOT EXISTS street_name TEXT",
+                "ALTER TABLE sora_rates ADD COLUMN IF NOT EXISTS publication_date DATE",
+                "ALTER TABLE sora_rates ADD COLUMN IF NOT EXISTS compound_sora_3m NUMERIC",
+                "ALTER TABLE sora_rates ADD COLUMN IF NOT EXISTS compound_sora_6m NUMERIC",
+                "ALTER TABLE sora_rates ADD COLUMN IF NOT EXISTS highest_transacted_rate NUMERIC",
+                "ALTER TABLE sora_rates ADD COLUMN IF NOT EXISTS lowest_transacted_rate NUMERIC",
             ]:
                 try: cur.execute(col_def)
                 except Exception: pass
-            # Ensure ura_transactions has all required columns (new schema, no uploaded_at)
+            # Ensure ura_transactions has all required columns
             for col_def in [
                 "ALTER TABLE ura_transactions ADD COLUMN IF NOT EXISTS project TEXT",
                 "ALTER TABLE ura_transactions ADD COLUMN IF NOT EXISTS street TEXT",
@@ -456,15 +457,6 @@ def migrate_db():
             ]:
                 try: cur.execute(col_def)
                 except Exception: pass
-            # Add upload_batch to other dataset tables
-            for col_def in [
-                "ALTER TABLE hdb_resale ADD COLUMN IF NOT EXISTS upload_batch TEXT",
-                "ALTER TABLE geocoded_addresses ADD COLUMN IF NOT EXISTS upload_batch TEXT",
-                "ALTER TABLE policy_changes ADD COLUMN IF NOT EXISTS upload_batch TEXT",
-                "ALTER TABLE sora_rates ADD COLUMN IF NOT EXISTS upload_batch TEXT",
-            ]:
-                try: cur.execute(col_def)
-                except Exception: pass
             conn.commit()
         else:
             for stmt in [
@@ -477,8 +469,8 @@ def migrate_db():
                 "ALTER TABLE policy_changes ADD COLUMN policy_name TEXT",
                 "ALTER TABLE policy_changes ADD COLUMN category TEXT",
                 "ALTER TABLE policy_changes ADD COLUMN source TEXT",
-                "ALTER TABLE hdb_resale ADD COLUMN block TEXT",
-                "ALTER TABLE hdb_resale ADD COLUMN street_name TEXT",
+                "ALTER TABLE resale_flat_prices ADD COLUMN block TEXT",
+                "ALTER TABLE resale_flat_prices ADD COLUMN street_name TEXT",
             ]:
                 try:
                     conn.execute(stmt)
@@ -1127,7 +1119,7 @@ def stats():
 
     # New table counts
     try:
-        cur.execute("SELECT COUNT(*) AS n FROM hdb_resale"); hdb_tx_count = dict(cur.fetchone())['n']
+        cur.execute("SELECT COUNT(*) AS n FROM resale_flat_prices"); hdb_tx_count = dict(cur.fetchone())['n']
     except: hdb_tx_count = 0
     try:
         cur.execute("SELECT COUNT(*) AS n FROM ura_transactions"); priv_tx_count = dict(cur.fetchone())['n']
@@ -1424,17 +1416,7 @@ def property_lookup():
     if not postal:
         return jsonify({'error': 'postal required'}), 400
 
-    # 1. Try geocoded_addresses table first
-    try:
-        conn = get_db(); cur = _cursor(conn)
-        cur.execute(_q("SELECT town, address FROM geocoded_addresses WHERE postal_code = ? LIMIT 1"), (postal,))
-        row = _row(cur)
-        conn.close()
-        if row and row.get('town'):
-            town = str(row['town']).strip().upper()
-            return jsonify({'town': town, 'property_type': 'HDB', 'lease_type': '99-year Leasehold', 'is_hdb': True})
-    except Exception:
-        pass
+    # geocoded_addresses no longer stores postal_code — skip to OneMap lookup
 
     # 2. OneMap elastic search
     try:
@@ -1540,7 +1522,7 @@ def hdb_flat_specs():
         params = (flat_type, town) if town else (flat_type,)
         cur.execute(_q(f"""
             SELECT floor_area_sqm, storey_range
-            FROM hdb_resale
+            FROM resale_flat_prices
             WHERE UPPER(flat_type) = ?{q_town}
               AND floor_area_sqm IS NOT NULL AND floor_area_sqm > 0
         """), params)
@@ -1649,7 +1631,7 @@ def property_areas():
         if property_type == 'HDB':
             # Distinct floor areas (sqm) → converted to sqft, rounded to 5 sqft
             cur.execute(_q(
-                "SELECT DISTINCT floor_area_sqm FROM hdb_resale "
+                "SELECT DISTINCT floor_area_sqm FROM resale_flat_prices "
                 "WHERE flat_type = ? AND floor_area_sqm IS NOT NULL ORDER BY floor_area_sqm"
             ), (flat_type,))
             rows = cur.fetchall()
@@ -1659,7 +1641,7 @@ def property_areas():
 
             # Max floor from storey_range
             cur.execute(_q(
-                "SELECT storey_range FROM hdb_resale WHERE flat_type = ? AND storey_range LIKE '% TO %'"
+                "SELECT storey_range FROM resale_flat_prices WHERE flat_type = ? AND storey_range LIKE '% TO %'"
             ), (flat_type,))
             storeys = [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0]) for r in cur.fetchall()]
             def _top(s):
@@ -1842,78 +1824,78 @@ def upload_transactions():
     params_list = []
 
     if tx_type == 'hdb':
-        sql = _q("""INSERT INTO hdb_resale
-                    (month, town, flat_type, flat_model, floor_area_sqm,
-                     storey_range, resale_price, remaining_lease,
-                     lease_commence_date, block, street_name, upload_batch)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""")
+        sql = _q("""INSERT INTO resale_flat_prices
+                    (month, town, flat_type, block, street_name,
+                     storey_range, floor_area_sqm, flat_model,
+                     lease_commence_date, remaining_lease, resale_price)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?)""")
         for r in rows:
             params_list.append((
                 _norm_month(_get(r, 'month')),
                 _get(r, 'town'),
                 _get(r, 'flat_type'),
-                _get(r, 'flat_model'),
-                _sf(_get(r, 'floor_area_sqm')),
-                _get(r, 'storey_range'),
-                _sf(_get(r, 'resale_price')),
-                _get(r, 'remaining_lease'),
-                _si(_get(r, 'lease_commence_date')),
                 str(_get(r, 'block') or '').strip() or None,
                 _get(r, 'street_name'),
-                batch_id,
+                _get(r, 'storey_range'),
+                _sf(_get(r, 'floor_area_sqm')),
+                _get(r, 'flat_model'),
+                _si(_get(r, 'lease_commence_date')),
+                _get(r, 'remaining_lease'),
+                _sf(_get(r, 'resale_price')),
             ))
 
     elif tx_type == 'geocoded':
         sql = _q("""INSERT INTO geocoded_addresses
-                    (search_text, lat, lon, postal_code, address, town, planning_area, upload_batch)
-                    VALUES (?,?,?,?,?,?,?,?)""")
+                    (search_text, lat, lon)
+                    VALUES (?,?,?)""")
         for r in rows:
             lat_v = _sf(_get(r, 'lat', 'latitude')) or None
             lon_v = _sf(_get(r, 'lon', 'lng', 'longitude')) or None
             params_list.append((
                 _get(r, 'search_text', 'searchtext', 'search text'),
                 lat_v, lon_v,
-                _get(r, 'postal_code', 'postal', 'postalcode'),
-                _get(r, 'address', 'full_address', 'building'),
-                _get(r, 'town'),
-                _get(r, 'planning_area', 'planningarea', 'planning area'),
-                batch_id,
             ))
 
     elif tx_type == 'policy':
         sql = _q("""INSERT INTO policy_changes
                     (effective_month, effective_date, policy_name, category,
-                     direction, severity, source, upload_batch)
-                    VALUES (?,?,?,?,?,?,?,?)""")
+                     direction, severity, source)
+                    VALUES (?,?,?,?,?,?,?)""")
         for r in rows:
             params_list.append((
                 _norm_month(_get(r, 'effective_month', 'effectivemonth', 'date', 'policy_date')),
                 _norm_date(_get(r, 'effective_date', 'effectivedate')),
                 _get(r, 'policy_name', 'policyname', 'name', 'description', 'measure'),
                 _get(r, 'category'),
-                _sf(_get(r, 'direction', 'effect')),
-                _sf(_get(r, 'severity', 'severity_score', 'score')),
+                _si(_get(r, 'direction', 'effect')),
+                _si(_get(r, 'severity', 'severity_score', 'score')),
                 _get(r, 'source', 'url', 'reference'),
-                batch_id,
             ))
 
     elif tx_type == 'sora':
-        sql = _q("""INSERT INTO sora_rates (rate_date, published_rate, upload_batch)
-                    VALUES (?,?,?)""")
+        sql = _q("""INSERT INTO sora_rates
+                    (publication_date, compound_sora_3m, compound_sora_6m,
+                     highest_transacted_rate, lowest_transacted_rate)
+                    VALUES (?,?,?,?,?)""")
         for r in rows:
-            rate = _sf(_get(r,
+            rate_3m = _sf(_get(r,
                 'compound sora - 3 month', 'compoundsora-3month',
-                'sora_3m', 'sora', 'published_rate', 'rate'), default=None)
-            if rate is None or rate == 0.0:
+                'compound_sora_3m', 'sora_3m', 'sora', 'published_rate', 'rate'), default=None)
+            if rate_3m is None or rate_3m == 0.0:
                 continue  # skip rows with no rate value
             params_list.append((
                 _norm_date(_get(r,
                     'sora publication date', 'sorapublicationdate',
-                    'published_date', 'publication date',
+                    'publication_date', 'published_date', 'publication date',
                     'sora value date', 'soravaluedate',
                     'date', 'rate_date', 'ratedate')),
-                rate,
-                batch_id,
+                rate_3m,
+                _sf(_get(r, 'compound sora - 6 month', 'compoundsora-6month',
+                          'compound_sora_6m', 'sora_6m'), default=None),
+                _sf(_get(r, 'highest transacted rate', 'highest_transacted_rate',
+                          'highesttransactedrate', 'high_rate'), default=None),
+                _sf(_get(r, 'lowest transacted rate', 'lowest_transacted_rate',
+                          'lowesttransactedrate', 'low_rate'), default=None),
             ))
 
     elif tx_type == 'ura':
@@ -2006,7 +1988,7 @@ def upload_transactions():
         if tx_type == 'hdb':
             try:
                 cutoff = (datetime.datetime.utcnow() - datetime.timedelta(days=3650)).strftime('%Y-%m-01')
-                cur.execute(_q("DELETE FROM hdb_resale WHERE month IS NOT NULL AND month < ?"), (cutoff,))
+                cur.execute(_q("DELETE FROM resale_flat_prices WHERE month IS NOT NULL AND month < ?"), (cutoff,))
             except Exception:
                 pass
 
@@ -2238,7 +2220,7 @@ def export_report():
     total_users  = cnt('users')
     total_preds  = cnt('predictions')
     total_recs   = cnt('price_records')
-    hdb_txs      = cnt('hdb_resale')
+    hdb_txs      = cnt('resale_flat_prices')
     priv_txs     = cnt('ura_transactions')
 
     # Users by role
@@ -2425,7 +2407,7 @@ def export_report():
         ['users',               str(total_users)],
         ['predictions',         str(total_preds)],
         ['price_records',       str(total_recs)],
-        ['hdb_resale',       str(hdb_txs)],
+        ['resale_flat_prices', str(hdb_txs)],
         ['ura_transactions', str(priv_txs)],
     ]
     story.append(tbl(db_data, [W*0.6, W*0.4]))
