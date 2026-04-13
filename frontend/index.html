@@ -364,8 +364,8 @@
                                             <div class="space-y-1">
                                                 <label class="text-xs font-bold text-slate-500 uppercase">Property Type</label>
                                                 <select id="input-property-type" class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium appearance-none" onchange="_onPropertyTypeChange()">
-                                                    <option>Condominium</option>
                                                     <option>HDB</option>
+                                                    <option>Condominium</option>
                                                 </select>
                                             </div>
                                             <div class="space-y-1">
@@ -408,10 +408,10 @@
                                             <!-- Step 2: Floor Area (range updates when bedrooms change) -->
                                             <div class="space-y-3">
                                                 <div class="flex justify-between items-center">
-                                                    <label class="text-xs font-bold text-slate-700 uppercase">Floor Area (sq ft)</label>
-                                                    <span class="text-sm font-bold text-slate-900"><span id="val-area">1,000</span> sq ft</span>
+                                                    <label class="text-xs font-bold text-slate-700 uppercase">Floor Area</label>
+                                                    <span class="text-sm font-bold text-slate-900"><span id="val-area">90</span> <span id="area-unit">sqm</span></span>
                                                 </div>
-                                                <input type="range" id="range-area" min="300" max="5000" step="50" value="1000" oninput="updateSlider('area')" />
+                                                <input type="range" id="range-area" min="0" max="10" step="1" value="5" oninput="updateSlider('area')" />
                                                 <p id="area-range-hint" class="text-xs text-slate-400">Select bedrooms first to see the typical size range for this flat type.</p>
                                             </div>
 

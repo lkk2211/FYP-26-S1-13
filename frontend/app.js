@@ -91,7 +91,7 @@ function updateSlider(id) {
 
 function getAreaValue() {
     const range = document.getElementById('range-area');
-    if (!range) return 1000;
+    if (!range) return 90;
     if (_availableAreas.length > 0) {
         const idx = Math.min(parseInt(range.value), _availableAreas.length - 1);
         return _availableAreas[idx];
@@ -100,6 +100,14 @@ function getAreaValue() {
 }
 
 function _onPropertyTypeChange() {
+    const propEl   = document.getElementById('input-property-type');
+    const unitEl   = document.getElementById('area-unit');
+    const hintEl   = document.getElementById('area-range-hint');
+    const isHdb    = propEl && propEl.value === 'HDB';
+    if (unitEl) unitEl.textContent = isHdb ? 'sqm' : 'sq ft';
+    if (hintEl && !_availableAreas.length) {
+        hintEl.textContent = 'Select bedrooms first to see the typical size range for this flat type.';
+    }
     _loadFlatSpecs();
 }
 
@@ -119,7 +127,9 @@ async function _loadFlatSpecs() {
 
     try {
         const url = `/api/property-areas?bedrooms=${beds}&property_type=${encodeURIComponent(propType)}` +
-                    (postal ? `&postal=${encodeURIComponent(postal)}` : '');
+                    (postal ? `&postal=${encodeURIComponent(postal)}` : '') +
+                    (_predictBlock ? `&block=${encodeURIComponent(_predictBlock)}` : '') +
+                    (_predictRoad  ? `&road=${encodeURIComponent(_predictRoad)}`  : '');
         const res  = await fetch(url);
         const data = await res.json();
 
@@ -129,6 +139,9 @@ async function _loadFlatSpecs() {
         // ── Area slider (index-based snap) ────────────────────────
         const areaRange = document.getElementById('range-area');
         const areaHint  = document.getElementById('area-range-hint');
+        const unitEl    = document.getElementById('area-unit');
+        const isHdbType = propType === 'HDB';
+        if (unitEl) unitEl.textContent = isHdbType ? 'sqm' : 'sq ft';
         if (areaRange && areas.length > 0) {
             _availableAreas = areas;
 
@@ -145,8 +158,9 @@ async function _loadFlatSpecs() {
 
             if (areaHint) {
                 const min = areas[0], max = areas[areas.length - 1];
+                const unit = isHdbType ? 'sqm' : 'sq ft';
                 areaHint.textContent = `${areas.length} size option${areas.length > 1 ? 's' : ''}: `
-                    + `${min.toLocaleString()}–${max.toLocaleString()} sq ft`;
+                    + `${min.toLocaleString()}–${max.toLocaleString()} ${unit}`;
             }
         }
 
@@ -252,7 +266,9 @@ async function handlePostalSearch() {
                     const ltEl = document.getElementById('input-lease-type');
                     if (ltEl) ltEl.value = info.lease_type;
                 }
-                _predictTown = info.town || '';
+                _predictTown  = info.town      || '';
+                _predictBlock = info.block     || '';
+                _predictRoad  = info.road_name || '';
                 _loadFlatSpecs();
             })
             .catch(() => {});
@@ -443,7 +459,9 @@ function showAdminTab(tabId) {
 // ── Global state ────────────────────────────────────────────
 let lastMapPostal = '';
 let currentNeighbourhood = 'Clementi';
-let _predictTown = '';
+let _predictTown  = '';
+let _predictBlock = '';
+let _predictRoad  = '';
 
 // ── Map ──────────────────────────────────────────────────────
 let mapInstance = null;

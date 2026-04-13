@@ -1692,10 +1692,12 @@ def property_lookup():
         else:
             prop_type  = 'Condominium'
             lease_type = 'Freehold'
+        road_name = str(result.get('ROAD_NAME') or '').strip()
         return jsonify({
             'town': town, 'property_type': prop_type,
             'lease_type': lease_type, 'is_hdb': is_hdb,
             'is_landed': is_landed, 'building_name': building,
+            'block': blk_no, 'road_name': road_name,
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -1784,6 +1786,8 @@ def property_areas():
     postal        = request.args.get('postal', '').strip()
     bedrooms      = int(request.args.get('bedrooms', 3))
     property_type = request.args.get('property_type', 'HDB')
+    block         = request.args.get('block', '').strip().upper()
+    road          = request.args.get('road', '').strip().upper()
 
     # Postal sector → URA postal district mapping (first 2 postal digits)
     _SECTOR_TO_DISTRICT = {
@@ -1838,20 +1842,38 @@ def property_areas():
         cur  = _cursor(conn)
 
         if property_type == 'HDB':
-            # Distinct floor areas (sqm) → converted to sqft, rounded to 5 sqft
-            cur.execute(_q(
-                "SELECT DISTINCT floor_area_sqm FROM resale_flat_prices "
-                "WHERE flat_type = ? AND floor_area_sqm IS NOT NULL ORDER BY floor_area_sqm"
-            ), (flat_type,))
-            rows = cur.fetchall()
-            sqm_vals = sorted(set(float(r['floor_area_sqm'] if hasattr(r, '__getitem__') else r[0])
+            # Try to get areas for the specific block+street first, then fall back to flat_type-wide
+            def _fetch_hdb_areas(extra_where, params):
+                cur.execute(_q(
+                    "SELECT DISTINCT floor_area_sqm FROM resale_flat_prices "
+                    f"WHERE flat_type = ? {extra_where} AND floor_area_sqm IS NOT NULL ORDER BY floor_area_sqm"
+                ), params)
+                rows = cur.fetchall()
+                return sorted(set(float(r['floor_area_sqm'] if hasattr(r, '__getitem__') else r[0])
                                   for r in rows if (r['floor_area_sqm'] if hasattr(r, '__getitem__') else r[0])))
-            floor_areas = sorted(set(round(s * 10.764 / 5.0) * 5 for s in sqm_vals))
 
-            # Max floor from storey_range
-            cur.execute(_q(
-                "SELECT storey_range FROM resale_flat_prices WHERE flat_type = ? AND storey_range LIKE '% TO %'"
-            ), (flat_type,))
+            sqm_vals = []
+            if block and road:
+                sqm_vals = _fetch_hdb_areas(
+                    "AND UPPER(block) = ? AND UPPER(street_name) LIKE ?",
+                    (flat_type, block, f'%{road}%')
+                )
+            if not sqm_vals:
+                sqm_vals = _fetch_hdb_areas("", (flat_type,))
+
+            # Return sqm values rounded to nearest 1 sqm, deduplicated
+            floor_areas = sorted(set(round(s) for s in sqm_vals))
+
+            # Max floor from storey_range — filter to specific block if possible
+            if block and road:
+                cur.execute(_q(
+                    "SELECT storey_range FROM resale_flat_prices "
+                    "WHERE flat_type = ? AND UPPER(block) = ? AND UPPER(street_name) LIKE ? AND storey_range LIKE '% TO %'"
+                ), (flat_type, block, f'%{road}%'))
+            else:
+                cur.execute(_q(
+                    "SELECT storey_range FROM resale_flat_prices WHERE flat_type = ? AND storey_range LIKE '% TO %'"
+                ), (flat_type,))
             storeys = [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0]) for r in cur.fetchall()]
             def _top(s):
                 try: return int(s.split(' TO ')[-1].strip())
@@ -1895,12 +1917,13 @@ def property_areas():
     # Fall back to bedroom-based presets if no DB data
     if not floor_areas:
         if property_type == 'HDB':
-            _HDB_PRESETS = {
-                '1 ROOM':[330,355],'2 ROOM':[474,506],'3 ROOM':[646,700,753,807],
-                '4 ROOM':[915,969,1023,1076,1130],'5 ROOM':[1163,1216,1302,1389,1453,1507],
-                'EXECUTIVE':[1313,1399,1485,1571,1657],
+            # Preset values in sqm (common HDB flat sizes)
+            _HDB_PRESETS_SQM = {
+                '1 ROOM':[31,33],'2 ROOM':[44,47],'3 ROOM':[60,65,70,75],
+                '4 ROOM':[85,90,95,100,105],'5 ROOM':[108,113,121,129,135,140],
+                'EXECUTIVE':[122,130,138,146,154],
             }
-            floor_areas = _HDB_PRESETS.get(flat_type, [700,800,900])
+            floor_areas = _HDB_PRESETS_SQM.get(flat_type, [65,85,105])
         else:
             floor_areas = _CONDO_PRESETS.get(bedrooms, _CONDO_PRESETS[3])
 

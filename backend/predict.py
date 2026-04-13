@@ -300,11 +300,11 @@ def _geocode_postal(postal):
 
 def _predict_ml(features):
     postal   = str(features.get('postal', '')).strip().zfill(6)
-    area_sqft = float(features.get('area', 1000))
+    area_sqm  = float(features.get('area', 90))   # incoming value is sqm
     bedrooms  = int(features.get('bedrooms', 3))
     floor     = int(features.get('floor', 10))
 
-    area_sqm = area_sqft / 10.764
+    area_sqft = area_sqm * 10.764
 
     # Derive flat_type from bedrooms
     flat_type = _BEDROOMS_TO_FLAT_TYPE.get(bedrooms, 'EXECUTIVE' if bedrooms >= 6 else '5 ROOM')
