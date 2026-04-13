@@ -182,10 +182,8 @@ def _load_models():
         return True
     try:
         xgb  = joblib.load(os.path.join(MODELS_DIR, 'xgb_pipeline.joblib'))
-        lgbm = joblib.load(os.path.join(MODELS_DIR, 'lgbm_pipeline.joblib'))
-        cat  = joblib.load(os.path.join(MODELS_DIR, 'cat_pipeline.joblib'))
         meta = joblib.load(os.path.join(MODELS_DIR, 'meta.joblib'))
-        _pipelines = [xgb, lgbm, cat]
+        _pipelines = [xgb]   # XGB only — LGBM+CatBoost exceed 512MB RAM on free tier
         _meta = meta
         pol, sor = _load_latest_policy_sora()
         if pol:   _meta['latest_policy'] = pol
@@ -203,10 +201,8 @@ def _load_private_models():
         return True
     try:
         xgb  = joblib.load(os.path.join(MODELS_DIR, 'xgb_private_pipeline.joblib'))
-        lgbm = joblib.load(os.path.join(MODELS_DIR, 'lgbm_private_pipeline.joblib'))
-        cat  = joblib.load(os.path.join(MODELS_DIR, 'cat_private_pipeline.joblib'))
         meta = joblib.load(os.path.join(MODELS_DIR, 'meta_private.joblib'))
-        _private_pipelines = [xgb, lgbm, cat]
+        _private_pipelines = [xgb]   # XGB only — free tier RAM limit
         _private_meta = meta
         pol, sor = _load_latest_policy_sora()
         if pol:   _private_meta['latest_policy'] = pol
