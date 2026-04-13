@@ -28,14 +28,14 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.metrics import mean_absolute_error, r2_score
+import gc
 from xgboost import XGBRegressor
 from lightgbm import LGBMRegressor
-from catboost import CatBoostRegressor
 
 MODELS_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
 TEMP_PATH   = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_progress.csv')
 RESOURCE_ID = 'f1765b54-a209-4718-8d38-a39237f502b3'
-MIN_YEAR    = 2019
+MIN_YEAR    = 2021
 
 CATEGORICAL_COLS = ["town", "flat_type", "flat_model"]
 # Full feature set matching the notebook (lat/lon + policy + SORA)
@@ -370,9 +370,16 @@ def train(from_db=False):
         'lgbm': LGBMRegressor(n_estimators=200, learning_rate=0.05, num_leaves=31,
                                subsample=0.8, colsample_bytree=0.8, random_state=42,
                                verbose=-1),
-        'cat':  CatBoostRegressor(iterations=200, learning_rate=0.05, depth=5,
-                                   loss_function='RMSE', random_seed=42, verbose=0),
     }
+
+    # Compute medians for inference meta before freeing the df
+    medians = (
+        df_feat.groupby(['town', 'flat_type'])[['remaining_lease_years', 'flat_age_years', 'lat', 'lon']]
+        .median().to_dict('index')
+    )
+
+    # Free the full feature df now that train/test arrays are ready
+    del df_feat; gc.collect()
 
     trained = {}
     for name, model in model_specs.items():
@@ -384,18 +391,15 @@ def train(from_db=False):
         r2    = r2_score(y_test, preds)
         print(f"  {name}: MAE=S${mae:,.0f}  R²={r2:.4f}")
         trained[name] = pipe
-        # Save each pipeline immediately (checkpoint)
         joblib.dump(pipe, os.path.join(MODELS_DIR, f'{name}_pipeline.joblib'))
         print(f"  Saved {name}_pipeline.joblib")
+        gc.collect()
 
     ens = np.mean([np.exp(p.predict(X_test)) for p in trained.values()], axis=0)
     print(f"Ensemble: MAE=S${mean_absolute_error(y_test, ens):,.0f}  R²={r2_score(y_test, ens):.4f}")
 
     # 6. Meta: store medians + latest policy/SORA for inference
-    medians = (
-        df_feat.groupby(['town', 'flat_type'])[['remaining_lease_years', 'flat_age_years', 'lat', 'lon']]
-        .median().to_dict('index')
-    )
+    # (medians already computed above before df_feat was freed)
 
     # Latest policy for inference
     latest_policy = {'direction': 0.0, 'severity': 0.0, 'policy_impact': 0.0,
