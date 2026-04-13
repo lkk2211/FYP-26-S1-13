@@ -35,7 +35,7 @@ from catboost import CatBoostRegressor
 MODELS_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
 TEMP_PATH   = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_progress.csv')
 RESOURCE_ID = 'f1765b54-a209-4718-8d38-a39237f502b3'
-MIN_YEAR    = 2017
+MIN_YEAR    = 2019
 
 CATEGORICAL_COLS = ["town", "flat_type", "flat_model"]
 # Full feature set matching the notebook (lat/lon + policy + SORA)
@@ -121,11 +121,12 @@ def download_hdb_data():
 
 def load_hdb_from_db():
     try:
-        rows = _query("""
+        rows = _query(f"""
             SELECT month, town, flat_type, flat_model, floor_area_sqm,
                    storey_range, resale_price, remaining_lease, lease_commence_date,
                    block, street_name
             FROM resale_flat_prices
+            WHERE month >= '{MIN_YEAR}-01'
         """)
         if not rows:
             return None
@@ -363,13 +364,13 @@ def train(from_db=False):
     ])
 
     model_specs = {
-        'xgb':  XGBRegressor(n_estimators=300, learning_rate=0.05, max_depth=6,
+        'xgb':  XGBRegressor(n_estimators=200, learning_rate=0.05, max_depth=5,
                               subsample=0.8, colsample_bytree=0.8, random_state=42,
-                              objective='reg:squarederror'),
-        'lgbm': LGBMRegressor(n_estimators=300, learning_rate=0.05, num_leaves=31,
+                              objective='reg:squarederror', tree_method='hist'),
+        'lgbm': LGBMRegressor(n_estimators=200, learning_rate=0.05, num_leaves=31,
                                subsample=0.8, colsample_bytree=0.8, random_state=42,
                                verbose=-1),
-        'cat':  CatBoostRegressor(iterations=300, learning_rate=0.05, depth=6,
+        'cat':  CatBoostRegressor(iterations=200, learning_rate=0.05, depth=5,
                                    loss_function='RMSE', random_seed=42, verbose=0),
     }
 
