@@ -2265,6 +2265,30 @@ def upload_status():
     return jsonify(job)
 
 
+_ALLOWED_MODEL_FILES = {
+    'xgb_pipeline.joblib', 'lgbm_pipeline.joblib', 'cat_pipeline.joblib', 'meta.joblib',
+    'xgb_private_pipeline.joblib', 'lgbm_private_pipeline.joblib',
+    'cat_private_pipeline.joblib', 'meta_private.joblib',
+}
+
+@app.route('/api/admin/upload-model', methods=['POST'])
+def upload_model_file():
+    """Accept a .joblib model file from Colab and hot-swap it without redeploying."""
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return jsonify({'error': 'No file provided'}), 400
+    filename = os.path.basename(f.filename)
+    if filename not in _ALLOWED_MODEL_FILES:
+        return jsonify({'error': f'Unrecognised file: {filename}. Allowed: {sorted(_ALLOWED_MODEL_FILES)}'}), 400
+    dest_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
+    os.makedirs(dest_dir, exist_ok=True)
+    dest = os.path.join(dest_dir, filename)
+    f.save(dest)
+    _predict_module.reset_model_cache()
+    print(f"[upload-model] Saved {filename} → {dest}; model cache reset")
+    return jsonify({'message': f'{filename} uploaded and model cache reloaded.'})
+
+
 @app.route('/api/admin/sync-ura', methods=['POST'])
 def sync_ura():
     """Fetch latest URA private property transactions and insert new records into ura_transactions."""

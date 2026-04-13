@@ -3,7 +3,7 @@ services:
     name: propaisg
     runtime: python
     rootDir: backend
-    buildCommand: pip install -r ../requirements.txt && python train_model.py && (python train_model_private.py || echo "Private model skipped — upload URA data via admin or set URA_ACCESS_KEY")
+    buildCommand: pip install -r ../requirements.txt && ([ -f models/xgb_pipeline.joblib ] && [ -f models/cat_pipeline.joblib ] && echo "HDB models found — skipping training" || python train_model.py) && ([ -f models/xgb_private_pipeline.joblib ] && echo "Private models found — skipping training" || (python train_model_private.py || echo "Private model skipped — upload URA data via admin or set URA_ACCESS_KEY"))
     startCommand: gunicorn server:app --bind 0.0.0.0:$PORT --timeout 300 --workers 2
     envVars:
       - key: DATABASE_URL

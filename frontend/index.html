@@ -1255,6 +1255,23 @@
                         </div>
                     </div>
 
+                    <!-- Upload Model Files (Colab-trained) -->
+                    <div class="bg-white p-10 rounded-[40px] border border-slate-100 shadow-sm">
+                        <h3 class="text-xl font-bold text-slate-900 mb-2">Upload Trained Models</h3>
+                        <p class="text-sm text-slate-500 mb-6">Upload <code>.joblib</code> model files trained externally (e.g. Google Colab) to hot-swap them without redeploying. Accepted files: <span class="font-mono text-xs">xgb_pipeline.joblib</span>, <span class="font-mono text-xs">lgbm_pipeline.joblib</span>, <span class="font-mono text-xs">cat_pipeline.joblib</span>, <span class="font-mono text-xs">meta.joblib</span> (and private equivalents).</p>
+                        <div class="flex flex-wrap gap-3 items-center">
+                            <label class="flex items-center gap-2 px-5 py-2.5 bg-slate-100 text-slate-700 rounded-xl text-sm font-semibold cursor-pointer hover:bg-slate-200 transition-all">
+                                <i data-lucide="file-up" class="w-4 h-4"></i>
+                                <span id="model-file-label">Choose .joblib file</span>
+                                <input type="file" id="model-file-input" accept=".joblib" class="hidden" onchange="document.getElementById('model-file-label').textContent = this.files[0]?.name || 'Choose .joblib file'">
+                            </label>
+                            <button onclick="handleModelUpload()" id="model-upload-btn" class="px-6 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-black transition-all flex items-center gap-2">
+                                <i data-lucide="upload" class="w-4 h-4"></i> Upload Model
+                            </button>
+                        </div>
+                        <div id="model-upload-status" class="hidden mt-4 text-sm rounded-xl p-4"></div>
+                    </div>
+
                     <!-- Record counts -->
                     <div class="bg-white p-10 rounded-[40px] border border-slate-100 shadow-sm">
                         <h3 class="text-xl font-bold text-slate-900 mb-2">Dataset Record Counts</h3>

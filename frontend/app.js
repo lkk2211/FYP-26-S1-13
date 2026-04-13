@@ -1970,6 +1970,51 @@ async function handleUraSync() {
     lucide.createIcons();
 }
 
+// ── Upload Colab-trained model files ──────────────────────────
+async function handleModelUpload() {
+    const input  = document.getElementById('model-file-input');
+    const btn    = document.getElementById('model-upload-btn');
+    const status = document.getElementById('model-upload-status');
+    const label  = document.getElementById('model-file-label');
+    if (!input.files.length) { alert('Please select a .joblib file first.'); return; }
+    const file = input.files[0];
+    btn.disabled = true;
+    status.className = 'mt-4 text-sm rounded-xl p-4 bg-slate-50 text-slate-600';
+    status.textContent = `Uploading ${file.name}…`;
+    status.classList.remove('hidden');
+    const form = new FormData();
+    form.append('file', file);
+    try {
+        const res  = await _fetchWithRetry('/api/admin/upload-model', { method: 'POST', body: form }, { retries: 3, delayMs: 6000 });
+        const data = await res.json();
+        if (res.ok) {
+            status.className = 'mt-4 text-sm rounded-xl p-4 bg-emerald-50 text-emerald-700 font-medium';
+            status.textContent = data.message || 'Uploaded successfully.';
+            input.value = '';
+            label.textContent = 'Choose .joblib file';
+        } else {
+            status.className = 'mt-4 text-sm rounded-xl p-4 bg-rose-50 text-rose-700 font-medium';
+            status.textContent = `Upload failed: ${data.error || 'Unknown error'}`;
+        }
+    } catch (e) {
+        status.className = 'mt-4 text-sm rounded-xl p-4 bg-rose-50 text-rose-700 font-medium';
+        status.textContent = 'Network error — could not reach the server.';
+    }
+    btn.disabled = false;
+}
+
+// ── Fetch with retry (handles Render free-tier cold-start) ────
+async function _fetchWithRetry(url, opts = {}, { retries = 4, delayMs = 7000 } = {}) {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+            return await fetch(url, opts);
+        } catch (e) {
+            if (attempt === retries) throw e;
+            await new Promise(r => setTimeout(r, delayMs));
+        }
+    }
+}
+
 // ── Retrain Models ────────────────────────────────────────────
 
 let _retrainPollInterval = null;
@@ -1979,12 +2024,16 @@ async function handleRetrain(type) {
         const b = document.getElementById(`retrain-${t}-btn`);
         if (b) { b.disabled = true; b.classList.add('opacity-50'); }
     });
+    // Show a status banner so the user knows we're waiting on a cold start
+    const statusEl = document.getElementById('retrain-status') || null;
+    const _setStatus = msg => { if (statusEl) { statusEl.textContent = msg; statusEl.classList.remove('hidden'); } };
+    _setStatus('Contacting server…');
     try {
-        const res  = await fetch('/api/admin/retrain', {
+        const res  = await _fetchWithRetry('/api/admin/retrain', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ type }),
-        });
+        }, { retries: 5, delayMs: 8000 });
         const data = await res.json();
         if (!res.ok) {
             alert(`Could not start training: ${data.error || data.message || 'Unknown error'}`);
@@ -1992,7 +2041,7 @@ async function handleRetrain(type) {
             return;
         }
     } catch (e) {
-        alert('Network error — could not reach the server.');
+        alert('Network error — could not reach the server. Please wait a moment and try again (the server may be waking up).');
         _retrainEnableButtons();
         return;
     }

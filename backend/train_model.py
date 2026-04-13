@@ -31,6 +31,7 @@ from sklearn.metrics import mean_absolute_error, r2_score
 import gc
 from xgboost import XGBRegressor
 from lightgbm import LGBMRegressor
+from catboost import CatBoostRegressor
 
 MODELS_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
 TEMP_PATH   = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_progress.csv')
@@ -370,6 +371,8 @@ def train(from_db=False):
         'lgbm': LGBMRegressor(n_estimators=200, learning_rate=0.05, num_leaves=31,
                                subsample=0.8, colsample_bytree=0.8, random_state=42,
                                verbose=-1),
+        'cat':  CatBoostRegressor(iterations=200, learning_rate=0.05, depth=5,
+                                   loss_function='RMSE', random_seed=42, verbose=0),
     }
 
     # Compute medians for inference meta before freeing the df
