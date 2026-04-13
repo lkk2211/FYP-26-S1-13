@@ -2296,8 +2296,9 @@ _ALLOWED_MODEL_FILES = {
 @app.route('/api/admin/trigger-training', methods=['POST'])
 def trigger_training():
     """Dispatch a GitHub Actions workflow_dispatch event to train models externally."""
-    github_pat  = os.environ.get('GITHUB_PAT', '')
-    github_repo = os.environ.get('GITHUB_REPO', '')
+    github_pat    = os.environ.get('GITHUB_PAT', '')
+    github_repo   = os.environ.get('GITHUB_REPO', '')
+    github_branch = os.environ.get('GITHUB_BRANCH', 'main')
     if not github_pat or not github_repo:
         return jsonify({'error': 'GITHUB_PAT and GITHUB_REPO env vars are not configured on the server.'}), 400
     data       = request.get_json(force=True) or {}
@@ -2307,7 +2308,7 @@ def trigger_training():
         f'https://api.github.com/repos/{github_repo}/actions/workflows/train_models.yml/dispatches',
         headers={'Authorization': f'token {github_pat}',
                  'Accept': 'application/vnd.github.v3+json'},
-        json={'ref': 'main', 'inputs': {'model_type': model_type}},
+        json={'ref': github_branch, 'inputs': {'model_type': model_type}},
         timeout=10,
     )
     if resp.status_code == 204:
