@@ -387,42 +387,65 @@
                                         </div>
 
                                         <div class="space-y-6">
-                                            <!-- Step 1: Bedrooms -->
-                                            <div class="grid grid-cols-2 gap-8">
-                                                <div class="space-y-3">
-                                                    <div class="flex justify-between items-center">
-                                                        <label class="text-xs font-bold text-slate-700 uppercase">Bedrooms</label>
-                                                        <span id="val-bedrooms" class="text-sm font-bold text-slate-900">3</span>
+                                            <!-- HDB: Flat Type + Floor Range dropdowns -->
+                                            <div id="hdb-specs" class="space-y-4">
+                                                <div class="grid grid-cols-2 gap-4">
+                                                    <div class="space-y-1">
+                                                        <label class="text-xs font-bold text-slate-500 uppercase">Flat Type</label>
+                                                        <select id="input-flat-type" class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium appearance-none" onchange="_onFlatTypeChange()">
+                                                            <option value="1 ROOM">1 Room Flat</option>
+                                                            <option value="2 ROOM">2 Room Flat</option>
+                                                            <option value="3 ROOM">3 Room Flat</option>
+                                                            <option value="4 ROOM" selected>4 Room Flat</option>
+                                                            <option value="5 ROOM">5 Room Flat</option>
+                                                            <option value="EXECUTIVE">Executive Flat</option>
+                                                        </select>
                                                     </div>
-                                                    <input type="range" id="range-bedrooms" min="1" max="6" step="1" value="3" oninput="updateSlider('bedrooms')" />
-                                                </div>
-                                                <div class="space-y-3">
-                                                    <div class="flex justify-between items-center">
-                                                        <label class="text-xs font-bold text-slate-700 uppercase">Bathrooms</label>
-                                                        <span id="val-bathrooms" class="text-sm font-bold text-slate-900">2</span>
+                                                    <div class="space-y-1">
+                                                        <label class="text-xs font-bold text-slate-500 uppercase">Floor Range</label>
+                                                        <select id="input-floor-range" class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium appearance-none">
+                                                            <option value="10">Search address first</option>
+                                                        </select>
                                                     </div>
-                                                    <input type="range" id="range-bathrooms" min="1" max="8" step="1" value="2" oninput="updateSlider('bathrooms')" />
                                                 </div>
                                             </div>
 
-                                            <!-- Step 2: Floor Area (range updates when bedrooms change) -->
+                                            <!-- Condo: Bedrooms / Bathrooms + Floor Level slider -->
+                                            <div id="condo-specs" class="hidden space-y-6">
+                                                <div class="grid grid-cols-2 gap-8">
+                                                    <div class="space-y-3">
+                                                        <div class="flex justify-between items-center">
+                                                            <label class="text-xs font-bold text-slate-700 uppercase">Bedrooms</label>
+                                                            <span id="val-bedrooms" class="text-sm font-bold text-slate-900">3</span>
+                                                        </div>
+                                                        <input type="range" id="range-bedrooms" min="1" max="6" step="1" value="3" oninput="updateSlider('bedrooms')" />
+                                                    </div>
+                                                    <div class="space-y-3">
+                                                        <div class="flex justify-between items-center">
+                                                            <label class="text-xs font-bold text-slate-700 uppercase">Bathrooms</label>
+                                                            <span id="val-bathrooms" class="text-sm font-bold text-slate-900">2</span>
+                                                        </div>
+                                                        <input type="range" id="range-bathrooms" min="1" max="8" step="1" value="2" oninput="updateSlider('bathrooms')" />
+                                                    </div>
+                                                </div>
+                                                <div class="space-y-3">
+                                                    <div class="flex justify-between items-center">
+                                                        <label class="text-xs font-bold text-slate-700 uppercase">Floor Level</label>
+                                                        <span class="text-sm font-bold text-slate-900">Level <span id="val-floor">10</span></span>
+                                                    </div>
+                                                    <input type="range" id="range-floor" min="1" max="50" step="1" value="10" oninput="updateSlider('floor')" />
+                                                    <p id="floor-max-hint" class="text-xs text-slate-400">Max: <span id="floor-max-display">50</span> floors (from transaction data).</p>
+                                                </div>
+                                            </div>
+
+                                            <!-- Floor Area (shared — snaps to available sizes) -->
                                             <div class="space-y-3">
                                                 <div class="flex justify-between items-center">
                                                     <label class="text-xs font-bold text-slate-700 uppercase">Floor Area</label>
-                                                    <span class="text-sm font-bold text-slate-900"><span id="val-area">90</span> <span id="area-unit">sqm</span></span>
+                                                    <span class="text-sm font-bold text-slate-900" id="val-area">90 sqm / 969 sq ft</span>
                                                 </div>
                                                 <input type="range" id="range-area" min="0" max="10" step="1" value="5" oninput="updateSlider('area')" />
-                                                <p id="area-range-hint" class="text-xs text-slate-400">Select bedrooms first to see the typical size range for this flat type.</p>
-                                            </div>
-
-                                            <!-- Step 3: Floor level (max updates based on town data) -->
-                                            <div class="space-y-3">
-                                                <div class="flex justify-between items-center">
-                                                    <label class="text-xs font-bold text-slate-700 uppercase">Floor Level</label>
-                                                    <span class="text-sm font-bold text-slate-900">Level <span id="val-floor">10</span></span>
-                                                </div>
-                                                <input type="range" id="range-floor" min="1" max="50" step="1" value="10" oninput="updateSlider('floor')" />
-                                                <p id="floor-max-hint" class="text-xs text-slate-400">Max: <span id="floor-max-display">50</span> floors based on town data.</p>
+                                                <p id="area-range-hint" class="text-xs text-slate-400">Select flat type to see available sizes for this block.</p>
                                             </div>
                                         </div>
 
@@ -521,10 +544,14 @@
                                     </div>
                                 </div>
                                 
-                                <div class="grid grid-cols-1 md:grid-cols-3 gap-10 pt-10 border-t border-slate-50">
+                                <div class="grid grid-cols-2 md:grid-cols-4 gap-6 pt-10 border-t border-slate-50">
                                     <div>
                                         <p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Confidence</p>
                                         <p class="text-3xl font-bold" id="output-confidence">92%</p>
+                                    </div>
+                                    <div>
+                                        <p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Price PSF</p>
+                                        <p class="text-3xl font-bold text-violet-600" id="output-ppsf">S$520</p>
                                     </div>
                                     <div>
                                         <p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Market State</p>

@@ -73,6 +73,11 @@ function togglePredictView(mode) {
 // Available floor areas for the snapping slider (populated per postal + bedrooms)
 let _availableAreas = [];
 
+function _isHdbMode() {
+    const el = document.getElementById('input-property-type');
+    return !el || el.value === 'HDB';
+}
+
 function updateSlider(id) {
     const range   = document.getElementById('range-' + id);
     const display = document.getElementById('val-' + id);
@@ -82,7 +87,14 @@ function updateSlider(id) {
         const idx    = Math.min(parseInt(range.value), _availableAreas.length - 1);
         const actual = _availableAreas[idx];
         range.dataset.actualValue = actual;
-        if (display) display.innerText = actual.toLocaleString();
+        if (display) {
+            if (_isHdbMode()) {
+                const sqft = Math.round(actual * 10.764);
+                display.innerText = `${actual} sqm / ${sqft.toLocaleString()} sq ft`;
+            } else {
+                display.innerText = `${actual.toLocaleString()} sq ft`;
+            }
+        }
     } else {
         if (display) display.innerText = id === 'area' ? parseInt(range.value).toLocaleString() : range.value;
     }
@@ -100,14 +112,18 @@ function getAreaValue() {
 }
 
 function _onPropertyTypeChange() {
-    const propEl   = document.getElementById('input-property-type');
-    const unitEl   = document.getElementById('area-unit');
-    const hintEl   = document.getElementById('area-range-hint');
-    const isHdb    = propEl && propEl.value === 'HDB';
-    if (unitEl) unitEl.textContent = isHdb ? 'sqm' : 'sq ft';
-    if (hintEl && !_availableAreas.length) {
-        hintEl.textContent = 'Select bedrooms first to see the typical size range for this flat type.';
-    }
+    const propEl    = document.getElementById('input-property-type');
+    const isHdb     = propEl && propEl.value === 'HDB';
+    const hdbSpecs  = document.getElementById('hdb-specs');
+    const condoSpecs= document.getElementById('condo-specs');
+    if (hdbSpecs)   hdbSpecs.classList.toggle('hidden', !isHdb);
+    if (condoSpecs) condoSpecs.classList.toggle('hidden', isHdb);
+    _availableAreas = [];   // reset so slider re-snaps
+    _loadFlatSpecs();
+}
+
+function _onFlatTypeChange() {
+    _availableAreas = [];
     _loadFlatSpecs();
 }
 
@@ -116,36 +132,92 @@ const _BEDS_TO_FLAT_TYPE = {
     1: '1 ROOM', 2: '2 ROOM', 3: '3 ROOM', 4: '4 ROOM', 5: '5 ROOM', 6: 'EXECUTIVE',
 };
 
-async function _loadFlatSpecs() {
-    const bedsEl = document.getElementById('range-bedrooms');
-    const propEl = document.getElementById('input-property-type');
-    if (!bedsEl) return;
+function _storeyRangeMidpoint(range) {
+    const parts = range.split(' TO ');
+    if (parts.length === 2) return Math.round((parseInt(parts[0]) + parseInt(parts[1])) / 2);
+    return parseInt(range) || 10;
+}
 
-    const beds     = parseInt(bedsEl.value);
+function _populateFloorRanges(ranges, maxFloor) {
+    const sel = document.getElementById('input-floor-range');
+    if (!sel) return;
+    if (!ranges || ranges.length === 0) {
+        // Generate synthetic ranges up to maxFloor in steps of 3
+        ranges = [];
+        for (let lo = 1; lo <= maxFloor; lo += 3) {
+            const hi = Math.min(lo + 2, maxFloor);
+            ranges.push(`${String(lo).padStart(2,'0')} TO ${String(hi).padStart(2,'0')}`);
+        }
+    }
+    const prevVal = sel.value;
+    sel.innerHTML = ranges.map(r => {
+        // Display as "01 to 03" style (lowercase)
+        const label = r.replace(' TO ', ' to ');
+        return `<option value="${r}">${label}</option>`;
+    }).join('');
+    // Try to restore previous selection
+    if ([...sel.options].some(o => o.value === prevVal)) sel.value = prevVal;
+}
+
+async function _loadFlatSpecs() {
+    const propEl = document.getElementById('input-property-type');
     const propType = propEl ? propEl.value : 'HDB';
-    const postal   = document.getElementById('input-postal')?.value?.trim() || '';
+    const isHdb  = propType === 'HDB';
+    const postal = document.getElementById('input-postal')?.value?.trim() || '';
+
+    // Determine flat_type or bedrooms to send
+    let urlExtra = '';
+    if (isHdb) {
+        const ftEl = document.getElementById('input-flat-type');
+        const ft   = ftEl ? ftEl.value : '4 ROOM';
+        urlExtra = `&flat_type=${encodeURIComponent(ft)}`;
+    } else {
+        const bedsEl = document.getElementById('range-bedrooms');
+        const beds   = bedsEl ? parseInt(bedsEl.value) : 3;
+        urlExtra = `&bedrooms=${beds}`;
+    }
 
     try {
-        const url = `/api/property-areas?bedrooms=${beds}&property_type=${encodeURIComponent(propType)}` +
+        const url = `/api/property-areas?property_type=${encodeURIComponent(propType)}` +
+                    urlExtra +
                     (postal ? `&postal=${encodeURIComponent(postal)}` : '') +
                     (_predictBlock ? `&block=${encodeURIComponent(_predictBlock)}` : '') +
                     (_predictRoad  ? `&road=${encodeURIComponent(_predictRoad)}`  : '');
         const res  = await fetch(url);
         const data = await res.json();
 
-        const areas      = data.floor_areas || [];
-        const maxFloor   = data.max_floor   || 50;
+        const areas        = data.floor_areas   || [];
+        const maxFloor     = data.max_floor      || 50;
+        const storeyRanges = data.storey_ranges  || [];
 
-        // ── Area slider (index-based snap) ────────────────────────
+        // ── Floor range dropdown (HDB only) ──────────────────────
+        if (isHdb) _populateFloorRanges(storeyRanges, maxFloor);
+
+        // ── Floor slider (condo only) ─────────────────────────────
+        if (!isHdb) {
+            const floorRange   = document.getElementById('range-floor');
+            const floorHint    = document.getElementById('floor-max-hint');
+            const floorDisplay = document.getElementById('floor-max-display');
+            if (floorRange) {
+                floorRange.max = maxFloor;
+                if (parseInt(floorRange.value) > maxFloor) {
+                    floorRange.value = Math.max(1, Math.floor(maxFloor / 2));
+                    updateSlider('floor');
+                }
+                if (floorDisplay) floorDisplay.textContent = maxFloor;
+                if (floorHint) floorHint.textContent =
+                    `Max: ${maxFloor} floors` +
+                    (_predictTown ? ` in ${_predictTown.charAt(0) + _predictTown.slice(1).toLowerCase()}` : '') +
+                    ' (from transaction data)';
+            }
+        }
+
+        // ── Area slider (index-based snap, shared) ────────────────
         const areaRange = document.getElementById('range-area');
         const areaHint  = document.getElementById('area-range-hint');
-        const unitEl    = document.getElementById('area-unit');
-        const isHdbType = propType === 'HDB';
-        if (unitEl) unitEl.textContent = isHdbType ? 'sqm' : 'sq ft';
         if (areaRange && areas.length > 0) {
             _availableAreas = areas;
 
-            // Find index of current value's nearest match
             const curActual = parseInt(areaRange.dataset.actualValue || areas[Math.floor(areas.length / 2)]);
             const nearestIdx = areas.reduce((best, v, i) =>
                 Math.abs(v - curActual) < Math.abs(areas[best] - curActual) ? i : best, 0);
@@ -154,31 +226,18 @@ async function _loadFlatSpecs() {
             areaRange.max   = areas.length - 1;
             areaRange.step  = 1;
             areaRange.value = nearestIdx;
-            updateSlider('area');   // sets dataset.actualValue + display
+            updateSlider('area');
 
             if (areaHint) {
                 const min = areas[0], max = areas[areas.length - 1];
-                const unit = isHdbType ? 'sqm' : 'sq ft';
-                areaHint.textContent = `${areas.length} size option${areas.length > 1 ? 's' : ''}: `
-                    + `${min.toLocaleString()}–${max.toLocaleString()} ${unit}`;
+                if (isHdb) {
+                    areaHint.textContent = `${areas.length} size option${areas.length > 1 ? 's' : ''}: `
+                        + `${min}–${max} sqm (${Math.round(min*10.764).toLocaleString()}–${Math.round(max*10.764).toLocaleString()} sq ft)`;
+                } else {
+                    areaHint.textContent = `${areas.length} size option${areas.length > 1 ? 's' : ''}: `
+                        + `${min.toLocaleString()}–${max.toLocaleString()} sq ft`;
+                }
             }
-        }
-
-        // ── Floor slider ──────────────────────────────────────────
-        const floorRange   = document.getElementById('range-floor');
-        const floorHint    = document.getElementById('floor-max-hint');
-        const floorDisplay = document.getElementById('floor-max-display');
-        if (floorRange && maxFloor) {
-            floorRange.max = maxFloor;
-            if (parseInt(floorRange.value) > maxFloor) {
-                floorRange.value = Math.max(1, Math.floor(maxFloor / 2));
-                updateSlider('floor');
-            }
-            if (floorDisplay) floorDisplay.textContent = maxFloor;
-            if (floorHint) floorHint.textContent =
-                `Max: ${maxFloor} floors` +
-                (_predictTown ? ` in ${_predictTown.charAt(0) + _predictTown.slice(1).toLowerCase()}` : '') +
-                ' (from transaction data)';
         }
     } catch { /* silent */ }
 }
@@ -269,7 +328,8 @@ async function handlePostalSearch() {
                 _predictTown  = info.town      || '';
                 _predictBlock = info.block     || '';
                 _predictRoad  = info.road_name || '';
-                _loadFlatSpecs();
+                // Show/hide correct spec section
+                _onPropertyTypeChange();
             })
             .catch(() => {});
     } catch {
@@ -290,23 +350,36 @@ async function handlePredict() {
     const postal   = document.getElementById('input-postal').value;
     lastMapPostal  = postal;
     const area     = getAreaValue();
-    const bedrooms = document.getElementById('range-bedrooms').value;
-    const floor    = document.getElementById('range-floor').value;
     const propType = document.getElementById('input-property-type')?.value || 'HDB';
+    const isHdb    = propType === 'HDB';
+
+    let floor, flatType, bedrooms;
+    if (isHdb) {
+        const floorRangeSel = document.getElementById('input-floor-range');
+        const rangeVal = floorRangeSel ? floorRangeSel.value : '10';
+        floor    = _storeyRangeMidpoint(rangeVal);
+        flatType = document.getElementById('input-flat-type')?.value || '4 ROOM';
+        bedrooms = {'1 ROOM':1,'2 ROOM':2,'3 ROOM':3,'4 ROOM':4,'5 ROOM':5,'EXECUTIVE':6}[flatType] || 4;
+    } else {
+        floor    = parseInt(document.getElementById('range-floor')?.value || 10);
+        bedrooms = parseInt(document.getElementById('range-bedrooms')?.value || 3);
+        flatType = null;
+    }
 
     try {
+        const body = { postal, area, bedrooms, floor, property_type: propType };
+        if (flatType) body.flat_type = flatType;
         const response = await fetch('/api/predict', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                postal, area, bedrooms, floor,
-                property_type: propType,
-            })
+            body: JSON.stringify(body),
         });
         const data = await response.json();
 
         document.getElementById('output-price').innerText = `S$${data.estimated_value.toLocaleString()}`;
         document.getElementById('output-confidence').innerText = `${data.confidence}%`;
+        const ppsfEl = document.getElementById('output-ppsf');
+        if (ppsfEl && data.ppsf) ppsfEl.innerText = `S$${data.ppsf.toLocaleString()}`;
 
         const trendEl    = document.getElementById('output-trend');
         const trendBadge = document.getElementById('output-trend-badge');

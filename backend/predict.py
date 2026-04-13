@@ -299,15 +299,19 @@ def _geocode_postal(postal):
 # ─── ML prediction ────────────────────────────────────────────────────────────
 
 def _predict_ml(features):
-    postal   = str(features.get('postal', '')).strip().zfill(6)
+    postal    = str(features.get('postal', '')).strip().zfill(6)
     area_sqm  = float(features.get('area', 90))   # incoming value is sqm
     bedrooms  = int(features.get('bedrooms', 3))
     floor     = int(features.get('floor', 10))
 
     area_sqft = area_sqm * 10.764
 
-    # Derive flat_type from bedrooms
-    flat_type = _BEDROOMS_TO_FLAT_TYPE.get(bedrooms, 'EXECUTIVE' if bedrooms >= 6 else '5 ROOM')
+    # Accept flat_type directly (from dropdown) or derive from bedrooms
+    flat_type_in = str(features.get('flat_type', '')).strip().upper()
+    if flat_type_in and flat_type_in in _FLAT_TYPE_TO_MODEL:
+        flat_type = flat_type_in
+    else:
+        flat_type = _BEDROOMS_TO_FLAT_TYPE.get(bedrooms, 'EXECUTIVE' if bedrooms >= 6 else '5 ROOM')
     flat_model = _FLAT_TYPE_TO_MODEL.get(flat_type, 'MODEL A')
 
     # Geocode → town + lat/lon
@@ -415,11 +419,14 @@ def _predict_ml(features):
         },
     ]
 
+    ppsf = round(estimated_value / area_sqft) if area_sqft > 0 else 0
+
     return {
         "estimated_value": estimated_value,
         "min_value":        min_value,
         "max_value":        max_value,
         "confidence":       confidence,
+        "ppsf":             ppsf,
         "market_trend":     "+2.1%",
         "trend_direction":  "up",
         "market_state":     "Active",
@@ -478,11 +485,14 @@ def _predict_fallback(features):
         {"name": "Location Premium",    "score": min(loc_score + 5, 98), "label": "Very High" if loc_score >= 85 else "High","desc": f"{config['location']} is a well-established area with good infrastructure and services."},
     ]
 
+    area_sqft_fb = float(features.get('area', 1000))
+    ppsf_fb = round(estimated_value / area_sqft_fb) if area_sqft_fb > 0 else 0
     return {
         "estimated_value": estimated_value,
         "min_value":        min_value,
         "max_value":        max_value,
         "confidence":       confidence,
+        "ppsf":             ppsf_fb,
         "market_trend":     config["trend"],
         "trend_direction":  config["trend_dir"],
         "market_state":     config["market_state"],
@@ -577,6 +587,7 @@ def _predict_private_ml(features):
     confidence = round(max(68.0, min(93.0, 90.0 - cv * 200)), 1)
 
     psf = estimated_value / area_sqft if area_sqft > 0 else 0
+    ppsf = round(psf)
     location_display = {
         'CCR': 'Core Central Region', 'RCR': 'Rest of Central Region',
         'OCR': 'Outside Central Region',
@@ -590,6 +601,7 @@ def _predict_private_ml(features):
         "min_value":  int(estimated_value * 0.91),
         "max_value":  int(estimated_value * 1.09),
         "confidence": confidence,
+        "ppsf":       ppsf,
         "market_trend":    "+2.3%",
         "trend_direction": "up",
         "market_state":    "Active",
@@ -674,6 +686,7 @@ def _predict_fallback_condo(features):
         "min_value":  int(estimated_value * 0.91),
         "max_value":  int(estimated_value * 1.09),
         "confidence": 78.0,
+        "ppsf":       round(estimated_value / area_sqft) if area_sqft > 0 else 0,
         "market_trend":    "+2.1%", "trend_direction": "up",
         "market_state":    "Active",
         "location":        location_display,

@@ -1832,10 +1832,12 @@ def property_areas():
     }
 
     _BEDS_TO_FLAT = {1:'1 ROOM',2:'2 ROOM',3:'3 ROOM',4:'4 ROOM',5:'5 ROOM',6:'EXECUTIVE'}
-    flat_type = _BEDS_TO_FLAT.get(bedrooms, '3 ROOM')
+    flat_type_param = request.args.get('flat_type', '').strip().upper()
+    flat_type = flat_type_param if flat_type_param in _BEDS_TO_FLAT.values() else _BEDS_TO_FLAT.get(bedrooms, '3 ROOM')
 
-    floor_areas = []
-    max_floor   = 50
+    floor_areas   = []
+    max_floor     = 50
+    storey_ranges = []
 
     try:
         conn = get_db()
@@ -1882,6 +1884,25 @@ def property_areas():
             if top_floors:
                 max_floor = max(top_floors)
 
+            # Distinct storey ranges for the floor range dropdown
+            if block and road:
+                cur.execute(_q(
+                    "SELECT DISTINCT storey_range FROM resale_flat_prices "
+                    "WHERE flat_type = ? AND UPPER(block) = ? AND UPPER(street_name) LIKE ? "
+                    "AND storey_range LIKE '% TO %' ORDER BY storey_range"
+                ), (flat_type, block, f'%{road}%'))
+            else:
+                cur.execute(_q(
+                    "SELECT DISTINCT storey_range FROM resale_flat_prices "
+                    "WHERE flat_type = ? AND storey_range LIKE '% TO %' ORDER BY storey_range"
+                ), (flat_type,))
+            sr_rows = cur.fetchall()
+            raw_ranges = sorted(
+                set(str(r['storey_range'] if hasattr(r, '__getitem__') else r[0]) for r in sr_rows),
+                key=lambda s: int(s.split(' TO ')[0].strip()) if ' TO ' in s else 0
+            )
+            storey_ranges = raw_ranges
+
         else:  # Condominium
             sector   = postal[:2] if len(postal) >= 2 else ''
             district = _SECTOR_TO_DISTRICT.get(sector, '')
@@ -1927,7 +1948,7 @@ def property_areas():
         else:
             floor_areas = _CONDO_PRESETS.get(bedrooms, _CONDO_PRESETS[3])
 
-    return jsonify({'floor_areas': floor_areas, 'max_floor': int(max_floor)})
+    return jsonify({'floor_areas': floor_areas, 'max_floor': int(max_floor), 'storey_ranges': storey_ranges})
 
 
 @app.route('/api/admin/upload-transactions', methods=['POST'])
