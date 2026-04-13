@@ -1,0 +1,88 @@
+name: Train ML Models
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_type:
+        description: 'Which model(s) to train'
+        required: true
+        default: 'hdb'
+        type: choice
+        options:
+          - hdb
+          - private
+          - both
+
+permissions:
+  contents: write   # needed to commit model files back to the repo
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install psycopg2-binary pandas numpy scikit-learn joblib xgboost lightgbm catboost requests
+
+      # ── HDB model ────────────────────────────────────────────────────────────
+      - name: Train HDB model
+        if: inputs.model_type == 'hdb' || inputs.model_type == 'both'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python backend/train_model.py
+
+      - name: Upload HDB models to Render
+        if: inputs.model_type == 'hdb' || inputs.model_type == 'both'
+        env:
+          RENDER_URL: ${{ secrets.RENDER_URL }}
+          MODEL_UPLOAD_SECRET: ${{ secrets.MODEL_UPLOAD_SECRET }}
+        run: |
+          for fname in xgb_pipeline.joblib lgbm_pipeline.joblib cat_pipeline.joblib meta.joblib; do
+            echo "Uploading $fname ..."
+            curl -sf -X POST "$RENDER_URL/api/admin/upload-model" \
+              -H "X-Upload-Secret: $MODEL_UPLOAD_SECRET" \
+              -F "file=@backend/models/$fname"
+            echo " done"
+          done
+
+      # ── Private model ─────────────────────────────────────────────────────────
+      - name: Train Private model
+        if: inputs.model_type == 'private' || inputs.model_type == 'both'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          URA_ACCESS_KEY: ${{ secrets.URA_ACCESS_KEY }}
+        run: python backend/train_model_private.py
+
+      - name: Upload Private models to Render
+        if: inputs.model_type == 'private' || inputs.model_type == 'both'
+        env:
+          RENDER_URL: ${{ secrets.RENDER_URL }}
+          MODEL_UPLOAD_SECRET: ${{ secrets.MODEL_UPLOAD_SECRET }}
+        run: |
+          for fname in xgb_private_pipeline.joblib lgbm_private_pipeline.joblib cat_private_pipeline.joblib meta_private.joblib; do
+            echo "Uploading $fname ..."
+            curl -sf -X POST "$RENDER_URL/api/admin/upload-model" \
+              -H "X-Upload-Secret: $MODEL_UPLOAD_SECRET" \
+              -F "file=@backend/models/$fname"
+            echo " done"
+          done
+
+      # ── Commit models back to repo so they survive Render redeploys ──────────
+      - name: Commit trained models to repo
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add backend/models/*.joblib
+          git diff --staged --quiet && echo "No model changes to commit" || \
+            git commit -m "chore: update trained model files [skip ci]"
+          git push

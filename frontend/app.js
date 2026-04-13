@@ -1963,6 +1963,93 @@ async function handleUraSync() {
 }
 
 // ── Model management ──────────────────────────────────────────
+
+let _trainingPollInterval = null;
+let _trainingPollStart    = null;
+
+async function handleTriggerTraining(type) {
+    ['hdb', 'private', 'both'].forEach(t => {
+        const b = document.getElementById(`trigger-${t}-btn`);
+        if (b) { b.disabled = true; b.classList.add('opacity-50'); }
+    });
+    const status = document.getElementById('trigger-training-status');
+    status.className = 'mt-3 text-xs rounded-xl p-3 bg-slate-100 text-slate-600';
+    status.textContent = 'Contacting GitHub API…';
+    status.classList.remove('hidden');
+    try {
+        const res  = await _fetchWithRetry('/api/admin/trigger-training', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type }),
+        }, { retries: 3, delayMs: 6000 });
+        const data = await res.json();
+        if (res.ok) {
+            status.className = 'mt-3 text-xs rounded-xl p-3 bg-emerald-50 text-emerald-700';
+            status.textContent = `Queued on GitHub Actions. Training takes ~10–15 min — the status panel will update automatically when done.`;
+            _startTrainingPoll();
+        } else {
+            status.className = 'mt-3 text-xs rounded-xl p-3 bg-rose-50 text-rose-700';
+            status.textContent = `Error: ${data.error || 'Unknown error'}`;
+            _triggerEnableButtons();
+        }
+    } catch (e) {
+        status.className = 'mt-3 text-xs rounded-xl p-3 bg-rose-50 text-rose-700';
+        status.textContent = 'Network error — could not reach the server.';
+        _triggerEnableButtons();
+    }
+}
+
+function _triggerEnableButtons() {
+    ['hdb', 'private', 'both'].forEach(t => {
+        const b = document.getElementById(`trigger-${t}-btn`);
+        if (b) { b.disabled = false; b.classList.remove('opacity-50'); }
+    });
+}
+
+function _startTrainingPoll() {
+    if (_trainingPollInterval) clearInterval(_trainingPollInterval);
+    _trainingPollStart = Date.now();
+    // snapshot trained_at before we started so we can detect a new model
+    let _prevTrainedAt = null;
+    fetch('/api/admin/model-status').then(r => r.json()).then(d => {
+        _prevTrainedAt = d?.hdb?.trained_at || d?.private?.trained_at || null;
+    }).catch(() => {});
+
+    _trainingPollInterval = setInterval(async () => {
+        const elapsed = Math.round((Date.now() - _trainingPollStart) / 60000);
+        const status  = document.getElementById('trigger-training-status');
+
+        if (elapsed >= 25) {
+            clearInterval(_trainingPollInterval); _trainingPollInterval = null;
+            _triggerEnableButtons();
+            if (status) {
+                status.className  = 'mt-3 text-xs rounded-xl p-3 bg-amber-50 text-amber-700';
+                status.textContent = 'Timed out waiting for GitHub Actions (25 min). Check the Actions tab in your repo.';
+            }
+            return;
+        }
+
+        try {
+            const res  = await fetch('/api/admin/model-status');
+            const data = await res.json();
+            loadModelStatus();  // refresh dots
+            // detect a newer trained_at vs what we had before triggering
+            const newAt = data?.hdb?.trained_at || data?.private?.trained_at || null;
+            if (newAt && newAt !== _prevTrainedAt) {
+                clearInterval(_trainingPollInterval); _trainingPollInterval = null;
+                _triggerEnableButtons();
+                if (status) {
+                    status.className  = 'mt-3 text-xs rounded-xl p-3 bg-emerald-50 text-emerald-700 font-medium';
+                    status.textContent = `Training complete! Models updated — check the status panel.`;
+                }
+                return;
+            }
+        } catch (_) {}
+
+        if (status) status.textContent = `Queued on GitHub Actions — ${elapsed} min elapsed, waiting for models…`;
+    }, 30000);
+}
+
 async function loadModelStatus() {
     try {
         const res  = await fetch('/api/admin/model-status');

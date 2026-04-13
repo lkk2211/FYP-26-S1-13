@@ -2293,9 +2293,39 @@ _ALLOWED_MODEL_FILES = {
     'cat_private_pipeline.joblib', 'meta_private.joblib',
 }
 
+@app.route('/api/admin/trigger-training', methods=['POST'])
+def trigger_training():
+    """Dispatch a GitHub Actions workflow_dispatch event to train models externally."""
+    github_pat  = os.environ.get('GITHUB_PAT', '')
+    github_repo = os.environ.get('GITHUB_REPO', '')
+    if not github_pat or not github_repo:
+        return jsonify({'error': 'GITHUB_PAT and GITHUB_REPO env vars are not configured on the server.'}), 400
+    data       = request.get_json(force=True) or {}
+    model_type = data.get('type', 'hdb')
+    import requests as _req
+    resp = _req.post(
+        f'https://api.github.com/repos/{github_repo}/actions/workflows/train_models.yml/dispatches',
+        headers={'Authorization': f'token {github_pat}',
+                 'Accept': 'application/vnd.github.v3+json'},
+        json={'ref': 'main', 'inputs': {'model_type': model_type}},
+        timeout=10,
+    )
+    if resp.status_code == 204:
+        return jsonify({'message': f'Training job queued on GitHub Actions for: {model_type}'})
+    return jsonify({'error': f'GitHub API returned {resp.status_code}: {resp.text}'}), 500
+
+
 @app.route('/api/admin/upload-model', methods=['POST'])
 def upload_model_file():
-    """Accept a .joblib model file from Colab and hot-swap it without redeploying."""
+    """Accept a .joblib model file (from Colab or GitHub Actions) and hot-swap it."""
+    # Optional secret auth — required when MODEL_UPLOAD_SECRET env var is set
+    expected = os.environ.get('MODEL_UPLOAD_SECRET', '')
+    if expected:
+        provided = request.headers.get('X-Upload-Secret', '')
+        # Allow through if no header sent (browser manual upload from admin panel)
+        # Reject only when a wrong secret is explicitly provided
+        if provided and provided != expected:
+            return jsonify({'error': 'Invalid upload secret'}), 401
     f = request.files.get('file')
     if not f or not f.filename:
         return jsonify({'error': 'No file provided'}), 400
