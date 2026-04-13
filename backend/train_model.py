@@ -161,7 +161,7 @@ def load_sora_from_db():
         df['date'] = pd.to_datetime(df['publication_date'], errors='coerce')
         df['sora_3m'] = pd.to_numeric(df['compound_sora_3m'], errors='coerce')
         df = df.dropna(subset=['date', 'sora_3m'])
-        df['month'] = df['date'].dt.to_period('M').dt.to_timestamp()
+        df['month'] = df['date'].dt.to_period('M').dt.to_timestamp().astype('datetime64[s]')
         return df.groupby('month', as_index=False)['sora_3m'].mean().rename(columns={'sora_3m': 'sora'})
     except Exception as e:
         print(f"  sora_rates load error: {e}")
@@ -209,7 +209,7 @@ def engineer_features(df, policy_df, sora_df, geo_df):
     df = df.copy()
 
     # Month / time features
-    df['month'] = pd.to_datetime(df['month'].astype(str).str[:7] + '-01')
+    df['month'] = pd.to_datetime(df['month'].astype(str).str[:7] + '-01').astype('datetime64[s]')
     df['year']  = df['month'].dt.year
     df['quarter'] = df['month'].dt.quarter
     df['time_idx_raw'] = df['year'] * 12 + df['month'].dt.month
@@ -233,7 +233,7 @@ def engineer_features(df, policy_df, sora_df, geo_df):
     # ── Policy merge (merge_asof backward) ──────────────────────────────────
     if policy_df is not None and len(policy_df) > 0:
         pol = policy_df.copy()
-        pol['effective_month'] = pd.to_datetime(pol['effective_month'], errors='coerce')
+        pol['effective_month'] = pd.to_datetime(pol['effective_month'], errors='coerce').astype('datetime64[s]')
         pol['direction'] = pd.to_numeric(pol['direction'], errors='coerce').fillna(0)
         pol['severity']  = pd.to_numeric(pol['severity'],  errors='coerce').fillna(0)
         pol = pol.dropna(subset=['effective_month']).sort_values('effective_month')
