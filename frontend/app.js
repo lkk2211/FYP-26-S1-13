@@ -1928,15 +1928,7 @@ async function loadDataTabStats() {
         }
     } catch (e) { /* silent */ }
 
-    // Refresh retrain status dots
-    try {
-        const res  = await fetch('/api/admin/retrain-status');
-        const data = await res.json();
-        const anyRunning = _updateRetrainStatusUI(data);
-        if (anyRunning && !_retrainPollInterval) {
-            _retrainPollInterval = setInterval(_pollRetrainStatus, 3000);
-        }
-    } catch (e) { /* silent */ }
+    loadModelStatus();
 }
 
 // ── Admin: URA Sync ───────────────────────────────────────────
@@ -1970,7 +1962,36 @@ async function handleUraSync() {
     lucide.createIcons();
 }
 
-// ── Upload Colab-trained model files ──────────────────────────
+// ── Model management ──────────────────────────────────────────
+async function loadModelStatus() {
+    try {
+        const res  = await fetch('/api/admin/model-status');
+        const data = await res.json();
+        for (const [key, info] of Object.entries(data)) {
+            const dot   = document.getElementById(`model-${key}-dot`);
+            const state = document.getElementById(`model-${key}-state`);
+            const date  = document.getElementById(`model-${key}-date`);
+            if (!dot) continue;
+            if (info.live) {
+                dot.className     = 'w-2.5 h-2.5 rounded-full bg-emerald-500';
+                state.textContent = 'Live';
+                state.className   = 'text-xs font-bold text-emerald-600';
+                if (info.trained_at) {
+                    const d = new Date(info.trained_at);
+                    date.textContent = 'Last updated: ' + d.toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' });
+                } else {
+                    date.textContent = 'Last updated: unknown';
+                }
+            } else {
+                dot.className     = 'w-2.5 h-2.5 rounded-full bg-rose-400';
+                state.textContent = 'Not loaded';
+                state.className   = 'text-xs font-bold text-rose-500';
+                date.textContent  = 'No model file found';
+            }
+        }
+    } catch (e) { /* silent */ }
+}
+
 async function handleModelUpload() {
     const input  = document.getElementById('model-file-input');
     const btn    = document.getElementById('model-upload-btn');
@@ -1979,7 +2000,7 @@ async function handleModelUpload() {
     if (!input.files.length) { alert('Please select a .joblib file first.'); return; }
     const file = input.files[0];
     btn.disabled = true;
-    status.className = 'mt-4 text-sm rounded-xl p-4 bg-slate-50 text-slate-600';
+    status.className = 'mt-3 text-sm rounded-xl p-3 bg-slate-100 text-slate-600';
     status.textContent = `Uploading ${file.name}…`;
     status.classList.remove('hidden');
     const form = new FormData();
@@ -1988,16 +2009,17 @@ async function handleModelUpload() {
         const res  = await _fetchWithRetry('/api/admin/upload-model', { method: 'POST', body: form }, { retries: 3, delayMs: 6000 });
         const data = await res.json();
         if (res.ok) {
-            status.className = 'mt-4 text-sm rounded-xl p-4 bg-emerald-50 text-emerald-700 font-medium';
+            status.className = 'mt-3 text-sm rounded-xl p-3 bg-emerald-50 text-emerald-700 font-medium';
             status.textContent = data.message || 'Uploaded successfully.';
             input.value = '';
             label.textContent = 'Choose .joblib file';
+            loadModelStatus();
         } else {
-            status.className = 'mt-4 text-sm rounded-xl p-4 bg-rose-50 text-rose-700 font-medium';
+            status.className = 'mt-3 text-sm rounded-xl p-3 bg-rose-50 text-rose-700 font-medium';
             status.textContent = `Upload failed: ${data.error || 'Unknown error'}`;
         }
     } catch (e) {
-        status.className = 'mt-4 text-sm rounded-xl p-4 bg-rose-50 text-rose-700 font-medium';
+        status.className = 'mt-3 text-sm rounded-xl p-3 bg-rose-50 text-rose-700 font-medium';
         status.textContent = 'Network error — could not reach the server.';
     }
     btn.disabled = false;
@@ -2015,92 +2037,6 @@ async function _fetchWithRetry(url, opts = {}, { retries = 4, delayMs = 7000 } =
     }
 }
 
-// ── Retrain Models ────────────────────────────────────────────
-
-let _retrainPollInterval = null;
-
-async function handleRetrain(type) {
-    ['hdb', 'both', 'private'].forEach(t => {
-        const b = document.getElementById(`retrain-${t}-btn`);
-        if (b) { b.disabled = true; b.classList.add('opacity-50'); }
-    });
-    // Show a status banner so the user knows we're waiting on a cold start
-    const statusEl = document.getElementById('retrain-status') || null;
-    const _setStatus = msg => { if (statusEl) { statusEl.textContent = msg; statusEl.classList.remove('hidden'); } };
-    _setStatus('Contacting server…');
-    try {
-        const res  = await _fetchWithRetry('/api/admin/retrain', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ type }),
-        }, { retries: 5, delayMs: 8000 });
-        const data = await res.json();
-        if (!res.ok) {
-            alert(`Could not start training: ${data.error || data.message || 'Unknown error'}`);
-            _retrainEnableButtons();
-            return;
-        }
-    } catch (e) {
-        alert('Network error — could not reach the server. Please wait a moment and try again (the server may be waking up).');
-        _retrainEnableButtons();
-        return;
-    }
-    // Start polling
-    if (_retrainPollInterval) clearInterval(_retrainPollInterval);
-    _retrainPollInterval = setInterval(_pollRetrainStatus, 3000);
-    _pollRetrainStatus();
-}
-
-async function _pollRetrainStatus() {
-    try {
-        const res  = await fetch('/api/admin/retrain-status');
-        const data = await res.json();
-        const anyRunning = _updateRetrainStatusUI(data);
-        if (!anyRunning) {
-            clearInterval(_retrainPollInterval);
-            _retrainPollInterval = null;
-            _retrainEnableButtons();
-        }
-    } catch (_) {}
-}
-
-function _updateRetrainStatusUI(data) {
-    let anyRunning = false;
-    for (const [key, info] of Object.entries(data)) {
-        const dot   = document.getElementById(`retrain-${key}-dot`);
-        const state = document.getElementById(`retrain-${key}-state`);
-        const msg   = document.getElementById(`retrain-${key}-msg`);
-        if (!dot) continue;
-        const s = info.state;
-        if (s === 'running') {
-            dot.className   = 'w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse';
-            state.textContent = 'Training…';
-            state.className   = 'text-xs font-bold text-amber-600';
-            anyRunning = true;
-        } else if (s === 'success') {
-            dot.className   = 'w-2.5 h-2.5 rounded-full bg-emerald-500';
-            state.textContent = `Done · ${info.finished_at || ''}`;
-            state.className   = 'text-xs font-bold text-emerald-600';
-        } else if (s === 'error') {
-            dot.className   = 'w-2.5 h-2.5 rounded-full bg-rose-500';
-            state.textContent = `Error · ${info.finished_at || ''}`;
-            state.className   = 'text-xs font-bold text-rose-600';
-        } else {
-            dot.className   = 'w-2.5 h-2.5 rounded-full bg-slate-300';
-            state.textContent = 'Idle';
-            state.className   = 'text-xs font-bold text-slate-500';
-        }
-        if (msg) msg.textContent = info.message || '';
-    }
-    return anyRunning;
-}
-
-function _retrainEnableButtons() {
-    ['hdb', 'both', 'private'].forEach(t => {
-        const b = document.getElementById(`retrain-${t}-btn`);
-        if (b) { b.disabled = false; b.classList.remove('opacity-50'); }
-    });
-}
 
 // ── Auth ─────────────────────────────────────────────────────
 let currentUser = null;

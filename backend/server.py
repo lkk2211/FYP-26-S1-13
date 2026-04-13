@@ -2265,6 +2265,28 @@ def upload_status():
     return jsonify(job)
 
 
+@app.route('/api/admin/model-status', methods=['GET'])
+def model_status():
+    """Return live status + trained_at for HDB and private models."""
+    import joblib as _jl
+    _mdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
+    def _check(xgb_file, meta_file):
+        live = os.path.exists(os.path.join(_mdir, xgb_file)) and \
+               os.path.exists(os.path.join(_mdir, meta_file))
+        trained_at = None
+        if live:
+            try:
+                m = _jl.load(os.path.join(_mdir, meta_file))
+                trained_at = m.get('trained_at')
+            except Exception:
+                pass
+        return {'live': live, 'trained_at': trained_at}
+    return jsonify({
+        'hdb':     _check('xgb_pipeline.joblib',         'meta.joblib'),
+        'private': _check('xgb_private_pipeline.joblib', 'meta_private.joblib'),
+    })
+
+
 _ALLOWED_MODEL_FILES = {
     'xgb_pipeline.joblib', 'lgbm_pipeline.joblib', 'cat_pipeline.joblib', 'meta.joblib',
     'xgb_private_pipeline.joblib', 'lgbm_private_pipeline.joblib',
