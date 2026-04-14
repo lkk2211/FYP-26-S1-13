@@ -1788,6 +1788,7 @@ def property_areas():
     property_type = request.args.get('property_type', 'HDB')
     block         = request.args.get('block', '').strip().upper()
     road          = request.args.get('road', '').strip().upper()
+    town          = request.args.get('town', '').strip().upper()
 
     # Postal sector → URA postal district mapping (first 2 postal digits)
     _SECTOR_TO_DISTRICT = {
@@ -1854,7 +1855,7 @@ def property_areas():
                 return sorted(set(float(r['floor_area_sqm'] if hasattr(r, '__getitem__') else r[0])
                                   for r in rows if (r['floor_area_sqm'] if hasattr(r, '__getitem__') else r[0])))
 
-            # Helper: try block+road → block-only → flat_type-wide (street names differ between OneMap and DB)
+            # Helper: try block+road → block-only → block+town → town → flat_type-wide
             def _fetch_hdb_areas_cascade(block, road, flat_type):
                 if block and road:
                     r = _fetch_hdb_areas("AND UPPER(block) = ? AND UPPER(street_name) LIKE ?",
@@ -1862,6 +1863,12 @@ def property_areas():
                     if r: return r
                 if block:
                     r = _fetch_hdb_areas("AND UPPER(block) = ?", (flat_type, block))
+                    if r: return r
+                if block and town:
+                    r = _fetch_hdb_areas("AND UPPER(block) = ? AND UPPER(town) = ?", (flat_type, block, town))
+                    if r: return r
+                if town:
+                    r = _fetch_hdb_areas("AND UPPER(town) = ?", (flat_type, town))
                     if r: return r
                 return _fetch_hdb_areas("", (flat_type,))
 
@@ -1885,6 +1892,10 @@ def property_areas():
                                          (flat_type, block, f'%{road}%'))
             if not storeys and block:
                 storeys = _fetch_storeys("AND UPPER(block) = ?", (flat_type, block))
+            if not storeys and block and town:
+                storeys = _fetch_storeys("AND UPPER(block) = ? AND UPPER(town) = ?", (flat_type, block, town))
+            if not storeys and town:
+                storeys = _fetch_storeys("AND UPPER(town) = ?", (flat_type, town))
             if not storeys:
                 storeys = _fetch_storeys("", (flat_type,))
 

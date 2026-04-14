@@ -182,7 +182,8 @@ async function _loadFlatSpecs() {
                     urlExtra +
                     (postal ? `&postal=${encodeURIComponent(postal)}` : '') +
                     (_predictBlock ? `&block=${encodeURIComponent(_predictBlock)}` : '') +
-                    (_predictRoad  ? `&road=${encodeURIComponent(_predictRoad)}`  : '');
+                    (_predictRoad  ? `&road=${encodeURIComponent(_predictRoad)}`  : '') +
+                    (_predictTown  ? `&town=${encodeURIComponent(_predictTown)}`  : '');
         const res  = await fetch(url);
         const data = await res.json();
 
