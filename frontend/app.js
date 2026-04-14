@@ -367,7 +367,7 @@ async function handlePredict() {
     }
 
     try {
-        const body = { postal, area, bedrooms, floor, property_type: propType };
+        const body = { postal, area, bedrooms, floor, property_type: propType, town: _predictTown };
         if (flatType) body.flat_type = flatType;
         const response = await fetch('/api/predict', {
             method: 'POST',

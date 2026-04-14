@@ -314,10 +314,15 @@ def _predict_ml(features):
         flat_type = _BEDROOMS_TO_FLAT_TYPE.get(bedrooms, 'EXECUTIVE' if bedrooms >= 6 else '5 ROOM')
     flat_model = _FLAT_TYPE_TO_MODEL.get(flat_type, 'MODEL A')
 
-    # Geocode → town + lat/lon
+    # Geocode → town + lat/lon; fall back to town provided by frontend if geocoding fails
+    provided_town = str(features.get('town', '')).strip().upper()
     town, lat, lon = _geocode_postal(postal)
     if not town:
-        return None  # fall back to rule-based
+        if provided_town:
+            town = provided_town   # use town from property_lookup (already resolved on the frontend)
+            lat, lon = None, None
+        else:
+            return None  # fall back to rule-based
 
     # Time features
     now = datetime.now()
@@ -449,20 +454,34 @@ def _predict_ml(features):
 
 def _predict_fallback(features):
     postal = str(features.get('postal', '000000')).strip().zfill(6)
-    area   = float(features.get('area', 1000))
+    area   = float(features.get('area', 90))     # sqm
     beds   = int(features.get('bedrooms', 3))
     floor  = int(features.get('floor', 10))
 
-    config = POSTAL_CONFIG.get(postal, DEFAULT_CONFIG)
+    # Build a better config using the town the frontend already resolved
+    provided_town = str(features.get('town', '')).strip().upper()
+    config = POSTAL_CONFIG.get(postal)
+    if config is None:
+        if provided_town:
+            location_display = _TOWN_DISPLAY.get(provided_town, provided_town.title())
+            config = {
+                **DEFAULT_CONFIG,
+                "location": location_display,
+                "district": f"HDB {location_display}",
+                "property_type": "HDB",
+            }
+        else:
+            config = DEFAULT_CONFIG
+    area_sqft = area * 10.764   # area is in sqm
     psf = config["base_psf"]
     floor_pct = 0.009 if config["property_type"] == "Condominium" else 0.006
     psf *= (1 + floor_pct * max(floor - 1, 0))
     psf *= (1 + 0.02 * max(beds - 2, 0))
 
-    seed_val = (int(postal) + int(area) + beds * 37 + floor * 13) % 100
+    seed_val = (int(postal) + int(area_sqft) + beds * 37 + floor * 13) % 100
     psf *= (1 + (seed_val - 50) / 1000.0)
 
-    estimated_value = int(psf * area)
+    estimated_value = int(psf * area_sqft)
     min_value = int(estimated_value * 0.92)
     max_value = int(estimated_value * 1.08)
 
@@ -485,8 +504,7 @@ def _predict_fallback(features):
         {"name": "Location Premium",    "score": min(loc_score + 5, 98), "label": "Very High" if loc_score >= 85 else "High","desc": f"{config['location']} is a well-established area with good infrastructure and services."},
     ]
 
-    area_sqft_fb = float(features.get('area', 1000))
-    ppsf_fb = round(estimated_value / area_sqft_fb) if area_sqft_fb > 0 else 0
+    ppsf_fb = round(estimated_value / area_sqft) if area_sqft > 0 else 0
     return {
         "estimated_value": estimated_value,
         "min_value":        min_value,
@@ -557,26 +575,34 @@ def _predict_private_ml(features):
     cat_cols = _private_meta.get('categorical_cols', ['property_type','market_segment','type_of_sale','postal_district'])
 
     feat = {
-        'property_type':   'Condominium',
-        'market_segment':  segment,
-        'type_of_sale':    'Resale',
-        'postal_district': district,
-        'floor_area_sqft': area_sqft,
-        'floor_level_num': float(floor),
-        'year':            year,
-        'quarter':         quarter,
-        'time_idx':        time_idx,
-        'direction':       float(pol.get('direction', 0)),
-        'severity':        float(pol.get('severity', 0)),
-        'policy_impact':   float(pol.get('policy_impact', 0)),
+        'property_type':          'Condominium',
+        'market_segment':         segment,
+        'type_of_sale':           'Resale',
+        'postal_district':        district,
+        'floor_area_sqft':        area_sqft,
+        'floor_level_num':        float(floor),
+        'tenure_remaining_years': 75.0,   # typical resale condo median remaining lease
+        'is_strata':              1.0,
+        'year':                   year,
+        'quarter':                quarter,
+        'time_idx':               time_idx,
+        'direction':              float(pol.get('direction', 0)),
+        'severity':               float(pol.get('severity', 0)),
+        'policy_impact':          float(pol.get('policy_impact', 0)),
         'months_since_policy_change': int(pol.get('months_since_policy_change', 0)),
-        'sora':            sora,
+        'sora':                   sora,
     }
 
     try:
         row = pd.DataFrame([{k: feat[k] for k in (cat_cols + num_cols) if k in feat}])
         preds_log = [p.predict(row)[0] for p in _private_pipelines]
-        ensemble_log = np.mean(preds_log)
+        # Use stacker coefficients if available (trained via stacked generalisation)
+        stacker_coef = _private_meta.get('stacker_coef')
+        stacker_int  = float(_private_meta.get('stacker_intercept', 0.0))
+        if stacker_coef and len(stacker_coef) == len(preds_log):
+            ensemble_log = float(np.dot(preds_log, stacker_coef)) + stacker_int
+        else:
+            ensemble_log = float(np.mean(preds_log))
         estimated_value = int(np.exp(ensemble_log))
     except Exception as e:
         print(f"[predict_private] inference error: {e}")

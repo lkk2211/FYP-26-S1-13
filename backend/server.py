@@ -1854,29 +1854,40 @@ def property_areas():
                 return sorted(set(float(r['floor_area_sqm'] if hasattr(r, '__getitem__') else r[0])
                                   for r in rows if (r['floor_area_sqm'] if hasattr(r, '__getitem__') else r[0])))
 
-            sqm_vals = []
-            if block and road:
-                sqm_vals = _fetch_hdb_areas(
-                    "AND UPPER(block) = ? AND UPPER(street_name) LIKE ?",
-                    (flat_type, block, f'%{road}%')
-                )
-            if not sqm_vals:
-                sqm_vals = _fetch_hdb_areas("", (flat_type,))
+            # Helper: try block+road → block-only → flat_type-wide (street names differ between OneMap and DB)
+            def _fetch_hdb_areas_cascade(block, road, flat_type):
+                if block and road:
+                    r = _fetch_hdb_areas("AND UPPER(block) = ? AND UPPER(street_name) LIKE ?",
+                                         (flat_type, block, f'%{road}%'))
+                    if r: return r
+                if block:
+                    r = _fetch_hdb_areas("AND UPPER(block) = ?", (flat_type, block))
+                    if r: return r
+                return _fetch_hdb_areas("", (flat_type,))
+
+            sqm_vals = _fetch_hdb_areas_cascade(block, road, flat_type)
 
             # Return sqm values rounded to nearest 1 sqm, deduplicated
             floor_areas = sorted(set(round(s) for s in sqm_vals))
 
-            # Max floor from storey_range — filter to specific block if possible
+            # Helper: fetch storey ranges with cascade fallback
+            def _fetch_storeys(extra_where, params):
+                cur.execute(_q(
+                    "SELECT DISTINCT storey_range FROM resale_flat_prices "
+                    f"WHERE flat_type = ? {extra_where} AND storey_range LIKE '% TO %' ORDER BY storey_range"
+                ), params)
+                rows = cur.fetchall()
+                return [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0]) for r in rows]
+
+            storeys = []
             if block and road:
-                cur.execute(_q(
-                    "SELECT storey_range FROM resale_flat_prices "
-                    "WHERE flat_type = ? AND UPPER(block) = ? AND UPPER(street_name) LIKE ? AND storey_range LIKE '% TO %'"
-                ), (flat_type, block, f'%{road}%'))
-            else:
-                cur.execute(_q(
-                    "SELECT storey_range FROM resale_flat_prices WHERE flat_type = ? AND storey_range LIKE '% TO %'"
-                ), (flat_type,))
-            storeys = [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0]) for r in cur.fetchall()]
+                storeys = _fetch_storeys("AND UPPER(block) = ? AND UPPER(street_name) LIKE ?",
+                                         (flat_type, block, f'%{road}%'))
+            if not storeys and block:
+                storeys = _fetch_storeys("AND UPPER(block) = ?", (flat_type, block))
+            if not storeys:
+                storeys = _fetch_storeys("", (flat_type,))
+
             def _top(s):
                 try: return int(s.split(' TO ')[-1].strip())
                 except: return 0
@@ -1884,21 +1895,8 @@ def property_areas():
             if top_floors:
                 max_floor = max(top_floors)
 
-            # Distinct storey ranges for the floor range dropdown
-            if block and road:
-                cur.execute(_q(
-                    "SELECT DISTINCT storey_range FROM resale_flat_prices "
-                    "WHERE flat_type = ? AND UPPER(block) = ? AND UPPER(street_name) LIKE ? "
-                    "AND storey_range LIKE '% TO %' ORDER BY storey_range"
-                ), (flat_type, block, f'%{road}%'))
-            else:
-                cur.execute(_q(
-                    "SELECT DISTINCT storey_range FROM resale_flat_prices "
-                    "WHERE flat_type = ? AND storey_range LIKE '% TO %' ORDER BY storey_range"
-                ), (flat_type,))
-            sr_rows = cur.fetchall()
             raw_ranges = sorted(
-                set(str(r['storey_range'] if hasattr(r, '__getitem__') else r[0]) for r in sr_rows),
+                set(storeys),
                 key=lambda s: int(s.split(' TO ')[0].strip()) if ' TO ' in s else 0
             )
             storey_ranges = raw_ranges

@@ -1,76 +1,99 @@
 #!/usr/bin/env python3
 """
-Train private property (condo/apartment/landed) price prediction model.
+Train private property (condo/apartment) price prediction model.
+Uses stacked generalisation: XGBoost + LightGBM + CatBoost base learners,
+then a Ridge regression meta-learner trained on out-of-fold predictions.
 
-Two data sources supported:
-  1. URA API direct download (set URA_ACCESS_KEY env var)
-  2. Uploaded ura_transactions table in the database (--from-db flag)
+Data source: ura_transactions table (uploaded via admin panel) or URA API.
 
-URA CSV column format (from ura_transactions table):
-  Project Name, Transacted Price ($), Area (SQFT), Unit Price ($ PSF),
-  Sale Date, Street Name, Type of Sale, Type of Area, Area (SQM),
-  Unit Price ($ PSM), Nett Price($), Property Type, Number of Units,
-  Tenure, Postal District, Market Segment, Floor Level
+URA API JSON format (PMI_Resi_Transaction):
+  project, marketSegment, street, x, y
+  transaction[]: contractDate, area (sqm), price, propertyType,
+                 typeOfArea, tenure, floorRange, typeOfSale, district
 
-Usage:
-    URA_ACCESS_KEY=<key> python train_model_private.py          # from URA API
-    DATABASE_URL=<url>   python train_model_private.py --from-db # from Supabase
-
-Models saved to ./models/ as:
+Models saved to ./models/:
     xgb_private_pipeline.joblib
     lgbm_private_pipeline.joblib
     cat_private_pipeline.joblib
-    meta_private.joblib
+    meta_private.joblib          ← includes stacker coefficients
 """
 import os
 import re
 import sys
+import gc
 import joblib
 import requests
 import numpy as np
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
+from sklearn.linear_model import Ridge
+from sklearn.model_selection import KFold, cross_val_predict
 from sklearn.metrics import mean_absolute_error, r2_score
 from xgboost import XGBRegressor
 from lightgbm import LGBMRegressor
 from catboost import CatBoostRegressor
 
-MODELS_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
-URA_BASE    = 'https://eservice.ura.gov.sg/uraDataService'
-ACCESS_KEY  = os.environ.get('URA_ACCESS_KEY', '')
+MODELS_DIR   = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
+URA_BASE     = 'https://eservice.ura.gov.sg/uraDataService'
+ACCESS_KEY   = os.environ.get('URA_ACCESS_KEY', '')
 DATABASE_URL = os.environ.get('DATABASE_URL', '')
+MIN_YEAR     = 2018   # only use transactions from this year onwards
 
 TEMP_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_progress_private.csv')
 
-# Features used by the model (matches HDB approach with policy + SORA)
+# ─── Feature columns ─────────────────────────────────────────────────────────
+
 CATEGORICAL_COLS = ['property_type', 'market_segment', 'type_of_sale', 'postal_district']
 NUMERICAL_COLS   = [
-    'floor_area_sqft', 'floor_level_num', 'year', 'quarter', 'time_idx',
+    'floor_area_sqft', 'floor_level_num',
+    'tenure_remaining_years', 'is_strata',
+    'year', 'quarter', 'time_idx',
     'direction', 'severity', 'policy_impact', 'months_since_policy_change', 'sora',
 ]
 ALL_FEATURES = CATEGORICAL_COLS + NUMERICAL_COLS
 
 _TYPE_OF_SALE_API = {'1': 'New Sale', '2': 'Sub Sale', '3': 'Resale'}
+_CURRENT_YEAR = datetime.now().year
+
+
+# ─── Tenure helpers ──────────────────────────────────────────────────────────
+
+def _parse_tenure(tenure_raw, sale_year=None) -> float:
+    """
+    Parse tenure string to remaining years at time of sale.
+    Examples: '99 yrs lease commencing from 2007', 'Freehold', '999 yrs lease commencing from 1950'
+    Returns 99.0 for unknown leasehold, 999.0 for freehold.
+    """
+    t = str(tenure_raw or '').strip().lower()
+    if not t or 'freehold' in t:
+        return 999.0
+    m = re.search(r'(\d+)\s+yr', t)
+    comm = re.search(r'from\s+(\d{4})', t)
+    if m and comm:
+        total = int(m.group(1))
+        start = int(comm.group(1))
+        expiry = start + total
+        base_year = sale_year if sale_year else _CURRENT_YEAR
+        return max(float(expiry - base_year), 0.0)
+    if m:
+        return float(m.group(1))
+    return 99.0
 
 
 # ─── Floor level helpers ─────────────────────────────────────────────────────
 
 def _parse_floor_level(fl_raw) -> float:
-    """Parse URA floor level strings to a numeric value."""
     fl = str(fl_raw or '').strip().upper()
-    # Basement
     if fl.startswith('B'):
         return 0.0
-    # Range like "01 TO 05" or "01-05"
     nums = re.findall(r'\d+', fl)
     if len(nums) >= 2:
         return (int(nums[0]) + int(nums[1])) / 2
     if len(nums) == 1:
         return float(nums[0])
-    # Text descriptors (from API)
     fl_lower = fl.lower()
     if 'low' in fl_lower:  return 4.0
     if 'mid' in fl_lower:  return 13.0
@@ -79,16 +102,13 @@ def _parse_floor_level(fl_raw) -> float:
 
 
 def _parse_sale_date(raw) -> tuple:
-    """Return (year, quarter) from sale date strings like 'Jan-25', '2025-01', '01/2025'."""
     raw = str(raw or '').strip()
-    # Try "Jan-25" / "Jan '25"
     m = re.match(r'([A-Za-z]{3})[\-\s\'](\d{2,4})', raw)
     if m:
         month_str, yr = m.group(1), m.group(2)
         month = datetime.strptime(month_str, '%b').month
         year  = 2000 + int(yr) if len(yr) == 2 else int(yr)
         return year, (month - 1) // 3 + 1
-    # Try "2025-01" or "01/2025"
     m2 = re.match(r'(\d{4})[-/](\d{1,2})', raw)
     if m2:
         year, month = int(m2.group(1)), int(m2.group(2))
@@ -144,10 +164,10 @@ def load_sora_from_db():
         if not rows:
             return None
         df = pd.DataFrame(rows)
-        df['date']   = pd.to_datetime(df['rate_date'], errors='coerce')
+        df['date']    = pd.to_datetime(df['rate_date'], errors='coerce')
         df['sora_3m'] = pd.to_numeric(df['published_rate'], errors='coerce')
         df = df.dropna(subset=['date', 'sora_3m'])
-        df['month'] = df['date'].dt.to_period('M').dt.to_timestamp()
+        df['month'] = df['date'].dt.to_period('M').dt.to_timestamp().astype('datetime64[s]')
         return df.groupby('month', as_index=False)['sora_3m'].mean().rename(columns={'sora_3m': 'sora'})
     except Exception as e:
         print(f"  sora_rates load error: {e}")
@@ -164,10 +184,7 @@ def _get_ura_token(access_key: str) -> str:
     )
     if r.status_code != 200:
         raise ValueError(f'Token request HTTP {r.status_code}:\n{r.text[:300]}')
-    try:
-        data = r.json()
-    except Exception:
-        raise ValueError(f'Token response not JSON:\n{r.text[:300]}')
+    data = r.json()
     if data.get('Status') != 'Success':
         raise ValueError(f'URA token error: {data}')
     return data['Result']
@@ -206,17 +223,24 @@ def download_from_ura_api(access_key: str) -> pd.DataFrame:
                     quarter = (mo - 1) // 3 + 1
                 except Exception:
                     continue
+                # URA API: area is in sqm — convert to sqft for model consistency
+                area_sqm  = float(det.get('area') or 0)
+                area_sqft = area_sqm * 10.764
+                tenure_raw = det.get('tenure', '')
+                type_of_area = str(det.get('typeOfArea') or '').strip()
                 rows.append({
-                    'property_type':   det.get('propertyType', ''),
-                    'market_segment':  market_seg,
-                    'type_of_sale':    _TYPE_OF_SALE_API.get(str(det.get('typeOfSale', '3')), 'Resale'),
-                    'postal_district': str(det.get('district', '0')).zfill(2),
-                    'floor_area_sqft': float(det.get('area') or 0),
-                    'floor_level_num': _parse_floor_level(det.get('floorRange') or det.get('floorLevel')),
-                    'year':            year,
-                    'quarter':         quarter,
-                    'sale_date':       f'{year}-{mo:02d}',
-                    'transacted_price': float(det.get('price') or 0),
+                    'property_type':          det.get('propertyType', ''),
+                    'market_segment':          market_seg,
+                    'type_of_sale':            _TYPE_OF_SALE_API.get(str(det.get('typeOfSale', '3')), 'Resale'),
+                    'postal_district':         str(det.get('district', '0')).zfill(2),
+                    'floor_area_sqft':         area_sqft,
+                    'floor_level_num':         _parse_floor_level(det.get('floorRange') or det.get('floorLevel')),
+                    'tenure_remaining_years':  _parse_tenure(tenure_raw, year),
+                    'is_strata':               1.0 if 'strata' in type_of_area.lower() else 0.0,
+                    'year':                    year,
+                    'quarter':                 quarter,
+                    'sale_date':               f'{year}-{mo:02d}',
+                    'transacted_price':        float(det.get('price') or 0),
                 })
         print(f'{len(rows):,} so far')
     return pd.DataFrame(rows)
@@ -227,8 +251,7 @@ def download_from_ura_api(access_key: str) -> pd.DataFrame:
 def load_from_db() -> pd.DataFrame:
     """Read ura_transactions table and return a flat DataFrame."""
     if DATABASE_URL:
-        import psycopg2
-        import psycopg2.extras
+        import psycopg2, psycopg2.extras
         conn = psycopg2.connect(DATABASE_URL)
         cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     else:
@@ -238,9 +261,22 @@ def load_from_db() -> pd.DataFrame:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
 
-    cur.execute("SELECT * FROM ura_transactions")
+    cur.execute(f"SELECT * FROM ura_transactions WHERE EXTRACT(YEAR FROM sale_date::date) >= {MIN_YEAR}")
     rows_raw = [dict(r) for r in cur.fetchall()]
     conn.close()
+
+    if not rows_raw:
+        # Try without year filter (SQLite or different date column)
+        conn, _ = _get_db_conn()
+        if DATABASE_URL:
+            import psycopg2.extras
+            cur2 = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        else:
+            import sqlite3
+            cur2 = conn.cursor()
+        cur2.execute("SELECT * FROM ura_transactions")
+        rows_raw = [dict(r) for r in cur2.fetchall()]
+        conn.close()
 
     if not rows_raw:
         raise ValueError('ura_transactions table is empty — upload CSV data first.')
@@ -248,18 +284,22 @@ def load_from_db() -> pd.DataFrame:
     rows = []
     for r in rows_raw:
         year, quarter = _parse_sale_date(r.get('sale_date'))
-        if year is None:
+        if year is None or year < MIN_YEAR:
             continue
+        tenure_raw   = str(r.get('tenure') or '')
+        type_of_area = str(r.get('type_of_area') or r.get('typeofarea') or '')
         rows.append({
-            'property_type':    str(r.get('property_type') or '').strip().upper(),
-            'market_segment':   str(r.get('market_segment') or '').strip().upper(),
-            'type_of_sale':     str(r.get('type_of_sale') or 'Resale').strip(),
-            'postal_district':  str(r.get('postal_district') or '0').strip().zfill(2),
-            'floor_area_sqft':  float(r.get('floor_area_sqft') or 0),
-            'floor_level_num':  _parse_floor_level(r.get('floor_level')),
-            'year':             year,
-            'quarter':          quarter,
-            'transacted_price': float(r.get('transacted_price') or 0),
+            'property_type':          str(r.get('property_type') or '').strip().upper(),
+            'market_segment':         str(r.get('market_segment') or '').strip().upper(),
+            'type_of_sale':           str(r.get('type_of_sale') or 'Resale').strip(),
+            'postal_district':        str(r.get('postal_district') or '0').strip().zfill(2),
+            'floor_area_sqft':        float(r.get('floor_area_sqft') or 0),
+            'floor_level_num':        _parse_floor_level(r.get('floor_level')),
+            'tenure_remaining_years': _parse_tenure(tenure_raw, year),
+            'is_strata':              1.0 if 'strata' in type_of_area.lower() else 0.0,
+            'year':                   year,
+            'quarter':                quarter,
+            'transacted_price':       float(r.get('transacted_price') or 0),
         })
     return pd.DataFrame(rows)
 
@@ -270,21 +310,23 @@ def engineer_features(df: pd.DataFrame, policy_df=None, sora_df=None) -> pd.Data
     df = df.copy()
     for col in ['property_type', 'market_segment', 'type_of_sale']:
         df[col] = df[col].astype(str).str.strip().str.upper().str.replace(r'\s+', ' ', regex=True)
-    df['postal_district'] = df['postal_district'].astype(str).str.strip().str.zfill(2)
-    df['floor_area_sqft'] = pd.to_numeric(df['floor_area_sqft'], errors='coerce')
-    df['floor_level_num'] = pd.to_numeric(df['floor_level_num'], errors='coerce').fillna(10)
-    df['transacted_price'] = pd.to_numeric(df['transacted_price'], errors='coerce')
-    df['time_idx_raw']    = df['year'] * 12 + df['quarter'] * 3
+    df['postal_district']        = df['postal_district'].astype(str).str.strip().str.zfill(2)
+    df['floor_area_sqft']        = pd.to_numeric(df['floor_area_sqft'], errors='coerce')
+    df['floor_level_num']        = pd.to_numeric(df['floor_level_num'], errors='coerce').fillna(10)
+    df['tenure_remaining_years'] = pd.to_numeric(df['tenure_remaining_years'], errors='coerce').fillna(99)
+    df['is_strata']              = pd.to_numeric(df['is_strata'], errors='coerce').fillna(1)
+    df['transacted_price']       = pd.to_numeric(df['transacted_price'], errors='coerce')
+    df['time_idx_raw']           = df['year'] * 12 + df['quarter'] * 3
 
-    # Build month column for policy/SORA merge (year + quarter → approx month)
+    # Month for policy/SORA merge
     df['month'] = pd.to_datetime(
         df['year'].astype(str) + '-' + ((df['quarter'] - 1) * 3 + 1).astype(str).str.zfill(2) + '-01'
-    )
+    ).astype('datetime64[s]')
 
     # Policy merge
     if policy_df is not None and len(policy_df) > 0:
         pol = policy_df.copy()
-        pol['effective_month'] = pd.to_datetime(pol['effective_month'], errors='coerce')
+        pol['effective_month'] = pd.to_datetime(pol['effective_month'], errors='coerce').astype('datetime64[s]')
         pol['direction'] = pd.to_numeric(pol['direction'], errors='coerce').fillna(0)
         pol['severity']  = pd.to_numeric(pol['severity'],  errors='coerce').fillna(0)
         pol = pol.dropna(subset=['effective_month']).sort_values('effective_month')
@@ -308,18 +350,20 @@ def engineer_features(df: pd.DataFrame, policy_df=None, sora_df=None) -> pd.Data
 
     # SORA merge
     if sora_df is not None and len(sora_df) > 0:
+        sora_df = sora_df.copy()
+        sora_df['month'] = sora_df['month'].astype('datetime64[s]')
         df = df.merge(sora_df, on='month', how='left')
-        df['sora'] = df['sora'].fillna(df['sora'].median())
+        df['sora'] = df['sora'].fillna(df['sora'].median() if 'sora' in df else 3.5)
     else:
-        df['sora'] = 0.0
+        df['sora'] = 3.5
 
-    base_cols = CATEGORICAL_COLS + ['floor_area_sqft', 'floor_level_num', 'year', 'quarter',
-                                     'direction', 'severity', 'policy_impact',
-                                     'months_since_policy_change', 'sora', 'transacted_price']
-    return df.dropna(subset=[c for c in base_cols if c != 'transacted_price'] + ['transacted_price'])
+    required = CATEGORICAL_COLS + ['floor_area_sqft', 'floor_level_num', 'tenure_remaining_years',
+                                    'is_strata', 'year', 'quarter', 'direction', 'severity',
+                                    'policy_impact', 'months_since_policy_change', 'sora', 'transacted_price']
+    return df.dropna(subset=[c for c in required if c != 'transacted_price'] + ['transacted_price'])
 
 
-# ─── Training ────────────────────────────────────────────────────────────────
+# ─── Model building ───────────────────────────────────────────────────────────
 
 def _build_pipeline(model):
     preprocessor = ColumnTransformer(transformers=[
@@ -328,6 +372,8 @@ def _build_pipeline(model):
     ])
     return Pipeline(steps=[('preprocessor', preprocessor), ('model', model)])
 
+
+# ─── Training ────────────────────────────────────────────────────────────────
 
 def train(df_raw: pd.DataFrame):
     os.makedirs(MODELS_DIR, exist_ok=True)
@@ -340,58 +386,92 @@ def train(df_raw: pd.DataFrame):
     df = engineer_features(df_raw, policy_df, sora_df)
 
     # Remove outliers
-    df = df[(df['transacted_price'] > 50_000) & (df['floor_area_sqft'] > 10)]
+    df = df[(df['transacted_price'] > 100_000) & (df['floor_area_sqft'] > 100)]
     df = df[df['transacted_price'] < 200_000_000]
     print(f'After cleaning: {len(df):,} records')
 
-    # Checkpoint
-    print(f'Saving temp checkpoint to {TEMP_PATH}...')
     df[ALL_FEATURES + ['transacted_price']].to_csv(TEMP_PATH, index=False)
 
     time_idx_min = int(df['time_idx_raw'].min())
     df['time_idx'] = df['time_idx_raw'] - time_idx_min
 
-    # Train/test split
+    # Chronological train/test split
     train_df = df[df['year'] < 2025]
     test_df  = df[df['year'] >= 2025]
     if len(test_df) < 50:
-        split   = int(len(df) * 0.9)
-        df_s    = df.sort_values('time_idx_raw')
+        df_s = df.sort_values('time_idx_raw')
+        split = int(len(df_s) * 0.9)
         train_df, test_df = df_s.iloc[:split], df_s.iloc[split:]
 
-    X_train, y_train = train_df[ALL_FEATURES], train_df['transacted_price']
-    X_test,  y_test  = test_df[ALL_FEATURES],  test_df['transacted_price']
+    X_train = train_df[ALL_FEATURES]
+    y_train = train_df['transacted_price']
+    X_test  = test_df[ALL_FEATURES]
+    y_test  = test_df['transacted_price']
+    y_train_log = np.log(y_train)
     print(f'Train: {len(X_train):,} | Test: {len(X_test):,}')
 
-    y_train_log = np.log(y_train)
-
     model_specs = {
-        'xgb_private':  XGBRegressor(n_estimators=200, learning_rate=0.05, max_depth=6,
-                                       subsample=0.8, colsample_bytree=0.8, random_state=42,
-                                       objective='reg:squarederror'),
-        'lgbm_private': LGBMRegressor(n_estimators=200, learning_rate=0.05, num_leaves=31,
-                                        subsample=0.8, colsample_bytree=0.8, random_state=42,
-                                        verbose=-1),
-        'cat_private':  CatBoostRegressor(iterations=200, learning_rate=0.05, depth=6,
-                                            loss_function='RMSE', random_seed=42, verbose=0),
+        'xgb_private':  XGBRegressor(
+            n_estimators=200, learning_rate=0.05, max_depth=6,
+            subsample=0.8, colsample_bytree=0.8, tree_method='hist',
+            random_state=42, objective='reg:squarederror', verbosity=0,
+        ),
+        'lgbm_private': LGBMRegressor(
+            n_estimators=200, learning_rate=0.05, num_leaves=31,
+            subsample=0.8, colsample_bytree=0.8, random_state=42, verbose=-1,
+        ),
+        'cat_private':  CatBoostRegressor(
+            iterations=200, learning_rate=0.05, depth=6,
+            loss_function='RMSE', random_seed=42, verbose=0,
+        ),
     }
 
+    # ── Phase 1: Out-of-fold predictions for meta-learner ────────────────────
+    print('\nPhase 1: Generating out-of-fold predictions for stacker...')
+    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    oof_preds = np.zeros((len(X_train), len(model_specs)))
+
+    for i, (name, model) in enumerate(model_specs.items()):
+        print(f'  OOF for {name}...')
+        pipe = _build_pipeline(model)
+        oof_preds[:, i] = cross_val_predict(pipe, X_train, y_train_log, cv=kf)
+        gc.collect()
+
+    # Train meta-learner (Ridge) on OOF predictions
+    stacker = Ridge(alpha=1.0, fit_intercept=True)
+    stacker.fit(oof_preds, y_train_log)
+    stacker_weights = stacker.coef_.tolist()
+    stacker_intercept = float(stacker.intercept_)
+    print(f'  Stacker weights: {[f"{w:.3f}" for w in stacker_weights]}  intercept={stacker_intercept:.4f}')
+
+    # ── Phase 2: Train final base models on full training data ───────────────
+    print('\nPhase 2: Training final base models on full training set...')
     trained = {}
     for name, model in model_specs.items():
-        print(f'Training {name}...')
+        print(f'  Training {name}...')
         pipeline = _build_pipeline(model)
         pipeline.fit(X_train, y_train_log)
-        preds = np.exp(pipeline.predict(X_test))
-        mae   = mean_absolute_error(y_test, preds)
-        r2    = r2_score(y_test, preds)
-        print(f'  {name}: MAE=S${mae:,.0f}  R²={r2:.4f}')
+
+        # Evaluate with stacker
+        test_pred_log = pipeline.predict(X_test)
+        preds_exp = np.exp(test_pred_log)
+        mae = mean_absolute_error(y_test, preds_exp)
+        r2  = r2_score(y_test, preds_exp)
+        print(f'    {name}: MAE=S${mae:,.0f}  R²={r2:.4f}')
         trained[name] = pipeline
-        # Checkpoint after each model
         joblib.dump(pipeline, os.path.join(MODELS_DIR, f'{name}_pipeline.joblib'))
+        gc.collect()
 
-    ens = np.mean([np.exp(p.predict(X_test)) for p in trained.values()], axis=0)
-    print(f'Ensemble: MAE=S${mean_absolute_error(y_test, ens):,.0f}  R²={r2_score(y_test, ens):.4f}')
+    # ── Phase 3: Evaluate stacked ensemble ───────────────────────────────────
+    test_log_preds = np.column_stack([p.predict(X_test) for p in trained.values()])
+    stacked_log = stacker.predict(test_log_preds)
+    stacked_preds = np.exp(stacked_log)
+    simple_avg    = np.exp(np.mean(test_log_preds, axis=1))
 
+    print(f'\nSimple avg: MAE=S${mean_absolute_error(y_test, simple_avg):,.0f}  R²={r2_score(y_test, simple_avg):.4f}')
+    print(f'Stacked:    MAE=S${mean_absolute_error(y_test, stacked_preds):,.0f}  R²={r2_score(y_test, stacked_preds):.4f}')
+
+    # ── Save meta ─────────────────────────────────────────────────────────────
     medians = (
         df.groupby(['postal_district', 'property_type'])[['floor_area_sqft', 'floor_level_num']]
         .median().to_dict('index')
@@ -418,15 +498,16 @@ def train(df_raw: pd.DataFrame):
         'numerical_cols':       NUMERICAL_COLS,
         'latest_policy':        latest_policy,
         'latest_sora':          latest_sora,
-        'trained_at':           datetime.utcnow().isoformat(),
+        'stacker_coef':         stacker_weights,
+        'stacker_intercept':    stacker_intercept,
+        'trained_at':           datetime.now(timezone.utc).isoformat(),
     }
 
     joblib.dump(meta, os.path.join(MODELS_DIR, 'meta_private.joblib'))
-    print('All private property models saved to', MODELS_DIR)
+    print('\nAll private property models saved to', MODELS_DIR)
 
     if os.path.exists(TEMP_PATH):
         os.remove(TEMP_PATH)
-        print('Temp checkpoint removed.')
 
 
 if __name__ == '__main__':
@@ -447,10 +528,8 @@ if __name__ == '__main__':
         key = ACCESS_KEY
         if not key:
             print('ERROR: ura_transactions table is empty and URA_ACCESS_KEY is not set.')
-            print('  → Upload URA transaction data via the admin panel, then redeploy.')
-            print('  → Or set URA_ACCESS_KEY in the Render dashboard to download from URA API.')
             sys.exit(1)
-        print('Downloading from URA API (ura_transactions was empty or unavailable)...')
+        print('Downloading from URA API...')
         df_raw = download_from_ura_api(key)
         print(f'Downloaded {len(df_raw):,} records')
 
