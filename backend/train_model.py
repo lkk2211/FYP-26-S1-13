@@ -27,6 +27,8 @@ from datetime import datetime
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
+from sklearn.linear_model import HuberRegressor
+from sklearn.model_selection import KFold, cross_val_predict
 from sklearn.metrics import mean_absolute_error, r2_score
 import gc
 from xgboost import XGBRegressor
@@ -384,6 +386,26 @@ def train(from_db=False):
     # Free the full feature df now that train/test arrays are ready
     del df_feat; gc.collect()
 
+    # ── Phase 1: OOF predictions for HuberRegressor meta-learner ────────────
+    print("Phase 1: Generating out-of-fold predictions for stacker...")
+    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    oof_preds = np.zeros((len(X_train), len(model_specs)))
+
+    for i, (name, model) in enumerate(model_specs.items()):
+        print(f"  OOF {name}...")
+        pipe = Pipeline(steps=[('preprocessor', preprocessor), ('model', model)])
+        oof_preds[:, i] = cross_val_predict(pipe, X_train, y_train_log, cv=kf)
+        gc.collect()
+
+    # HuberRegressor meta-learner: robust to price outliers in OOF predictions
+    stacker = HuberRegressor(epsilon=1.35, alpha=0.0001, max_iter=300)
+    stacker.fit(oof_preds, y_train_log)
+    stacker_weights   = stacker.coef_.tolist()
+    stacker_intercept = float(stacker.intercept_)
+    print(f"  Stacker weights: {[f'{w:.3f}' for w in stacker_weights]}  intercept={stacker_intercept:.4f}")
+
+    # ── Phase 2: Train final base models on full training data ───────────────
+    print("Phase 2: Training final base models...")
     trained = {}
     for name, model in model_specs.items():
         print(f"Training {name}...")
@@ -398,8 +420,13 @@ def train(from_db=False):
         print(f"  Saved {name}_pipeline.joblib")
         gc.collect()
 
-    ens = np.mean([np.exp(p.predict(X_test)) for p in trained.values()], axis=0)
-    print(f"Ensemble: MAE=S${mean_absolute_error(y_test, ens):,.0f}  R²={r2_score(y_test, ens):.4f}")
+    # ── Phase 3: Evaluate stacked vs simple average ──────────────────────────
+    test_log_preds = np.column_stack([p.predict(X_test) for p in trained.values()])
+    stacked_log    = stacker.predict(test_log_preds)
+    stacked_preds  = np.exp(stacked_log)
+    simple_avg     = np.exp(np.mean(test_log_preds, axis=1))
+    print(f"Simple avg: MAE=S${mean_absolute_error(y_test, simple_avg):,.0f}  R²={r2_score(y_test, simple_avg):.4f}")
+    print(f"Stacked:    MAE=S${mean_absolute_error(y_test, stacked_preds):,.0f}  R²={r2_score(y_test, stacked_preds):.4f}")
 
     # 6. Meta: store medians + latest policy/SORA for inference
     # (medians already computed above before df_feat was freed)
@@ -431,6 +458,8 @@ def train(from_db=False):
         'has_sora':             has_sora,
         'latest_policy':        latest_policy,
         'latest_sora':          latest_sora,
+        'stacker_coef':         stacker_weights,
+        'stacker_intercept':    stacker_intercept,
         'trained_at':           datetime.utcnow().isoformat(),
     }
     joblib.dump(meta, os.path.join(MODELS_DIR, 'meta.joblib'))

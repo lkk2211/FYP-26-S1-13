@@ -2023,36 +2023,6 @@ async function loadDataTabStats() {
 }
 
 // ── Admin: URA Sync ───────────────────────────────────────────
-async function handleUraSync() {
-    const btn    = document.getElementById('ura-sync-btn');
-    const status = document.getElementById('ura-sync-status');
-    if (!btn || !status) return;
-    btn.disabled = true;
-    btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Syncing…';
-    lucide.createIcons();
-    status.className = 'mt-4 text-sm rounded-xl p-4 bg-slate-50 text-slate-600';
-    status.textContent = 'Contacting URA API — this may take up to a minute…';
-    status.classList.remove('hidden');
-    try {
-        const res  = await fetch('/api/admin/sync-ura', { method: 'POST' });
-        const data = await res.json();
-        if (res.ok) {
-            status.className = 'mt-4 text-sm rounded-xl p-4 bg-emerald-50 text-emerald-700 font-medium';
-            status.textContent = `Sync complete. ${data.inserted ?? 0} new records inserted, ${data.deleted ?? 0} old records removed.`;
-            loadDataTabStats();
-        } else {
-            status.className = 'mt-4 text-sm rounded-xl p-4 bg-rose-50 text-rose-700 font-medium';
-            status.textContent = `Sync failed: ${data.error || 'Unknown error.'}`;
-        }
-    } catch (e) {
-        status.className = 'mt-4 text-sm rounded-xl p-4 bg-rose-50 text-rose-700 font-medium';
-        status.textContent = 'Network error — could not reach the server.';
-    }
-    btn.disabled = false;
-    btn.innerHTML = '<i data-lucide="refresh-cw" class="w-4 h-4"></i> Sync URA Data Now';
-    lucide.createIcons();
-}
-
 // ── Model management ──────────────────────────────────────────
 
 let _trainingPollInterval = null;

@@ -367,7 +367,13 @@ def _predict_ml(features):
     row = pd.DataFrame([{k: feat[k] for k in (_meta.get('categorical_cols', ['town','flat_type','flat_model']) + num_cols) if k in feat}])
 
     preds_log = [p.predict(row)[0] for p in _pipelines]
-    ensemble_log = np.mean(preds_log)
+    # Use HuberRegressor stacker weights if available, else simple average
+    stacker_coef = _meta.get('stacker_coef')
+    stacker_int  = float(_meta.get('stacker_intercept', 0.0))
+    if stacker_coef and len(stacker_coef) == len(preds_log):
+        ensemble_log = float(np.dot(preds_log, stacker_coef)) + stacker_int
+    else:
+        ensemble_log = float(np.mean(preds_log))
     estimated_value = int(np.exp(ensemble_log))
 
     # Confidence: higher when all three models agree
