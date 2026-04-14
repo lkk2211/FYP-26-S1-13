@@ -261,22 +261,22 @@ def load_from_db() -> pd.DataFrame:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
 
-    cur.execute(f"SELECT * FROM ura_transactions WHERE EXTRACT(YEAR FROM sale_date::date) >= {MIN_YEAR}")
+    # sale_date is stored as 'YYYY-MM' — use string prefix comparison instead of date cast
+    cur.execute(f"SELECT * FROM ura_transactions WHERE LEFT(sale_date::text, 4) >= '{MIN_YEAR}'")
     rows_raw = [dict(r) for r in cur.fetchall()]
     conn.close()
 
     if not rows_raw:
-        # Try without year filter (SQLite or different date column)
-        conn, _ = _get_db_conn()
+        # Fall back to loading all records (no year filter) if filtered query returns nothing
+        conn2, _ = _get_db_conn()
         if DATABASE_URL:
             import psycopg2.extras
-            cur2 = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur2 = conn2.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         else:
-            import sqlite3
-            cur2 = conn.cursor()
+            cur2 = conn2.cursor()
         cur2.execute("SELECT * FROM ura_transactions")
         rows_raw = [dict(r) for r in cur2.fetchall()]
-        conn.close()
+        conn2.close()
 
     if not rows_raw:
         raise ValueError('ura_transactions table is empty — upload CSV data first.')
