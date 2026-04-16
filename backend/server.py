@@ -1704,14 +1704,14 @@ def get_agents():
 
 @app.route('/api/chat', methods=['POST'])
 def chatbot():
-    """Property AI chatbot powered by Anthropic Claude API."""
+    """Property AI chatbot powered by Groq (Llama 3)."""
     import os as _os
-    api_key = _os.environ.get('ANTHROPIC_API_KEY', '')
+    api_key = _os.environ.get('GROQ_API_KEY', '')
     if not api_key:
         return jsonify({"reply": "Chatbot is not configured (missing API key)."}), 200
 
     data     = request.json or {}
-    messages = data.get('messages', [])  # [{"role": "user"/"assistant", "content": "..."}]
+    messages = data.get('messages', [])
     if not messages:
         return jsonify({"reply": "No message provided."}), 400
 
@@ -1730,27 +1730,25 @@ def chatbot():
         )
 
         payload = _json.dumps({
-            "model": "claude-haiku-4-5-20251001",
+            "model": "llama-3.1-8b-instant",
             "max_tokens": 512,
-            "system": system_prompt,
-            "messages": messages[-10:]  # keep last 10 turns for context
+            "messages": [{"role": "system", "content": system_prompt}] + messages[-10:]
         }).encode()
 
         req = _ur.Request(
-            "https://api.anthropic.com/v1/messages",
+            "https://api.groq.com/openai/v1/chat/completions",
             data=payload,
             headers={
                 "Content-Type": "application/json",
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01"
+                "Authorization": f"Bearer {api_key}"
             }
         )
-        resp = _ur.urlopen(req, timeout=20)
+        resp   = _ur.urlopen(req, timeout=20)
         result = _json.loads(resp.read())
-        reply = result.get("content", [{}])[0].get("text", "I couldn't generate a response.")
+        reply  = result["choices"][0]["message"]["content"]
         return jsonify({"reply": reply})
-    except Exception as e:
-        return jsonify({"reply": f"Sorry, I'm having trouble right now. Please try again shortly."}), 200
+    except Exception:
+        return jsonify({"reply": "Sorry, I'm having trouble right now. Please try again shortly."}), 200
 
 
 @app.route('/api/property-lookup', methods=['GET'])
