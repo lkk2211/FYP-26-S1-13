@@ -33,7 +33,7 @@
                 <button onclick="showView('predict')" class="nav-link px-4 py-1.5 rounded-lg text-sm font-medium text-slate-500 dark:text-slate-400 transition-all hover:text-slate-900 dark:hover:text-white" id="nav-predict">Predict</button>
                 <button onclick="showView('map')" class="nav-link px-4 py-1.5 rounded-lg text-sm font-medium text-slate-500 dark:text-slate-400 transition-all hover:text-slate-900 dark:hover:text-white" id="nav-map">Map</button>
                 <button onclick="showView('trend')" class="nav-link px-4 py-1.5 rounded-lg text-sm font-medium text-slate-500 dark:text-slate-400 transition-all hover:text-slate-900 dark:hover:text-white" id="nav-trend">Trend</button>
-                <button onclick="showView('feedback')" class="nav-link px-4 py-1.5 rounded-lg text-sm font-medium text-slate-500 dark:text-slate-400 transition-all hover:text-slate-900 dark:hover:text-white" id="nav-feedback">Feedback</button>
+                <button onclick="showView('guides')" class="nav-link px-4 py-1.5 rounded-lg text-sm font-medium text-slate-500 dark:text-slate-400 transition-all hover:text-slate-900 dark:hover:text-white" id="nav-guides">Guides</button>
             </div>
             
             <!-- Dark mode toggle: always visible -->
@@ -600,6 +600,35 @@
                     </div>
                 </div>
 
+                <!-- Lease Decay Curve (shown after prediction for HDB/leasehold) -->
+                <div id="lease-decay-section" class="hidden bg-white dark:bg-slate-800/80 p-8 rounded-[32px] border border-slate-100 dark:border-slate-700 card-shadow">
+                    <div class="flex items-center gap-3 mb-6">
+                        <div class="w-9 h-9 bg-amber-50 dark:bg-amber-900/30 rounded-xl flex items-center justify-center">
+                            <i data-lucide="trending-down" class="w-5 h-5 text-amber-600"></i>
+                        </div>
+                        <div>
+                            <h2 class="text-lg font-bold dark:text-white">Lease Decay Projection</h2>
+                            <p class="text-xs text-slate-400">Estimated value over time as remaining lease decreases</p>
+                        </div>
+                    </div>
+                    <canvas id="lease-decay-chart" height="120"></canvas>
+                    <p class="text-xs text-slate-400 mt-4">⚠ Projection is indicative only. Actual value depends on market conditions, policy changes, and property upgrades.</p>
+                </div>
+
+                <!-- Recently Searched -->
+                <div id="recent-searches-section" class="hidden bg-white dark:bg-slate-800/80 p-8 rounded-[32px] border border-slate-100 dark:border-slate-700 card-shadow">
+                    <div class="flex items-center justify-between mb-5">
+                        <div class="flex items-center gap-3">
+                            <div class="w-9 h-9 bg-slate-100 dark:bg-slate-700 rounded-xl flex items-center justify-center">
+                                <i data-lucide="history" class="w-5 h-5 text-slate-600 dark:text-slate-300"></i>
+                            </div>
+                            <h2 class="text-lg font-bold dark:text-white">Recent Searches</h2>
+                        </div>
+                        <button onclick="clearRecentSearches()" class="text-xs text-slate-400 hover:text-rose-500 transition-colors font-medium">Clear all</button>
+                    </div>
+                    <div id="recent-searches-list" class="space-y-3"></div>
+                </div>
+
                 <!-- Neighbourhood News (shown after prediction) -->
                 <div id="predict-news-section" class="hidden bg-white p-8 rounded-[32px] border border-slate-100 card-shadow">
                     <div class="flex items-center gap-3 mb-6">
@@ -612,6 +641,199 @@
                         </div>
                     </div>
                     <div id="predict-news-list" class="space-y-3"></div>
+                </div>
+            </main>
+        </section>
+
+        <!-- Guides View -->
+        <section id="view-guides" class="view-section">
+            <main class="max-w-5xl mx-auto px-6 py-10 space-y-14">
+                <header class="text-center">
+                    <h1 class="text-4xl font-bold tracking-tight mb-3 dark:text-white">Property Guides &amp; Tools</h1>
+                    <p class="text-slate-500 dark:text-slate-400 text-lg">Everything you need to navigate Singapore's property market.</p>
+                </header>
+
+                <!-- Buying Process -->
+                <div>
+                    <h2 class="text-2xl font-bold mb-6 dark:text-white flex items-center gap-3"><i data-lucide="map-pinned" class="w-6 h-6 text-blue-600"></i> HDB Buying Process</h2>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+                        <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-100 dark:border-slate-700 card-shadow space-y-2">
+                            <div class="w-10 h-10 bg-blue-600 text-white rounded-2xl flex items-center justify-center font-black text-lg">1</div>
+                            <h3 class="font-bold text-slate-900 dark:text-white">Check Eligibility</h3>
+                            <p class="text-sm text-slate-500 dark:text-slate-400">Verify your citizenship, age, family nucleus, and income ceiling with HDB's eligibility checker.</p>
+                        </div>
+                        <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-100 dark:border-slate-700 card-shadow space-y-2">
+                            <div class="w-10 h-10 bg-blue-600 text-white rounded-2xl flex items-center justify-center font-black text-lg">2</div>
+                            <h3 class="font-bold text-slate-900 dark:text-white">Secure HDB Loan Eligibility</h3>
+                            <p class="text-sm text-slate-500 dark:text-slate-400">Apply for an HLE letter (valid 6 months) before exercising Option to Purchase.</p>
+                        </div>
+                        <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-100 dark:border-slate-700 card-shadow space-y-2">
+                            <div class="w-10 h-10 bg-blue-600 text-white rounded-2xl flex items-center justify-center font-black text-lg">3</div>
+                            <h3 class="font-bold text-slate-900 dark:text-white">Register Intent to Buy</h3>
+                            <p class="text-sm text-slate-500 dark:text-slate-400">Register on HDB's Resale Portal. One concurrent registration per household.</p>
+                        </div>
+                        <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-100 dark:border-slate-700 card-shadow space-y-2">
+                            <div class="w-10 h-10 bg-blue-600 text-white rounded-2xl flex items-center justify-center font-black text-lg">4</div>
+                            <h3 class="font-bold text-slate-900 dark:text-white">Option to Purchase (OTP)</h3>
+                            <p class="text-sm text-slate-500 dark:text-slate-400">Negotiate price with seller. OTP fee is $1–$5K (depending on flat type), valid 21 days.</p>
+                        </div>
+                        <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-100 dark:border-slate-700 card-shadow space-y-2">
+                            <div class="w-10 h-10 bg-blue-600 text-white rounded-2xl flex items-center justify-center font-black text-lg">5</div>
+                            <h3 class="font-bold text-slate-900 dark:text-white">Submit Resale Application</h3>
+                            <p class="text-sm text-slate-500 dark:text-slate-400">Both buyer and seller submit resale application on HDB portal within 7 days of OTP exercise.</p>
+                        </div>
+                        <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-100 dark:border-slate-700 card-shadow space-y-2">
+                            <div class="w-10 h-10 bg-blue-600 text-white rounded-2xl flex items-center justify-center font-black text-lg">6</div>
+                            <h3 class="font-bold text-slate-900 dark:text-white">Completion</h3>
+                            <p class="text-sm text-slate-500 dark:text-slate-400">HDB approves and schedules completion (typically 8 weeks). Keys handed over at HDB Hub.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Calculators -->
+                <div>
+                    <h2 class="text-2xl font-bold mb-6 dark:text-white flex items-center gap-3"><i data-lucide="calculator" class="w-6 h-6 text-violet-600"></i> Financial Calculators</h2>
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+
+                        <!-- BSD/ABSD Calculator -->
+                        <div class="bg-white dark:bg-slate-800 p-8 rounded-[32px] border border-slate-100 dark:border-slate-700 card-shadow space-y-5">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 bg-violet-100 dark:bg-violet-900/30 rounded-2xl flex items-center justify-center">
+                                    <i data-lucide="receipt" class="w-5 h-5 text-violet-600"></i>
+                                </div>
+                                <h3 class="text-lg font-bold dark:text-white">Stamp Duty Calculator (BSD &amp; ABSD)</h3>
+                            </div>
+                            <div class="space-y-3">
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label class="text-xs font-bold text-slate-500 uppercase mb-1 block">Purchase Price (S$)</label>
+                                        <input id="calc-bsd-price" type="number" placeholder="500000" oninput="calcStampDuty()"
+                                            class="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-sm font-medium dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500/20" />
+                                    </div>
+                                    <div>
+                                        <label class="text-xs font-bold text-slate-500 uppercase mb-1 block">Buyer Profile</label>
+                                        <select id="calc-buyer-profile" onchange="calcStampDuty()"
+                                            class="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-sm font-medium dark:text-white focus:outline-none appearance-none">
+                                            <option value="sc_first">SC – 1st Property</option>
+                                            <option value="sc_second">SC – 2nd Property</option>
+                                            <option value="sc_third">SC – 3rd+ Property</option>
+                                            <option value="pr_first">PR – 1st Property</option>
+                                            <option value="pr_second">PR – 2nd+ Property</option>
+                                            <option value="foreigner">Foreigner</option>
+                                            <option value="entity">Entity</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div id="stamp-duty-result" class="hidden bg-slate-50 dark:bg-slate-700 rounded-2xl p-4 space-y-2">
+                                    <div class="flex justify-between text-sm"><span class="text-slate-500">BSD</span><span class="font-bold dark:text-white" id="bsd-amount">-</span></div>
+                                    <div class="flex justify-between text-sm"><span class="text-slate-500">ABSD</span><span class="font-bold dark:text-white" id="absd-amount">-</span></div>
+                                    <div class="flex justify-between border-t border-slate-200 dark:border-slate-600 pt-2 mt-2"><span class="font-bold text-slate-700 dark:text-white">Total Stamp Duty</span><span class="font-black text-violet-600 text-lg" id="total-stamp">-</span></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Home Loan Calculator -->
+                        <div class="bg-white dark:bg-slate-800 p-8 rounded-[32px] border border-slate-100 dark:border-slate-700 card-shadow space-y-5">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 bg-emerald-100 dark:bg-emerald-900/30 rounded-2xl flex items-center justify-center">
+                                    <i data-lucide="landmark" class="w-5 h-5 text-emerald-600"></i>
+                                </div>
+                                <h3 class="text-lg font-bold dark:text-white">Monthly Repayment Calculator</h3>
+                            </div>
+                            <div class="space-y-3">
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label class="text-xs font-bold text-slate-500 uppercase mb-1 block">Loan Amount (S$)</label>
+                                        <input id="calc-loan-amt" type="number" placeholder="400000" oninput="calcLoan()"
+                                            class="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-sm font-medium dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/20" />
+                                    </div>
+                                    <div>
+                                        <label class="text-xs font-bold text-slate-500 uppercase mb-1 block">Annual Interest (%)</label>
+                                        <input id="calc-loan-rate" type="number" step="0.01" placeholder="2.6" oninput="calcLoan()"
+                                            class="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-sm font-medium dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/20" />
+                                    </div>
+                                    <div class="col-span-2">
+                                        <label class="text-xs font-bold text-slate-500 uppercase mb-1 block">Loan Tenure (years)</label>
+                                        <input id="calc-loan-tenure" type="number" placeholder="25" oninput="calcLoan()"
+                                            class="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-sm font-medium dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/20" />
+                                    </div>
+                                </div>
+                                <div id="loan-result" class="hidden bg-slate-50 dark:bg-slate-700 rounded-2xl p-4 space-y-2">
+                                    <div class="flex justify-between text-sm"><span class="text-slate-500">Monthly Repayment</span><span class="font-black text-emerald-600 text-lg" id="monthly-repayment">-</span></div>
+                                    <div class="flex justify-between text-sm"><span class="text-slate-500">Total Interest Paid</span><span class="font-bold dark:text-white" id="total-interest">-</span></div>
+                                    <div class="flex justify-between text-sm"><span class="text-slate-500">Total Payment</span><span class="font-bold dark:text-white" id="total-payment">-</span></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Affordability Calculator -->
+                        <div class="bg-white dark:bg-slate-800 p-8 rounded-[32px] border border-slate-100 dark:border-slate-700 card-shadow space-y-5">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 bg-blue-100 dark:bg-blue-900/30 rounded-2xl flex items-center justify-center">
+                                    <i data-lucide="wallet" class="w-5 h-5 text-blue-600"></i>
+                                </div>
+                                <h3 class="text-lg font-bold dark:text-white">Affordability Calculator</h3>
+                            </div>
+                            <div class="space-y-3">
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label class="text-xs font-bold text-slate-500 uppercase mb-1 block">Monthly Income (S$)</label>
+                                        <input id="calc-income" type="number" placeholder="6000" oninput="calcAffordability()"
+                                            class="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-sm font-medium dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+                                    </div>
+                                    <div>
+                                        <label class="text-xs font-bold text-slate-500 uppercase mb-1 block">Existing Monthly Debts (S$)</label>
+                                        <input id="calc-debts" type="number" placeholder="500" oninput="calcAffordability()"
+                                            class="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-sm font-medium dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+                                    </div>
+                                    <div>
+                                        <label class="text-xs font-bold text-slate-500 uppercase mb-1 block">CPF OA Balance (S$)</label>
+                                        <input id="calc-cpf" type="number" placeholder="50000" oninput="calcAffordability()"
+                                            class="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-sm font-medium dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+                                    </div>
+                                    <div>
+                                        <label class="text-xs font-bold text-slate-500 uppercase mb-1 block">Down Payment Cash (S$)</label>
+                                        <input id="calc-cash" type="number" placeholder="25000" oninput="calcAffordability()"
+                                            class="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-sm font-medium dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+                                    </div>
+                                </div>
+                                <div id="affordability-result" class="hidden bg-slate-50 dark:bg-slate-700 rounded-2xl p-4 space-y-2">
+                                    <div class="flex justify-between text-sm"><span class="text-slate-500">Max Monthly Mortgage (MSR 30%)</span><span class="font-bold dark:text-white" id="max-monthly">-</span></div>
+                                    <div class="flex justify-between text-sm"><span class="text-slate-500">Estimated Max Loan</span><span class="font-bold dark:text-white" id="max-loan">-</span></div>
+                                    <div class="flex justify-between border-t border-slate-200 dark:border-slate-600 pt-2 mt-2"><span class="font-bold text-slate-700 dark:text-white">Estimated Max Property Price</span><span class="font-black text-blue-600 text-lg" id="max-price">-</span></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- CPF Usage Info -->
+                        <div class="bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-900/20 dark:to-orange-900/20 p-8 rounded-[32px] border border-amber-100 dark:border-amber-800/30 space-y-4">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 bg-amber-100 dark:bg-amber-900/40 rounded-2xl flex items-center justify-center">
+                                    <i data-lucide="info" class="w-5 h-5 text-amber-600"></i>
+                                </div>
+                                <h3 class="text-lg font-bold text-amber-900 dark:text-amber-200">CPF Usage Guide</h3>
+                            </div>
+                            <ul class="space-y-2 text-sm text-amber-800 dark:text-amber-300">
+                                <li class="flex gap-2"><span class="font-bold">•</span> CPF OA can fund up to 100% of property price (within limits)</li>
+                                <li class="flex gap-2"><span class="font-bold">•</span> For HDB: no cash down payment required if taking HDB loan</li>
+                                <li class="flex gap-2"><span class="font-bold">•</span> For bank loan: min 5% cash down, 20% total down payment</li>
+                                <li class="flex gap-2"><span class="font-bold">•</span> CPF usage is pro-rated if lease &lt; 60 years (Lease Consideration Policy)</li>
+                                <li class="flex gap-2"><span class="font-bold">•</span> CPF withdrawal limit = property value × remaining lease ÷ 99</li>
+                                <li class="flex gap-2"><span class="font-bold">•</span> Rates are subject to change based on MAS policy</li>
+                                <li class="flex gap-2"><span class="font-bold">•</span> Certain remissions may apply for HDB purchases</li>
+                                <li class="flex gap-2"><span class="font-bold">•</span> Consult a tax professional for specific advice. Official rates available at <a href="https://www.iras.gov.sg" target="_blank" class="underline">IRAS.gov.sg</a></li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Connect to an Agent -->
+                <div>
+                    <h2 class="text-2xl font-bold mb-2 dark:text-white flex items-center gap-3"><i data-lucide="users" class="w-6 h-6 text-emerald-600"></i> Connect to an Agent</h2>
+                    <p class="text-slate-500 dark:text-slate-400 mb-6 text-sm">Verified property agents on PropAI.sg. Click WhatsApp to get in touch.</p>
+                    <div id="agents-loading" class="text-sm text-slate-400 py-4">Loading agents…</div>
+                    <div id="agents-list" class="hidden flex gap-5 overflow-x-auto pb-4 snap-x snap-mandatory"></div>
+                    <div id="agents-empty" class="hidden text-sm text-slate-400 py-4 text-center">No agents have registered yet. <button onclick="showView('register')" class="text-blue-600 font-bold hover:underline">Be the first!</button></div>
                 </div>
             </main>
         </section>
@@ -942,9 +1164,48 @@
                             </div>
                         </div>
                         
-                        <div class="pt-6 flex justify-end gap-4">
-                            <button onclick="cancelProfileChanges()" class="px-8 py-3 bg-rose-600 text-white rounded-xl font-bold hover:bg-rose-700 transition-all">Cancel</button>
-                            <button onclick="saveProfile()" class="px-8 py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-black transition-all">Save Changes</button>
+                        <!-- Agent fields (shown only for agents) -->
+                        <div id="agent-fields" class="hidden space-y-6 pt-4 border-t border-slate-100 dark:border-slate-700">
+                            <h4 class="font-bold text-slate-900 dark:text-white">Agent Profile</h4>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                <div class="space-y-2">
+                                    <label class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">CEA Registration No.</label>
+                                    <input id="profile-cea" type="text" placeholder="R0XXXXXXX" class="w-full px-6 py-4 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium" />
+                                </div>
+                                <div class="space-y-2">
+                                    <label class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">WhatsApp Number</label>
+                                    <input id="profile-whatsapp" type="text" placeholder="+65 9XXX XXXX" class="w-full px-6 py-4 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium" />
+                                </div>
+                                <div class="space-y-2 md:col-span-2">
+                                    <label class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">Bio / Specialisation</label>
+                                    <textarea id="profile-bio" rows="3" placeholder="e.g. Specialising in HDB resale in the North-East region..." class="w-full px-6 py-4 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium resize-none"></textarea>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Password Change -->
+                        <div class="space-y-4 pt-4 border-t border-slate-100 dark:border-slate-700">
+                            <h4 class="font-bold text-slate-900 dark:text-white">Change Password <span class="text-xs font-normal text-slate-400 ml-2">(leave blank to keep current)</span></h4>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                <div class="space-y-2">
+                                    <label class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">Current Password</label>
+                                    <input id="profile-cur-password" type="password" placeholder="••••••••" class="w-full px-6 py-4 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium" />
+                                </div>
+                                <div class="space-y-2">
+                                    <label class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">New Password</label>
+                                    <input id="profile-new-password" type="password" placeholder="••••••••" class="w-full px-6 py-4 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium" />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="pt-6 flex flex-wrap items-center justify-between gap-4">
+                            <button onclick="confirmDeleteAccount()" class="px-6 py-3 bg-rose-50 text-rose-600 border border-rose-200 rounded-xl font-bold hover:bg-rose-100 transition-all text-sm flex items-center gap-2">
+                                <i data-lucide="trash-2" class="w-4 h-4"></i> Delete Account
+                            </button>
+                            <div class="flex gap-4">
+                                <button onclick="cancelProfileChanges()" class="px-8 py-3 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-slate-200 transition-all">Cancel</button>
+                                <button onclick="saveProfile()" class="px-8 py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-black transition-all">Save Changes</button>
+                            </div>
                         </div>
                     </div>
 
@@ -1379,9 +1640,20 @@
                         <p class="text-slate-500 font-medium">Join PropAI to start your property journey.</p>
                     </div>
                     <div class="space-y-4">
-                        <input type="text" placeholder="Full Name" class="w-full px-6 py-5 rounded-2xl bg-slate-50 dark:bg-slate-700 border border-slate-100 dark:border-slate-600 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white dark:focus:bg-slate-600 transition-all font-medium" />
-                        <input type="email" placeholder="Email Address" class="w-full px-6 py-5 rounded-2xl bg-slate-50 dark:bg-slate-700 border border-slate-100 dark:border-slate-600 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white dark:focus:bg-slate-600 transition-all font-medium" />
-                        <input type="password" placeholder="Password" class="w-full px-6 py-5 rounded-2xl bg-slate-50 dark:bg-slate-700 border border-slate-100 dark:border-slate-600 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white dark:focus:bg-slate-600 transition-all font-medium" />
+                        <input id="reg-name" type="text" placeholder="Full Name" class="w-full px-6 py-5 rounded-2xl bg-slate-50 dark:bg-slate-700 border border-slate-100 dark:border-slate-600 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white dark:focus:bg-slate-600 transition-all font-medium" />
+                        <input id="reg-email" type="email" placeholder="Email Address" class="w-full px-6 py-5 rounded-2xl bg-slate-50 dark:bg-slate-700 border border-slate-100 dark:border-slate-600 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white dark:focus:bg-slate-600 transition-all font-medium" />
+                        <input id="reg-password" type="password" placeholder="Password" class="w-full px-6 py-5 rounded-2xl bg-slate-50 dark:bg-slate-700 border border-slate-100 dark:border-slate-600 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white dark:focus:bg-slate-600 transition-all font-medium" />
+                        <div class="grid grid-cols-2 gap-3">
+                            <button type="button" id="reg-type-homeowner" onclick="selectAccountType('homeowner')"
+                                class="reg-type-btn py-4 rounded-2xl border-2 border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-bold text-sm transition-all">
+                                🏠 Homeowner
+                            </button>
+                            <button type="button" id="reg-type-agent" onclick="selectAccountType('agent')"
+                                class="reg-type-btn py-4 rounded-2xl border-2 border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-400 font-bold text-sm transition-all hover:border-blue-400">
+                                🪪 Property Agent
+                            </button>
+                        </div>
+                        <input type="hidden" id="reg-account-type" value="homeowner" />
                         <p id="register-error" class="hidden text-sm text-red-500 font-medium text-left px-1"></p>
                     </div>
                     <button onclick="handleRegister()" class="w-full py-5 bg-slate-900 dark:bg-blue-600 dark:hover:bg-blue-700 text-white rounded-[32px] text-lg font-bold hover:bg-black transition-all shadow-xl shadow-slate-200">Create Account</button>
@@ -1442,7 +1714,8 @@
                         <li><a href="#" onclick="showView('predict');return false" class="hover:text-white transition-colors">Price Prediction</a></li>
                         <li><a href="#" onclick="showView('map');return false" class="hover:text-white transition-colors">Property Map</a></li>
                         <li><a href="#" onclick="showView('trend');return false" class="hover:text-white transition-colors">Market Trends</a></li>
-                        <li><a href="#" onclick="showView('feedback');return false" class="hover:text-white transition-colors">Feedback</a></li>
+                        <li><a href="#" onclick="showView('guides');return false" class="hover:text-white transition-colors">Guides &amp; Tools</a></li>
+                        <li><a href="#" onclick="openFeedbackModal();return false" class="hover:text-white transition-colors">Feedback</a></li>
                     </ul>
                 </div>
 
@@ -1452,7 +1725,7 @@
                     <ul class="space-y-3 text-sm text-slate-400">
                         <li><a href="#" onclick="showFooterModal('about');return false" class="hover:text-white transition-colors">About Us</a></li>
                         <li><a href="#" onclick="showFooterModal('team');return false" class="hover:text-white transition-colors">Who We Are</a></li>
-                        <li><a href="#" onclick="showView('feedback');return false" class="hover:text-white transition-colors">Feedback</a></li>
+                        <li><a href="#" onclick="openFeedbackModal();return false" class="hover:text-white transition-colors">Feedback</a></li>
                     </ul>
                 </div>
 
@@ -1474,47 +1747,108 @@
         </div>
     </footer>
 
-    <!-- Feedback View -->
-    <section id="view-feedback" class="view-section">
-        <main class="max-w-2xl mx-auto px-6 py-16">
-            <div class="text-center mb-12">
-                <div class="inline-flex items-center gap-2 px-4 py-1.5 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 rounded-full border border-blue-100 dark:border-blue-800/50 mb-5">
-                    <i data-lucide="message-circle" class="w-3.5 h-3.5"></i>
-                    <span class="text-xs font-bold uppercase tracking-wider">Share Your Thoughts</span>
+    <!-- Feedback Popup Modal -->
+    <div id="feedback-modal" class="fixed inset-0 z-[9999] hidden items-center justify-center p-6 bg-black/60 backdrop-blur-sm" onclick="if(event.target===this)closeFeedbackModal()">
+        <div class="bg-white dark:bg-slate-900 rounded-[32px] max-w-lg w-full p-10 shadow-2xl">
+            <div class="flex items-center justify-between mb-6">
+                <div>
+                    <h3 class="text-2xl font-bold text-slate-900 dark:text-white">Share Feedback</h3>
+                    <p class="text-sm text-slate-400 mt-1">Help us improve PropAI.sg</p>
                 </div>
-                <h1 class="text-4xl font-bold tracking-tight mb-3">We'd love your <span class="text-gradient">feedback</span></h1>
-                <p class="text-slate-500 dark:text-slate-400 text-base leading-relaxed">Help us improve PropAI.sg. Every suggestion matters to our team.</p>
+                <button onclick="closeFeedbackModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors">
+                    <i data-lucide="x" class="w-5 h-5 text-slate-400"></i>
+                </button>
             </div>
-
-            <div class="bg-white dark:bg-slate-800/80 rounded-[40px] border border-slate-100 dark:border-slate-700/60 card-shadow p-10 space-y-6">
+            <div class="space-y-4">
                 <div>
                     <label class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-2 block">Your Name</label>
                     <input id="feedback-name" type="text" placeholder="e.g. Tan Wei Ming"
-                        class="w-full px-4 py-3.5 rounded-2xl bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all text-sm font-medium dark:text-white dark:placeholder-slate-500" />
+                        class="w-full px-4 py-3.5 rounded-2xl bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all text-sm font-medium dark:text-white dark:placeholder-slate-500" />
                 </div>
                 <div>
                     <label class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-2 block">Email Address</label>
                     <input id="feedback-email" type="email" placeholder="you@example.com"
-                        class="w-full px-4 py-3.5 rounded-2xl bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all text-sm font-medium dark:text-white dark:placeholder-slate-500" />
+                        class="w-full px-4 py-3.5 rounded-2xl bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all text-sm font-medium dark:text-white dark:placeholder-slate-500" />
                 </div>
                 <div>
                     <label class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-2 block">Your Feedback</label>
-                    <textarea id="feedback-message" rows="6" placeholder="Tell us what you think — what's working well, what could be better, or any features you'd like to see…"
-                        class="w-full px-4 py-3.5 rounded-2xl bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all text-sm font-medium dark:text-white dark:placeholder-slate-500 resize-none"></textarea>
+                    <textarea id="feedback-message" rows="4" placeholder="Tell us what you think…"
+                        class="w-full px-4 py-3.5 rounded-2xl bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all text-sm font-medium dark:text-white dark:placeholder-slate-500 resize-none"></textarea>
                 </div>
-
                 <div id="feedback-status" class="hidden rounded-2xl px-4 py-3 text-sm font-medium"></div>
-
                 <button onclick="submitFeedback()" id="feedback-submit-btn"
-                    class="w-full py-4 rounded-2xl text-sm font-bold text-white btn-gradient flex items-center justify-center gap-2 transition-all hover:opacity-90">
-                    <i data-lucide="send" class="w-4 h-4"></i>
-                    Send Feedback
+                    class="w-full py-4 rounded-2xl text-sm font-bold text-white btn-gradient flex items-center justify-center gap-2">
+                    <i data-lucide="send" class="w-4 h-4"></i> Send Feedback
                 </button>
-
-                <p class="text-center text-xs text-slate-400">Your feedback is sent directly to our team at fyp.26.s1.13@gmail.com</p>
+                <p class="text-center text-xs text-slate-400">Sent to fyp.26.s1.13@gmail.com</p>
             </div>
-        </main>
-    </section>
+        </div>
+    </div>
+
+    <!-- Delete Account Confirmation Modal -->
+    <div id="delete-account-modal" class="fixed inset-0 z-[9999] hidden items-center justify-center p-6 bg-black/60 backdrop-blur-sm">
+        <div class="bg-white dark:bg-slate-900 rounded-[32px] max-w-md w-full p-10 shadow-2xl">
+            <div class="text-center mb-6">
+                <div class="w-16 h-16 bg-rose-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <i data-lucide="trash-2" class="w-8 h-8 text-rose-600"></i>
+                </div>
+                <h3 class="text-2xl font-bold text-slate-900 dark:text-white">Delete Account</h3>
+                <p class="text-sm text-slate-500 mt-2">This action is permanent and cannot be undone. Enter your password to confirm.</p>
+            </div>
+            <div class="space-y-4">
+                <input id="delete-confirm-password" type="password" placeholder="Your password"
+                    class="w-full px-4 py-3.5 rounded-2xl bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 focus:outline-none focus:ring-2 focus:ring-rose-500/20 transition-all text-sm font-medium dark:text-white" />
+                <p id="delete-account-error" class="hidden text-sm text-rose-500 font-medium"></p>
+                <div class="flex gap-3">
+                    <button onclick="document.getElementById('delete-account-modal').classList.replace('flex','hidden')" class="flex-1 py-3 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-slate-200 transition-all">Cancel</button>
+                    <button onclick="executeDeleteAccount()" class="flex-1 py-3 bg-rose-600 text-white rounded-xl font-bold hover:bg-rose-700 transition-all">Delete Forever</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Chatbot Widget -->
+    <div id="chat-widget" class="fixed bottom-6 right-6 z-[9998] flex flex-col items-end gap-3">
+        <!-- Chat Panel -->
+        <div id="chat-panel" class="hidden w-[340px] bg-white dark:bg-slate-900 rounded-[28px] shadow-2xl border border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden" style="height:460px">
+            <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-700 bg-gradient-to-r from-blue-600 to-violet-600">
+                <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 bg-white/20 rounded-xl flex items-center justify-center">
+                        <i data-lucide="bot" class="w-4 h-4 text-white"></i>
+                    </div>
+                    <div>
+                        <p class="text-sm font-bold text-white">PropBot</p>
+                        <p class="text-xs text-blue-100">Singapore Property AI</p>
+                    </div>
+                </div>
+                <button onclick="toggleChat()" class="p-1.5 hover:bg-white/20 rounded-lg transition-colors">
+                    <i data-lucide="x" class="w-4 h-4 text-white"></i>
+                </button>
+            </div>
+            <div id="chat-messages" class="flex-1 overflow-y-auto p-4 space-y-3">
+                <div class="flex gap-2">
+                    <div class="w-7 h-7 bg-blue-100 rounded-full flex items-center justify-center shrink-0">
+                        <i data-lucide="bot" class="w-3.5 h-3.5 text-blue-600"></i>
+                    </div>
+                    <div class="bg-slate-100 dark:bg-slate-800 rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm text-slate-700 dark:text-slate-200 max-w-[80%]">
+                        Hi! I'm PropBot 👋 Ask me anything about Singapore property — buying process, stamp duties, CPF, HDB grants, and more.
+                    </div>
+                </div>
+            </div>
+            <div class="p-3 border-t border-slate-100 dark:border-slate-700 flex gap-2">
+                <input id="chat-input" type="text" placeholder="Ask about property…"
+                    class="flex-1 px-4 py-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-sm font-medium dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
+                    onkeydown="if(event.key==='Enter')sendChatMessage()" />
+                <button onclick="sendChatMessage()" class="w-10 h-10 bg-blue-600 hover:bg-blue-700 rounded-2xl flex items-center justify-center transition-colors shrink-0">
+                    <i data-lucide="send" class="w-4 h-4 text-white"></i>
+                </button>
+            </div>
+        </div>
+        <!-- Toggle Button -->
+        <button onclick="toggleChat()" id="chat-toggle-btn" class="w-14 h-14 bg-gradient-to-br from-blue-600 to-violet-600 rounded-full shadow-lg flex items-center justify-center hover:scale-110 transition-transform">
+            <i data-lucide="message-circle" class="w-6 h-6 text-white" id="chat-toggle-icon"></i>
+        </button>
+    </div>
 
     <!-- Footer Modal -->
     <div id="footer-modal" class="fixed inset-0 z-[9999] hidden items-center justify-center p-6 bg-black/60 backdrop-blur-sm" onclick="if(event.target===this)closeFooterModal()">

@@ -51,6 +51,15 @@ function showView(viewId) {
         loadNotificationsForm();
     }
 
+    if (viewId === 'guides') {
+        loadAgents();
+        renderRecentSearches();
+    }
+
+    if (viewId === 'predict') {
+        renderRecentSearches();
+    }
+
     window.scrollTo({ top: 0, behavior: 'smooth' });
     lucide.createIcons();
     updateDarkModeNavIcon();
@@ -181,15 +190,19 @@ async function _loadFlatSpecs() {
         const url = `/api/property-areas?property_type=${encodeURIComponent(propType)}` +
                     urlExtra +
                     (postal ? `&postal=${encodeURIComponent(postal)}` : '') +
-                    (_predictBlock ? `&block=${encodeURIComponent(_predictBlock)}` : '') +
-                    (_predictRoad  ? `&road=${encodeURIComponent(_predictRoad)}`  : '') +
-                    (_predictTown  ? `&town=${encodeURIComponent(_predictTown)}`  : '');
+                    (_predictBlock   ? `&block=${encodeURIComponent(_predictBlock)}`     : '') +
+                    (_predictRoad    ? `&road=${encodeURIComponent(_predictRoad)}`       : '') +
+                    (_predictTown    ? `&town=${encodeURIComponent(_predictTown)}`       : '') +
+                    (_predictProject ? `&project=${encodeURIComponent(_predictProject)}` : '');
         const res  = await fetch(url);
         const data = await res.json();
 
-        const areas        = data.floor_areas   || [];
-        const maxFloor     = data.max_floor      || 50;
-        const storeyRanges = data.storey_ranges  || [];
+        const areas = data.floor_areas || [];
+        // Use cached floor data from property_lookup if backend couldn't narrow it down
+        const maxFloor     = data.max_floor     || _cachedMaxFloor     || 50;
+        const storeyRanges = (data.storey_ranges && data.storey_ranges.length)
+                             ? data.storey_ranges
+                             : (_cachedStoreyRanges.length ? _cachedStoreyRanges : []);
 
         // ── Floor range dropdown (HDB only) ──────────────────────
         if (isHdb) _populateFloorRanges(storeyRanges, maxFloor);
@@ -326,10 +339,22 @@ async function handlePostalSearch() {
                     const ltEl = document.getElementById('input-lease-type');
                     if (ltEl) ltEl.value = info.lease_type;
                 }
-                _predictTown  = info.town      || '';
-                _predictBlock = info.block     || '';
-                _predictRoad  = info.road_name || '';
-                // Show/hide correct spec section
+                _predictTown    = info.town         || '';
+                _predictBlock   = info.block        || '';
+                _predictRoad    = info.road_name    || '';
+                _predictProject = info.project_name || '';
+                // Apply floor data from DB lookup if available
+                if (info.storey_ranges && info.storey_ranges.length) {
+                    _cachedStoreyRanges = info.storey_ranges;
+                    _cachedMaxFloor     = info.max_floor || 50;
+                } else if (info.max_floor) {
+                    _cachedMaxFloor     = info.max_floor;
+                    _cachedStoreyRanges = [];
+                } else {
+                    _cachedStoreyRanges = [];
+                    _cachedMaxFloor     = null;
+                }
+                // Show/hide correct spec section, then apply cached floor data
                 _onPropertyTypeChange();
             })
             .catch(() => {});
@@ -439,6 +464,23 @@ async function handlePredict() {
         togglePredictView('output');
         renderPredictNews(postal);
 
+        // Lease decay chart
+        const remLease   = data.remaining_lease_years || null;
+        const leaseType  = document.getElementById('input-lease-type')?.value || '';
+        const isFreehold = leaseType.toLowerCase().includes('freehold');
+        renderLeaseDecayChart(data.estimated_value, isFreehold ? 0 : (remLease || 70), propType);
+
+        // Save to recent searches
+        const addrEl = document.getElementById('display-address');
+        saveRecentSearch({
+            postal,
+            address: addrEl ? addrEl.innerText : postal,
+            property_type: propType,
+            estimate: data.estimated_value,
+            date: new Date().toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' })
+        });
+        renderRecentSearches();
+
         lucide.createIcons();
         setTimeout(() => {
             data.factors.forEach(f => {
@@ -533,9 +575,12 @@ function showAdminTab(tabId) {
 // ── Global state ────────────────────────────────────────────
 let lastMapPostal = '';
 let currentNeighbourhood = 'Clementi';
-let _predictTown  = '';
-let _predictBlock = '';
-let _predictRoad  = '';
+let _predictTown    = '';
+let _predictBlock   = '';
+let _predictRoad    = '';
+let _predictProject = '';
+let _cachedStoreyRanges = [];
+let _cachedMaxFloor     = null;
 
 // ── Map ──────────────────────────────────────────────────────
 let mapInstance = null;
@@ -2271,13 +2316,26 @@ async function handleSignIn(e) {
     showView('home');
 }
 
+function selectAccountType(type) {
+    document.getElementById('reg-account-type').value = type;
+    const homeBtn  = document.getElementById('reg-type-homeowner');
+    const agentBtn = document.getElementById('reg-type-agent');
+    if (type === 'homeowner') {
+        homeBtn.className  = 'reg-type-btn py-4 rounded-2xl border-2 border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-bold text-sm transition-all';
+        agentBtn.className = 'reg-type-btn py-4 rounded-2xl border-2 border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-400 font-bold text-sm transition-all hover:border-blue-400';
+    } else {
+        agentBtn.className = 'reg-type-btn py-4 rounded-2xl border-2 border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-bold text-sm transition-all';
+        homeBtn.className  = 'reg-type-btn py-4 rounded-2xl border-2 border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-400 font-bold text-sm transition-all hover:border-blue-400';
+    }
+}
+
 async function handleRegister(e) {
     if (e) e.preventDefault();
 
-    const inputs = document.querySelectorAll('#view-register input');
-    const full_name = inputs[0].value.trim();
-    const email = inputs[1].value.trim();
-    const password = inputs[2].value.trim();
+    const full_name    = (document.getElementById('reg-name')?.value     || '').trim();
+    const email        = (document.getElementById('reg-email')?.value    || '').trim();
+    const password     = (document.getElementById('reg-password')?.value || '').trim();
+    const account_type = (document.getElementById('reg-account-type')?.value || 'homeowner').trim();
     const errEl = document.getElementById('register-error');
 
     if (!full_name || !email || !password) {
@@ -2294,7 +2352,7 @@ async function handleRegister(e) {
     const res = await fetch('/api/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ full_name, email, password })
+        body: JSON.stringify({ full_name, email, password, account_type })
     });
 
     const text = await res.text();
@@ -2458,6 +2516,26 @@ function loadProfileForm() {
     lastNameInput.value = lastName;
     emailInput.value = currentUser.email || '';
     phoneInput.value = currentUser.phone || '';
+
+    // Agent fields
+    const agentFields = document.getElementById('agent-fields');
+    if (agentFields) {
+        const isAgent = (currentUser.account_type === 'agent');
+        agentFields.classList.toggle('hidden', !isAgent);
+        if (isAgent) {
+            const ceaEl = document.getElementById('profile-cea');
+            const waEl  = document.getElementById('profile-whatsapp');
+            const bioEl = document.getElementById('profile-bio');
+            if (ceaEl) ceaEl.value = currentUser.cea_number || '';
+            if (waEl)  waEl.value  = currentUser.whatsapp   || '';
+            if (bioEl) bioEl.value = currentUser.bio        || '';
+        }
+    }
+    // Clear password fields on reload
+    const curPwEl = document.getElementById('profile-cur-password');
+    const newPwEl = document.getElementById('profile-new-password');
+    if (curPwEl) curPwEl.value = '';
+    if (newPwEl) newPwEl.value = '';
 }
 
 function cancelProfileChanges() {
@@ -2466,41 +2544,76 @@ function cancelProfileChanges() {
 }
 
 async function saveProfile() {
-    if (!currentUser) {
-        alert('Please login first');
+    if (!currentUser) { alert('Please login first'); return; }
+
+    const firstName    = (document.getElementById('profile-first-name')?.value  || '').trim();
+    const lastName     = (document.getElementById('profile-last-name')?.value   || '').trim();
+    const email        = (document.getElementById('profile-email')?.value       || '').trim();
+    const phone        = (document.getElementById('profile-phone')?.value       || '').trim();
+    const cur_password = (document.getElementById('profile-cur-password')?.value || '').trim();
+    const new_password = (document.getElementById('profile-new-password')?.value || '').trim();
+    const cea_number   = (document.getElementById('profile-cea')?.value         || '').trim();
+    const whatsapp     = (document.getElementById('profile-whatsapp')?.value    || '').trim();
+    const bio          = (document.getElementById('profile-bio')?.value         || '').trim();
+
+    if (new_password && !cur_password) {
+        showToast('Enter your current password to set a new one', true);
         return;
     }
-
-    const firstNameInput = document.getElementById('profile-first-name');
-    const lastNameInput = document.getElementById('profile-last-name');
-    const emailInput = document.getElementById('profile-email');
-    const phoneInput = document.getElementById('profile-phone');
-
-    const firstName = firstNameInput.value.trim();
-    const lastName = lastNameInput.value.trim();
-    const email = emailInput.value.trim();
-    const phone = phoneInput.value.trim();
 
     const full_name = `${firstName} ${lastName}`.trim();
+    const payload   = { full_name, email, phone, cea_number, whatsapp, bio };
+    if (new_password) { payload.current_password = cur_password; payload.new_password = new_password; }
 
-    const res = await fetch(`/api/profile/${currentUser.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ full_name, email, phone })
+    const res  = await fetch(`/api/profile/${currentUser.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
     });
-
     const data = await res.json();
+    if (data.error) { showToast(data.error, true); return; }
 
-    if (data.error) {
-        alert(data.error);
-        return;
-    }
-
-    currentUser = data.user;
+    currentUser = { ...currentUser, ...data.user };
     saveCurrentUser();
     updateAuthUI();
     loadProfileForm();
     showToast('Profile updated successfully');
+}
+
+function confirmDeleteAccount() {
+    const modal = document.getElementById('delete-account-modal');
+    if (modal) { modal.classList.remove('hidden'); modal.classList.add('flex'); }
+    const errEl = document.getElementById('delete-account-error');
+    if (errEl) errEl.classList.add('hidden');
+    const pwEl = document.getElementById('delete-confirm-password');
+    if (pwEl) pwEl.value = '';
+    lucide.createIcons();
+}
+
+async function executeDeleteAccount() {
+    if (!currentUser) return;
+    const password = (document.getElementById('delete-confirm-password')?.value || '').trim();
+    const errEl    = document.getElementById('delete-account-error');
+    if (!password) {
+        if (errEl) { errEl.textContent = 'Password is required.'; errEl.classList.remove('hidden'); }
+        return;
+    }
+    const res  = await fetch(`/api/profile/${currentUser.id}`, {
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password })
+    });
+    const data = await res.json();
+    if (data.error) {
+        if (errEl) { errEl.textContent = data.error; errEl.classList.remove('hidden'); }
+        return;
+    }
+    // Logged out
+    const modal = document.getElementById('delete-account-modal');
+    if (modal) { modal.classList.add('hidden'); modal.classList.remove('flex'); }
+    currentUser = null;
+    localStorage.removeItem('currentUser');
+    updateAuthUI();
+    showView('home');
+    showToast('Account deleted.');
 }
 
 // ── Profile Photo Upload ──────────────────────────────────────
@@ -2761,16 +2874,326 @@ function restoreLastView() {
     }
 }
 
-function showToast(message) {
+function showToast(message, isError = false) {
     const toast = document.getElementById('toast-message');
     if (!toast) return;
-
     toast.textContent = message;
-    toast.classList.remove('hidden');
+    toast.classList.remove('hidden', 'bg-emerald-600', 'bg-rose-600');
+    toast.classList.add(isError ? 'bg-rose-600' : 'bg-emerald-600');
+    setTimeout(() => { toast.classList.add('hidden'); }, 2500);
+}
 
-    setTimeout(() => {
-        toast.classList.add('hidden');
-    }, 2500);
+// ── Feedback Modal ────────────────────────────────────────────
+function openFeedbackModal() {
+    const m = document.getElementById('feedback-modal');
+    if (m) { m.classList.remove('hidden'); m.classList.add('flex'); }
+    lucide.createIcons();
+}
+function closeFeedbackModal() {
+    const m = document.getElementById('feedback-modal');
+    if (m) { m.classList.add('hidden'); m.classList.remove('flex'); }
+}
+
+// ── Chatbot ───────────────────────────────────────────────────
+let _chatOpen    = false;
+let _chatHistory = []; // [{role, content}]
+
+function toggleChat() {
+    _chatOpen = !_chatOpen;
+    const panel = document.getElementById('chat-panel');
+    const icon  = document.getElementById('chat-toggle-icon');
+    if (panel) { panel.classList.toggle('hidden', !_chatOpen); panel.classList.toggle('flex', _chatOpen); }
+    if (icon)  { icon.setAttribute('data-lucide', _chatOpen ? 'x' : 'message-circle'); lucide.createIcons(); }
+}
+
+async function sendChatMessage() {
+    const input = document.getElementById('chat-input');
+    const text  = (input?.value || '').trim();
+    if (!text) return;
+    input.value = '';
+
+    appendChatMessage('user', text);
+    _chatHistory.push({ role: 'user', content: text });
+
+    // Typing indicator
+    const typingId = 'chat-typing-' + Date.now();
+    appendChatMessage('assistant', '…', typingId);
+
+    try {
+        const res  = await fetch('/api/chat', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messages: _chatHistory })
+        });
+        const data = await res.json();
+        const reply = data.reply || 'Sorry, I could not respond.';
+
+        // Replace typing indicator
+        const typingEl = document.getElementById(typingId);
+        if (typingEl) typingEl.textContent = reply;
+        else appendChatMessage('assistant', reply);
+
+        _chatHistory.push({ role: 'assistant', content: reply });
+        if (_chatHistory.length > 20) _chatHistory = _chatHistory.slice(-20);
+    } catch {
+        const typingEl = document.getElementById(typingId);
+        if (typingEl) typingEl.textContent = 'Connection error. Please try again.';
+    }
+}
+
+function appendChatMessage(role, text, id) {
+    const container = document.getElementById('chat-messages');
+    if (!container) return;
+    const isUser = role === 'user';
+    const wrapper = document.createElement('div');
+    wrapper.className = `flex gap-2 ${isUser ? 'flex-row-reverse' : ''}`;
+    const bubble = document.createElement('div');
+    if (id) bubble.id = id;
+    bubble.className = isUser
+        ? 'bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm max-w-[80%] ml-auto'
+        : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm max-w-[80%]';
+    bubble.textContent = text;
+    if (!isUser) {
+        const icon = document.createElement('div');
+        icon.className = 'w-7 h-7 bg-blue-100 rounded-full flex items-center justify-center shrink-0 self-end';
+        icon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 text-blue-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/></svg>';
+        wrapper.appendChild(icon);
+    }
+    wrapper.appendChild(bubble);
+    container.appendChild(wrapper);
+    container.scrollTop = container.scrollHeight;
+}
+
+// ── Guides — Calculators ──────────────────────────────────────
+function calcStampDuty() {
+    const price   = parseFloat(document.getElementById('calc-bsd-price')?.value) || 0;
+    const profile = document.getElementById('calc-buyer-profile')?.value || 'sc_first';
+    if (!price) return;
+
+    // BSD: progressive rates
+    let bsd = 0;
+    const bsdBands = [[180000,0.01],[180000,0.02],[640000,0.03],[500000,0.04],[1500000,0.05],[Infinity,0.06]];
+    let rem = price;
+    for (const [band, rate] of bsdBands) {
+        const chunk = Math.min(rem, band);
+        bsd += chunk * rate;
+        rem -= chunk;
+        if (rem <= 0) break;
+    }
+
+    // ABSD rates (2023 revised)
+    const absdRates = {
+        sc_first:0, sc_second:0.20, sc_third:0.30,
+        pr_first:0.05, pr_second:0.30,
+        foreigner:0.60, entity:0.65
+    };
+    const absd = price * (absdRates[profile] || 0);
+
+    const fmt = v => 'S$' + Math.round(v).toLocaleString();
+    document.getElementById('bsd-amount').textContent   = fmt(bsd);
+    document.getElementById('absd-amount').textContent  = fmt(absd);
+    document.getElementById('total-stamp').textContent  = fmt(bsd + absd);
+    document.getElementById('stamp-duty-result').classList.remove('hidden');
+}
+
+function calcLoan() {
+    const P = parseFloat(document.getElementById('calc-loan-amt')?.value)    || 0;
+    const r = parseFloat(document.getElementById('calc-loan-rate')?.value)   / 100 / 12 || 0;
+    const n = parseFloat(document.getElementById('calc-loan-tenure')?.value) * 12 || 0;
+    if (!P || !r || !n) return;
+    const monthly  = P * r * Math.pow(1+r,n) / (Math.pow(1+r,n)-1);
+    const totalPay = monthly * n;
+    const totalInt = totalPay - P;
+    const fmt = v => 'S$' + Math.round(v).toLocaleString();
+    document.getElementById('monthly-repayment').textContent = fmt(monthly);
+    document.getElementById('total-interest').textContent    = fmt(totalInt);
+    document.getElementById('total-payment').textContent     = fmt(totalPay);
+    document.getElementById('loan-result').classList.remove('hidden');
+}
+
+function calcAffordability() {
+    const income = parseFloat(document.getElementById('calc-income')?.value)  || 0;
+    const debts  = parseFloat(document.getElementById('calc-debts')?.value)   || 0;
+    const cpf    = parseFloat(document.getElementById('calc-cpf')?.value)     || 0;
+    const cash   = parseFloat(document.getElementById('calc-cash')?.value)    || 0;
+    if (!income) return;
+    const maxMonthly = income * 0.30 - debts;
+    if (maxMonthly <= 0) {
+        document.getElementById('max-monthly').textContent = 'Exceeds MSR';
+        document.getElementById('max-loan').textContent    = 'S$0';
+        document.getElementById('max-price').textContent   = 'S$0';
+        document.getElementById('affordability-result').classList.remove('hidden');
+        return;
+    }
+    // Approx max loan at 2.6% over 25 years
+    const r = 0.026/12, n = 25*12;
+    const maxLoan  = maxMonthly * (Math.pow(1+r,n)-1) / (r * Math.pow(1+r,n));
+    const maxPrice = maxLoan + cpf + cash;
+    const fmt = v => 'S$' + Math.round(v).toLocaleString();
+    document.getElementById('max-monthly').textContent  = fmt(maxMonthly);
+    document.getElementById('max-loan').textContent     = fmt(maxLoan);
+    document.getElementById('max-price').textContent    = fmt(maxPrice);
+    document.getElementById('affordability-result').classList.remove('hidden');
+}
+
+// ── Guides — Agent Listings ───────────────────────────────────
+async function loadAgents() {
+    try {
+        const res    = await fetch('/api/agents');
+        const data   = await res.json();
+        const agents = data.agents || [];
+        const list   = document.getElementById('agents-list');
+        const empty  = document.getElementById('agents-empty');
+        const loading = document.getElementById('agents-loading');
+        if (loading) loading.classList.add('hidden');
+        if (!agents.length) { if (empty) empty.classList.remove('hidden'); return; }
+        if (list) {
+            list.classList.remove('hidden');
+            list.innerHTML = agents.map(a => `
+                <div class="snap-start shrink-0 w-56 bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-100 dark:border-slate-700 card-shadow flex flex-col items-center text-center gap-3">
+                    <div class="w-16 h-16 bg-gradient-to-br from-blue-400 to-violet-500 rounded-full flex items-center justify-center text-2xl font-black text-white">
+                        ${(a.full_name || 'A')[0].toUpperCase()}
+                    </div>
+                    <div>
+                        <p class="font-bold text-slate-900 dark:text-white text-sm">${a.full_name || ''}</p>
+                        <p class="text-xs text-slate-400 mt-0.5">${a.cea_number ? 'CEA: ' + a.cea_number : 'Property Agent'}</p>
+                        ${a.bio ? `<p class="text-xs text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">${a.bio}</p>` : ''}
+                    </div>
+                    ${a.whatsapp ? `<a href="https://wa.me/${a.whatsapp.replace(/[^0-9]/g,'')}" target="_blank" class="w-full py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M11.5 0C5.149 0 0 5.149 0 11.5c0 2.107.573 4.077 1.567 5.765L0 23l5.898-1.543A11.454 11.454 0 0011.5 23C17.851 23 23 17.851 23 11.5S17.851 0 11.5 0zm0 21.1a9.593 9.593 0 01-4.9-1.345l-.351-.208-3.624.949.967-3.533-.228-.363A9.564 9.564 0 011.9 11.5C1.9 6.198 6.198 1.9 11.5 1.9S21.1 6.198 21.1 11.5 16.802 21.1 11.5 21.1z"/></svg>
+                        WhatsApp
+                    </a>` : `<p class="text-xs text-slate-400">No contact listed</p>`}
+                </div>
+            `).join('');
+        }
+    } catch { /* silent */ }
+}
+
+// ── Recently Searched ─────────────────────────────────────────
+const _RECENT_KEY = 'propai_recent_searches';
+const _RECENT_MAX = 5;
+
+function saveRecentSearch(entry) {
+    let items = getRecentSearches();
+    // Remove duplicate same postal
+    items = items.filter(i => i.postal !== entry.postal);
+    items.unshift(entry);
+    if (items.length > _RECENT_MAX) items = items.slice(0, _RECENT_MAX);
+    localStorage.setItem(_RECENT_KEY, JSON.stringify(items));
+    renderRecentSearches();
+}
+
+function getRecentSearches() {
+    try { return JSON.parse(localStorage.getItem(_RECENT_KEY)) || []; }
+    catch { return []; }
+}
+
+function clearRecentSearches() {
+    localStorage.removeItem(_RECENT_KEY);
+    renderRecentSearches();
+}
+
+function renderRecentSearches() {
+    const section = document.getElementById('recent-searches-section');
+    const list    = document.getElementById('recent-searches-list');
+    const items   = getRecentSearches();
+    if (!section || !list) return;
+    if (!items.length) { section.classList.add('hidden'); return; }
+    section.classList.remove('hidden');
+    list.innerHTML = items.map(i => `
+        <button onclick="restoreRecentSearch('${i.postal}')"
+            class="w-full flex items-center justify-between px-5 py-4 bg-slate-50 dark:bg-slate-700/50 rounded-2xl hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors text-left group">
+            <div class="flex items-center gap-4">
+                <div class="w-10 h-10 bg-white dark:bg-slate-600 rounded-xl flex items-center justify-center shrink-0 shadow-sm">
+                    <span class="text-lg">${i.property_type === 'HDB' ? '🏢' : '🏙️'}</span>
+                </div>
+                <div>
+                    <p class="font-bold text-slate-900 dark:text-white text-sm">${i.address || i.postal}</p>
+                    <p class="text-xs text-slate-400">${i.property_type} · ${i.estimate ? 'S$' + parseInt(i.estimate).toLocaleString() : 'searched'} · ${i.date || ''}</p>
+                </div>
+            </div>
+            <svg class="w-4 h-4 text-slate-300 group-hover:text-blue-500 transition-colors shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+        </button>
+    `).join('');
+}
+
+function restoreRecentSearch(postal) {
+    const postalInput = document.getElementById('input-postal');
+    if (postalInput) {
+        postalInput.value = postal;
+        handlePostalSearch();
+        showView('predict');
+    }
+}
+
+// ── Lease Decay Chart ─────────────────────────────────────────
+let _leaseDecayChart = null;
+
+function renderLeaseDecayChart(estimatedValue, remainingLease, propertyType) {
+    const section = document.getElementById('lease-decay-section');
+    const canvas  = document.getElementById('lease-decay-chart');
+    if (!section || !canvas) return;
+
+    // Only show for leasehold (HDB or 99-yr condo)
+    if (!remainingLease || remainingLease <= 0 || propertyType === 'Freehold') {
+        section.classList.add('hidden');
+        return;
+    }
+    section.classList.remove('hidden');
+
+    // Build projection: every 5 years, estimate value decay
+    const years   = [];
+    const values  = [];
+    const maxYrs  = Math.min(remainingLease, 60);
+
+    for (let t = 0; t <= maxYrs; t += 5) {
+        years.push(`${new Date().getFullYear() + t}`);
+        const lr = remainingLease - t;
+        // Lease decay model: minimal decay above 60yr, accelerating below
+        let factor;
+        if (lr >= 60)      factor = 1 - (remainingLease - lr) * 0.002;
+        else if (lr >= 30) factor = (0.88 - (60 - lr) * 0.008);
+        else               factor = Math.max(0.1, 0.64 - (30 - lr) * 0.018);
+        values.push(Math.round(estimatedValue * factor));
+    }
+
+    if (_leaseDecayChart) _leaseDecayChart.destroy();
+    const ctx = canvas.getContext('2d');
+    const isDark = document.documentElement.classList.contains('dark');
+    _leaseDecayChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: years,
+            datasets: [{
+                label: 'Estimated Value (S$)',
+                data: values,
+                borderColor: '#f59e0b',
+                backgroundColor: 'rgba(245,158,11,0.1)',
+                borderWidth: 2.5,
+                pointBackgroundColor: '#f59e0b',
+                pointRadius: 4,
+                fill: true,
+                tension: 0.4
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => ' S$' + ctx.parsed.y.toLocaleString()
+                    }
+                }
+            },
+            scales: {
+                x: { grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' },
+                     ticks: { color: isDark ? '#94a3b8' : '#64748b', font: { size: 11 } } },
+                y: { grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' },
+                     ticks: { color: isDark ? '#94a3b8' : '#64748b', font: { size: 11 },
+                              callback: v => 'S$' + (v/1000).toFixed(0) + 'k' } }
+            }
+        }
+    });
 }
 
 loadCurrentUser();
@@ -2875,6 +3298,7 @@ async function submitFeedback() {
             document.getElementById('feedback-name').value    = '';
             document.getElementById('feedback-email').value   = '';
             document.getElementById('feedback-message').value = '';
+            setTimeout(() => closeFeedbackModal(), 2000);
         } else {
             throw new Error(data.error || 'Failed to send feedback.');
         }

@@ -599,6 +599,14 @@ def migrate_db():
                 try: cur.execute(f"DROP TABLE IF EXISTS {tbl}")
                 except Exception: pass
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()")
+            for col_def in [
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS account_type TEXT DEFAULT 'homeowner'",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS cea_number TEXT DEFAULT ''",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS whatsapp TEXT DEFAULT ''",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT DEFAULT ''",
+            ]:
+                try: cur.execute(col_def)
+                except Exception: pass
             # Ensure resale_flat_prices has all columns
             for col_def in [
                 "ALTER TABLE resale_flat_prices ADD COLUMN IF NOT EXISTS month TEXT",
@@ -670,6 +678,10 @@ def migrate_db():
         else:
             for stmt in [
                 "ALTER TABLE users ADD COLUMN created_at TEXT DEFAULT (datetime('now'))",
+                "ALTER TABLE users ADD COLUMN account_type TEXT DEFAULT 'homeowner'",
+                "ALTER TABLE users ADD COLUMN cea_number TEXT DEFAULT ''",
+                "ALTER TABLE users ADD COLUMN whatsapp TEXT DEFAULT ''",
+                "ALTER TABLE users ADD COLUMN bio TEXT DEFAULT ''",
                 "ALTER TABLE geocoded_addresses ADD COLUMN search_text TEXT",
                 "ALTER TABLE geocoded_addresses ADD COLUMN lat REAL",
                 "ALTER TABLE geocoded_addresses ADD COLUMN lon REAL",
@@ -1468,10 +1480,13 @@ def trend():
 
 @app.route('/api/register', methods=['POST'])
 def register():
-    data      = request.json
-    full_name = data.get('full_name', '').strip()
-    email     = data.get('email', '').strip().lower()
-    password  = data.get('password', '').strip()
+    data         = request.json
+    full_name    = data.get('full_name', '').strip()
+    email        = data.get('email', '').strip().lower()
+    password     = data.get('password', '').strip()
+    account_type = data.get('account_type', 'homeowner').strip()
+    if account_type not in ('homeowner', 'agent'):
+        account_type = 'homeowner'
 
     if not full_name or not email or not password:
         return jsonify({"error": "All fields are required"}), 400
@@ -1487,17 +1502,17 @@ def register():
     password_hash = hashlib.sha256(password.encode()).hexdigest()
 
     if USE_POSTGRES:
-        cur.execute("INSERT INTO users (full_name, email, password_hash) VALUES (%s, %s, %s) RETURNING id",
-                    (full_name, email, password_hash))
+        cur.execute("INSERT INTO users (full_name, email, password_hash, account_type) VALUES (%s, %s, %s, %s) RETURNING id",
+                    (full_name, email, password_hash, account_type))
         user_id = cur.fetchone()["id"]
     else:
-        cur.execute("INSERT INTO users (full_name, email, password_hash) VALUES (?, ?, ?)",
-                    (full_name, email, password_hash))
+        cur.execute("INSERT INTO users (full_name, email, password_hash, account_type) VALUES (?, ?, ?, ?)",
+                    (full_name, email, password_hash, account_type))
         user_id = cur.lastrowid
 
     conn.commit()
 
-    cur.execute(_q("SELECT id, full_name, email, phone, role FROM users WHERE id = ?"), (user_id,))
+    cur.execute(_q("SELECT id, full_name, email, phone, role, account_type, cea_number, whatsapp, bio FROM users WHERE id = ?"), (user_id,))
     user = _row(cur)
     conn.close()
     return jsonify({"user": user}), 201
@@ -1526,7 +1541,11 @@ def login():
 
     return jsonify({"user": {"id": user["id"], "full_name": user["full_name"],
                               "email": user["email"], "phone": user["phone"],
-                              "role": user["role"], "is_admin": user["role"] == "admin"}})
+                              "role": user["role"], "is_admin": user["role"] == "admin",
+                              "account_type": user.get("account_type", "homeowner"),
+                              "cea_number": user.get("cea_number", ""),
+                              "whatsapp": user.get("whatsapp", ""),
+                              "bio": user.get("bio", "")}})
 
 
 @app.route('/api/users', methods=['GET'])
@@ -1590,31 +1609,148 @@ def forgot_password():
 
 @app.route('/api/profile/<int:user_id>', methods=['PUT'])
 def update_profile(user_id):
-    data      = request.json
-    full_name = data.get('full_name', '').strip()
-    email     = data.get('email', '').strip().lower()
-    phone     = data.get('phone', '').strip()
+    data         = request.json
+    full_name    = data.get('full_name', '').strip()
+    email        = data.get('email', '').strip().lower()
+    phone        = data.get('phone', '').strip()
+    account_type = data.get('account_type', '').strip()
+    cea_number   = data.get('cea_number', '').strip()
+    whatsapp     = data.get('whatsapp', '').strip()
+    bio          = data.get('bio', '').strip()
+    new_password = data.get('new_password', '').strip()
+    cur_password = data.get('current_password', '').strip()
 
     if not full_name or not email:
         return jsonify({"error": "Full name and email are required"}), 400
 
     conn = get_db()
     cur  = _cursor(conn)
-    cur.execute(_q("SELECT id FROM users WHERE email = ? AND id != ?"), (email, user_id))
+
+    cur.execute(_q("SELECT id, password_hash FROM users WHERE email = ? AND id != ?"), (email, user_id))
     if _row(cur):
         conn.close()
         return jsonify({"error": "Email already in use"}), 400
 
-    cur.execute(_q("UPDATE users SET full_name = ?, email = ?, phone = ? WHERE id = ?"),
-                (full_name, email, phone, user_id))
+    # Password change
+    if new_password:
+        cur.execute(_q("SELECT password_hash FROM users WHERE id = ?"), (user_id,))
+        row = _row(cur)
+        if not row or row['password_hash'] != hashlib.sha256(cur_password.encode()).hexdigest():
+            conn.close()
+            return jsonify({"error": "Current password is incorrect"}), 400
+        new_hash = hashlib.sha256(new_password.encode()).hexdigest()
+        cur.execute(_q("UPDATE users SET password_hash = ? WHERE id = ?"), (new_hash, user_id))
+
+    set_clause = "full_name = ?, email = ?, phone = ?"
+    params     = [full_name, email, phone]
+    if account_type in ('homeowner', 'agent'):
+        set_clause += ", account_type = ?"
+        params.append(account_type)
+    if cea_number is not None:
+        set_clause += ", cea_number = ?"
+        params.append(cea_number)
+    if whatsapp is not None:
+        set_clause += ", whatsapp = ?"
+        params.append(whatsapp)
+    if bio is not None:
+        set_clause += ", bio = ?"
+        params.append(bio)
+    params.append(user_id)
+    cur.execute(_q(f"UPDATE users SET {set_clause} WHERE id = ?"), params)
     conn.commit()
-    cur.execute(_q("SELECT id, full_name, email, phone FROM users WHERE id = ?"), (user_id,))
+    cur.execute(_q("SELECT id, full_name, email, phone, role, account_type, cea_number, whatsapp, bio FROM users WHERE id = ?"), (user_id,))
     user = _row(cur)
     conn.close()
 
     if not user:
         return jsonify({"error": "User not found"}), 404
     return jsonify({"user": user})
+
+
+@app.route('/api/profile/<int:user_id>', methods=['DELETE'])
+def delete_account(user_id):
+    """Self-service account deletion."""
+    data     = request.json or {}
+    password = data.get('password', '').strip()
+    conn = get_db()
+    cur  = _cursor(conn)
+    cur.execute(_q("SELECT password_hash FROM users WHERE id = ?"), (user_id,))
+    row = _row(cur)
+    if not row:
+        conn.close()
+        return jsonify({"error": "User not found"}), 404
+    if row['password_hash'] != hashlib.sha256(password.encode()).hexdigest():
+        conn.close()
+        return jsonify({"error": "Incorrect password"}), 401
+    cur.execute(_q("DELETE FROM users WHERE id = ?"), (user_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({"success": True})
+
+
+@app.route('/api/agents', methods=['GET'])
+def get_agents():
+    """Return all users registered as property agents."""
+    conn = get_db()
+    cur  = _cursor(conn)
+    cur.execute(_q(
+        "SELECT id, full_name, email, phone, cea_number, whatsapp, bio FROM users "
+        "WHERE account_type = ? ORDER BY full_name"
+    ), ('agent',))
+    agents = _rows(cur)
+    conn.close()
+    return jsonify({"agents": agents})
+
+
+@app.route('/api/chat', methods=['POST'])
+def chatbot():
+    """Property AI chatbot powered by Anthropic Claude API."""
+    import os as _os
+    api_key = _os.environ.get('ANTHROPIC_API_KEY', '')
+    if not api_key:
+        return jsonify({"reply": "Chatbot is not configured (missing API key)."}), 200
+
+    data     = request.json or {}
+    messages = data.get('messages', [])  # [{"role": "user"/"assistant", "content": "..."}]
+    if not messages:
+        return jsonify({"reply": "No message provided."}), 400
+
+    try:
+        import urllib.request as _ur
+        import json as _json
+
+        system_prompt = (
+            "You are PropBot, an AI assistant for PropAI.sg — Singapore's property valuation platform. "
+            "Help users with questions about Singapore property, HDB resale, private condominiums, "
+            "the buying/selling process, CPF usage, BSD/ABSD stamp duties, HDB grants, loan eligibility, "
+            "lease decay, property valuation factors, and market trends. "
+            "Be concise, practical, and Singapore-specific. "
+            "Always remind users that valuations are estimates and not financial advice. "
+            "If asked about specific prices, recommend using the Predict tab for AI-powered valuations."
+        )
+
+        payload = _json.dumps({
+            "model": "claude-haiku-4-5-20251001",
+            "max_tokens": 512,
+            "system": system_prompt,
+            "messages": messages[-10:]  # keep last 10 turns for context
+        }).encode()
+
+        req = _ur.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01"
+            }
+        )
+        resp = _ur.urlopen(req, timeout=20)
+        result = _json.loads(resp.read())
+        reply = result.get("content", [{}])[0].get("text", "I couldn't generate a response.")
+        return jsonify({"reply": reply})
+    except Exception as e:
+        return jsonify({"reply": f"Sorry, I'm having trouble right now. Please try again shortly."}), 200
 
 
 @app.route('/api/property-lookup', methods=['GET'])
@@ -1693,12 +1829,74 @@ def property_lookup():
             prop_type  = 'Condominium'
             lease_type = 'Freehold'
         road_name = str(result.get('ROAD_NAME') or '').strip()
-        return jsonify({
+
+        # ── Query DB for accurate floor data ─────────────────────────────
+        storey_ranges = []
+        max_floor     = None
+        project_name  = building if not is_hdb else ''
+
+        try:
+            import re as _re2
+            dbc = get_db(); dbc_cur = _cursor(dbc)
+            if is_hdb and blk_no:
+                # Try block+road, then block-only, then block+town
+                def _q_storeys(extra, params):
+                    dbc_cur.execute(_q(
+                        "SELECT DISTINCT storey_range FROM resale_flat_prices "
+                        f"WHERE UPPER(block) = ? {extra} AND storey_range LIKE '% TO %' ORDER BY storey_range"
+                    ), params)
+                    return [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0])
+                            for r in dbc_cur.fetchall()]
+
+                block_upper = blk_no.upper()
+                road_upper  = road_name.upper()
+                srs = _q_storeys("AND UPPER(street_name) LIKE ?", (block_upper, f'%{road_upper[:6]}%')) if road_upper else []
+                if not srs:
+                    srs = _q_storeys("", (block_upper,))
+                if not srs and town:
+                    dbc_cur.execute(_q(
+                        "SELECT DISTINCT storey_range FROM resale_flat_prices "
+                        "WHERE UPPER(block) = ? AND UPPER(town) = ? AND storey_range LIKE '% TO %' ORDER BY storey_range"
+                    ), (block_upper, town.upper()))
+                    srs = [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0])
+                           for r in dbc_cur.fetchall()]
+                storey_ranges = srs
+                if srs:
+                    def _top(s):
+                        try: return int(s.split(' TO ')[-1].strip())
+                        except: return 0
+                    max_floor = max(_top(s) for s in srs)
+
+            elif not is_hdb and not is_landed and building not in ('NIL', ''):
+                # Condo: get floor_level from ura_transactions by project name
+                dbc_cur.execute(_q(
+                    "SELECT DISTINCT floor_level FROM ura_transactions "
+                    "WHERE UPPER(project) = ? AND floor_level IS NOT NULL AND floor_level != ''"
+                ), (building.upper(),))
+                fl_rows = [str(r['floor_level'] if hasattr(r, '__getitem__') else r[0])
+                           for r in dbc_cur.fetchall()]
+                if fl_rows:
+                    def _fl_top(s):
+                        nums = _re2.findall(r'\d+', s)
+                        return int(nums[-1]) if nums else 0
+                    max_floor = max(_fl_top(s) for s in fl_rows)
+                    storey_ranges = sorted(set(fl_rows),
+                                          key=lambda s: int(_re2.findall(r'\d+', s)[0]) if _re2.findall(r'\d+', s) else 0)
+            dbc.close()
+        except Exception:
+            pass
+
+        resp = {
             'town': town, 'property_type': prop_type,
             'lease_type': lease_type, 'is_hdb': is_hdb,
             'is_landed': is_landed, 'building_name': building,
             'block': blk_no, 'road_name': road_name,
-        })
+            'project_name': project_name,
+            'storey_ranges': storey_ranges,
+        }
+        if max_floor is not None:
+            resp['max_floor'] = int(max_floor)
+        return jsonify(resp)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -1789,6 +1987,7 @@ def property_areas():
     block         = request.args.get('block', '').strip().upper()
     road          = request.args.get('road', '').strip().upper()
     town          = request.args.get('town', '').strip().upper()
+    project_name  = request.args.get('project', '').strip().upper()
 
     # Postal sector → URA postal district mapping (first 2 postal digits)
     _SECTOR_TO_DISTRICT = {
@@ -1913,32 +2112,48 @@ def property_areas():
             storey_ranges = raw_ranges
 
         else:  # Condominium
-            sector   = postal[:2] if len(postal) >= 2 else ''
-            district = _SECTOR_TO_DISTRICT.get(sector, '')
-            if district:
+            def _condo_query(where, params):
                 cur.execute(_q(
                     "SELECT DISTINCT floor_area_sqft FROM ura_transactions "
-                    "WHERE postal_district = ? AND floor_area_sqft IS NOT NULL AND floor_area_sqft > 0 "
+                    f"WHERE {where} AND floor_area_sqft IS NOT NULL AND floor_area_sqft > 0 "
                     "ORDER BY floor_area_sqft"
-                ), (district,))
+                ), params)
                 rows = cur.fetchall()
-                raw = sorted(set(float(r['floor_area_sqft'] if hasattr(r, '__getitem__') else r[0])
-                                 for r in rows if (r['floor_area_sqft'] if hasattr(r, '__getitem__') else r[0])))
-                # Round to nearest 50 sqft, deduplicate
-                floor_areas = sorted(set(round(v / 50.0) * 50 for v in raw))
+                return sorted(set(float(r['floor_area_sqft'] if hasattr(r, '__getitem__') else r[0])
+                                  for r in rows if (r['floor_area_sqft'] if hasattr(r, '__getitem__') else r[0])))
 
-                # Max floor from floor_level field
+            def _condo_floors(where, params):
                 cur.execute(_q(
                     "SELECT floor_level FROM ura_transactions "
-                    "WHERE postal_district = ? AND floor_level IS NOT NULL AND floor_level != ''"
-                ), (district,))
-                fl_rows = [str(r['floor_level'] if hasattr(r, '__getitem__') else r[0]) for r in cur.fetchall()]
-                def _fl_top(s):
-                    nums = _re.findall(r'\d+', s)
-                    return int(nums[-1]) if nums else 0
-                tops = [_fl_top(s) for s in fl_rows]
-                if tops:
-                    max_floor = max(tops)
+                    f"WHERE {where} AND floor_level IS NOT NULL AND floor_level != ''"
+                ), params)
+                return [str(r['floor_level'] if hasattr(r, '__getitem__') else r[0]) for r in cur.fetchall()]
+
+            def _fl_top(s):
+                nums = _re.findall(r'\d+', s)
+                return int(nums[-1]) if nums else 0
+
+            raw = []
+            fl_rows = []
+
+            # 1. Try by exact project name (most specific)
+            if project_name:
+                raw     = _condo_query("UPPER(project) = ?", (project_name,))
+                fl_rows = _condo_floors("UPPER(project) = ?", (project_name,))
+
+            # 2. Fall back to postal district
+            if not raw:
+                sector   = postal[:2] if len(postal) >= 2 else ''
+                district = _SECTOR_TO_DISTRICT.get(sector, '')
+                if district:
+                    raw     = _condo_query("postal_district = ?", (district,))
+                    fl_rows = _condo_floors("postal_district = ?", (district,))
+
+            if raw:
+                floor_areas = sorted(set(round(v / 50.0) * 50 for v in raw))
+            tops = [_fl_top(s) for s in fl_rows]
+            if tops:
+                max_floor = max(tops)
 
         conn.close()
     except Exception:
