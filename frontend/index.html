@@ -653,41 +653,181 @@
                     <p class="text-slate-500 dark:text-slate-400 text-lg">Everything you need to navigate Singapore's property market.</p>
                 </header>
 
-                <!-- Buying Process -->
-                <div>
-                    <h2 class="text-2xl font-bold mb-6 dark:text-white flex items-center gap-3"><i data-lucide="map-pinned" class="w-6 h-6 text-blue-600"></i> HDB Buying Process</h2>
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+                <!-- Guide Topic Tabs -->
+                <div class="flex gap-2 flex-wrap">
+                    <button onclick="switchGuideTab('hdb')" id="guide-tab-hdb" class="guide-tab-btn px-5 py-2.5 rounded-xl text-sm font-bold bg-blue-600 text-white transition-all">HDB Resale</button>
+                    <button onclick="switchGuideTab('condo')" id="guide-tab-condo" class="guide-tab-btn px-5 py-2.5 rounded-xl text-sm font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 transition-all">Private Condo</button>
+                    <button onclick="switchGuideTab('financing')" id="guide-tab-financing" class="guide-tab-btn px-5 py-2.5 rounded-xl text-sm font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 transition-all">Financing</button>
+                    <button onclick="switchGuideTab('policy')" id="guide-tab-policy" class="guide-tab-btn px-5 py-2.5 rounded-xl text-sm font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 transition-all">Latest Policies</button>
+                </div>
+
+                <!-- HDB Resale Guide -->
+                <div id="guide-content-hdb">
+                    <h2 class="text-2xl font-bold mb-6 dark:text-white flex items-center gap-3"><i data-lucide="building-2" class="w-6 h-6 text-blue-600"></i> HDB Resale — Buying Process &amp; Key Policies</h2>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
                         <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-100 dark:border-slate-700 card-shadow space-y-2">
                             <div class="w-10 h-10 bg-blue-600 text-white rounded-2xl flex items-center justify-center font-black text-lg">1</div>
                             <h3 class="font-bold text-slate-900 dark:text-white">Check Eligibility</h3>
-                            <p class="text-sm text-slate-500 dark:text-slate-400">Verify your citizenship, age, family nucleus, and income ceiling with HDB's eligibility checker.</p>
+                            <p class="text-sm text-slate-500 dark:text-slate-400">SC/PR citizenship, age ≥21, valid family nucleus (married/parent/sibling scheme). Income ceiling applies for grants, not resale purchase.</p>
                         </div>
                         <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-100 dark:border-slate-700 card-shadow space-y-2">
                             <div class="w-10 h-10 bg-blue-600 text-white rounded-2xl flex items-center justify-center font-black text-lg">2</div>
-                            <h3 class="font-bold text-slate-900 dark:text-white">Secure HDB Loan Eligibility</h3>
-                            <p class="text-sm text-slate-500 dark:text-slate-400">Apply for an HLE letter (valid 6 months) before exercising Option to Purchase.</p>
+                            <h3 class="font-bold text-slate-900 dark:text-white">HLE / Bank Approval</h3>
+                            <p class="text-sm text-slate-500 dark:text-slate-400">Get HDB Loan Eligibility (HLE) letter if taking HDB loan, or in-principle approval from bank. HLE valid 6 months.</p>
                         </div>
                         <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-100 dark:border-slate-700 card-shadow space-y-2">
                             <div class="w-10 h-10 bg-blue-600 text-white rounded-2xl flex items-center justify-center font-black text-lg">3</div>
                             <h3 class="font-bold text-slate-900 dark:text-white">Register Intent to Buy</h3>
-                            <p class="text-sm text-slate-500 dark:text-slate-400">Register on HDB's Resale Portal. One concurrent registration per household.</p>
+                            <p class="text-sm text-slate-500 dark:text-slate-400">Register on HDB Resale Portal. One active registration per household at a time.</p>
                         </div>
                         <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-100 dark:border-slate-700 card-shadow space-y-2">
                             <div class="w-10 h-10 bg-blue-600 text-white rounded-2xl flex items-center justify-center font-black text-lg">4</div>
                             <h3 class="font-bold text-slate-900 dark:text-white">Option to Purchase (OTP)</h3>
-                            <p class="text-sm text-slate-500 dark:text-slate-400">Negotiate price with seller. OTP fee is $1–$5K (depending on flat type), valid 21 days.</p>
+                            <p class="text-sm text-slate-500 dark:text-slate-400">OTP fee: $1–$5K depending on flat price. Valid 21 calendar days. Exercise within the period to proceed.</p>
                         </div>
                         <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-100 dark:border-slate-700 card-shadow space-y-2">
                             <div class="w-10 h-10 bg-blue-600 text-white rounded-2xl flex items-center justify-center font-black text-lg">5</div>
                             <h3 class="font-bold text-slate-900 dark:text-white">Submit Resale Application</h3>
-                            <p class="text-sm text-slate-500 dark:text-slate-400">Both buyer and seller submit resale application on HDB portal within 7 days of OTP exercise.</p>
+                            <p class="text-sm text-slate-500 dark:text-slate-400">Buyer and seller both submit within 7 days of OTP exercise. HDB reviews in ~8 weeks.</p>
                         </div>
                         <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-100 dark:border-slate-700 card-shadow space-y-2">
                             <div class="w-10 h-10 bg-blue-600 text-white rounded-2xl flex items-center justify-center font-black text-lg">6</div>
-                            <h3 class="font-bold text-slate-900 dark:text-white">Completion</h3>
-                            <p class="text-sm text-slate-500 dark:text-slate-400">HDB approves and schedules completion (typically 8 weeks). Keys handed over at HDB Hub.</p>
+                            <h3 class="font-bold text-slate-900 dark:text-white">Completion &amp; Keys</h3>
+                            <p class="text-sm text-slate-500 dark:text-slate-400">Keys collected at HDB Hub. CPF/cash payment settled. BSD payable within 14 days of completion.</p>
                         </div>
                     </div>
+                    <!-- HDB Resale Key Policies -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+                        <div class="bg-blue-50 dark:bg-blue-900/20 p-6 rounded-3xl border border-blue-100 dark:border-blue-800/30 space-y-3">
+                            <h4 class="font-bold text-blue-900 dark:text-blue-200 flex items-center gap-2"><i data-lucide="gift" class="w-4 h-4"></i> CPF Housing Grants (Resale)</h4>
+                            <ul class="text-sm text-blue-800 dark:text-blue-300 space-y-1.5">
+                                <li><span class="font-bold">Enhanced CPF Housing Grant (EHG):</span> Up to $120K. Income ≤$9K/month. HDB loan only.</li>
+                                <li><span class="font-bold">Family Grant:</span> $50K (SC+SC) or $40K (SC+PR). Income ≤$14K.</li>
+                                <li><span class="font-bold">Proximity Housing Grant (PHG):</span> $30K (live with parents) or $20K (within 4km).</li>
+                                <li><span class="font-bold">Singles Grant:</span> $25K for SC singles aged ≥35 buying 2–4 room resale.</li>
+                                <li class="text-xs text-blue-600 dark:text-blue-400 pt-1">Grants credited to CPF OA, not cash. Must be first-time HDB buyers.</li>
+                            </ul>
+                        </div>
+                        <div class="bg-amber-50 dark:bg-amber-900/20 p-6 rounded-3xl border border-amber-100 dark:border-amber-800/30 space-y-3">
+                            <h4 class="font-bold text-amber-900 dark:text-amber-200 flex items-center gap-2"><i data-lucide="clock" class="w-4 h-4"></i> Minimum Occupation Period (MOP)</h4>
+                            <ul class="text-sm text-amber-800 dark:text-amber-300 space-y-1.5">
+                                <li><span class="font-bold">Standard MOP:</span> 5 years from key collection (resale or BTO).</li>
+                                <li><span class="font-bold">PLH flats (Prime Location):</span> 10 year MOP, subsidy clawback applies.</li>
+                                <li><span class="font-bold">After MOP:</span> Can sell on open market, rent out entire flat, or buy private property.</li>
+                                <li><span class="font-bold">During MOP:</span> Cannot own private residential property. Can rent out spare rooms.</li>
+                            </ul>
+                        </div>
+                        <div class="bg-emerald-50 dark:bg-emerald-900/20 p-6 rounded-3xl border border-emerald-100 dark:border-emerald-800/30 space-y-3">
+                            <h4 class="font-bold text-emerald-900 dark:text-emerald-200 flex items-center gap-2"><i data-lucide="percent" class="w-4 h-4"></i> HDB Loan vs Bank Loan</h4>
+                            <ul class="text-sm text-emerald-800 dark:text-emerald-300 space-y-1.5">
+                                <li><span class="font-bold">HDB Loan:</span> Rate = 0.1% above CPF OA (currently 2.6%). Up to 80% LTV. No cash down.</li>
+                                <li><span class="font-bold">Bank Loan:</span> Up to 75% LTV. Min 5% cash + 20% CPF/cash down payment.</li>
+                                <li><span class="font-bold">MSR (HDB):</span> Monthly repayment ≤30% of gross monthly income.</li>
+                                <li><span class="font-bold">TDSR:</span> All debt obligations ≤55% of gross income (applies to bank loans).</li>
+                            </ul>
+                        </div>
+                        <div class="bg-rose-50 dark:bg-rose-900/20 p-6 rounded-3xl border border-rose-100 dark:border-rose-800/30 space-y-3">
+                            <h4 class="font-bold text-rose-900 dark:text-rose-200 flex items-center gap-2"><i data-lucide="alert-triangle" class="w-4 h-4"></i> Lease Decay &amp; CPF Limits</h4>
+                            <ul class="text-sm text-rose-800 dark:text-rose-300 space-y-1.5">
+                                <li><span class="font-bold">CPF usage:</span> Pro-rated if flat lease &lt;60 years at point of purchase.</li>
+                                <li><span class="font-bold">Lease Consideration Policy:</span> CPF withdrawal limit = price × remaining lease ÷ 99.</li>
+                                <li><span class="font-bold">Bank loan restriction:</span> Banks may decline loans if lease &lt;30 years at end of loan tenure.</li>
+                                <li><span class="font-bold">Valuation impact:</span> Flats with &lt;60yr remaining see accelerating price decline.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Private Condo Guide -->
+                <div id="guide-content-condo" class="hidden">
+                    <h2 class="text-2xl font-bold mb-6 dark:text-white flex items-center gap-3"><i data-lucide="building" class="w-6 h-6 text-violet-600"></i> Private Condominium — Buying Process &amp; Key Policies</h2>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-5 mb-8">
+                        <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-100 dark:border-slate-700 card-shadow space-y-2">
+                            <div class="w-10 h-10 bg-violet-600 text-white rounded-2xl flex items-center justify-center font-black text-lg">1</div>
+                            <h3 class="font-bold text-slate-900 dark:text-white">Secure In-Principle Approval (IPA)</h3>
+                            <p class="text-sm text-slate-500 dark:text-slate-400">Get IPA from bank before making offers. TDSR ≤55% of gross income applies. Check your LTV (typically 75% first property).</p>
+                        </div>
+                        <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-100 dark:border-slate-700 card-shadow space-y-2">
+                            <div class="w-10 h-10 bg-violet-600 text-white rounded-2xl flex items-center justify-center font-black text-lg">2</div>
+                            <h3 class="font-bold text-slate-900 dark:text-white">Exercise OTP / S&amp;P Agreement</h3>
+                            <p class="text-sm text-slate-500 dark:text-slate-400">Pay 1% option fee. OTP valid 14 days (resale). Exercise with 4–9% balance deposit. Sales &amp; Purchase signed within 8 weeks.</p>
+                        </div>
+                        <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-100 dark:border-slate-700 card-shadow space-y-2">
+                            <div class="w-10 h-10 bg-violet-600 text-white rounded-2xl flex items-center justify-center font-black text-lg">3</div>
+                            <h3 class="font-bold text-slate-900 dark:text-white">Pay BSD &amp; ABSD</h3>
+                            <p class="text-sm text-slate-500 dark:text-slate-400">BSD payable within 14 days of OTP exercise. ABSD (if applicable) also due within 14 days. Cannot use CPF for ABSD.</p>
+                        </div>
+                        <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-100 dark:border-slate-700 card-shadow space-y-2">
+                            <div class="w-10 h-10 bg-violet-600 text-white rounded-2xl flex items-center justify-center font-black text-lg">4</div>
+                            <h3 class="font-bold text-slate-900 dark:text-white">Legal Completion</h3>
+                            <p class="text-sm text-slate-500 dark:text-slate-400">Conveyancing via solicitor. Completion typically 10–12 weeks from S&amp;P. Balance payment via CPF + cash + bank disbursement.</p>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+                        <div class="bg-violet-50 dark:bg-violet-900/20 p-6 rounded-3xl border border-violet-100 dark:border-violet-800/30 space-y-3">
+                            <h4 class="font-bold text-violet-900 dark:text-violet-200 flex items-center gap-2"><i data-lucide="receipt" class="w-4 h-4"></i> ABSD Rates (2023)</h4>
+                            <ul class="text-sm text-violet-800 dark:text-violet-300 space-y-1">
+                                <li><span class="font-bold">SC 1st property:</span> 0%</li>
+                                <li><span class="font-bold">SC 2nd property:</span> 20%</li>
+                                <li><span class="font-bold">SC 3rd+ property:</span> 30%</li>
+                                <li><span class="font-bold">PR 1st property:</span> 5%</li>
+                                <li><span class="font-bold">PR 2nd+ property:</span> 30%</li>
+                                <li><span class="font-bold">Foreigner:</span> 60%</li>
+                                <li><span class="font-bold">Entity:</span> 65%</li>
+                                <li class="text-xs text-violet-600 dark:text-violet-400 pt-1">ABSD remission available for married SC/PR couples downgrading (conditions apply).</li>
+                            </ul>
+                        </div>
+                        <div class="bg-slate-50 dark:bg-slate-700/50 p-6 rounded-3xl border border-slate-200 dark:border-slate-600 space-y-3">
+                            <h4 class="font-bold text-slate-900 dark:text-white flex items-center gap-2"><i data-lucide="trending-up" class="w-4 h-4"></i> SSD &amp; Seller Restrictions</h4>
+                            <ul class="text-sm text-slate-600 dark:text-slate-300 space-y-1">
+                                <li><span class="font-bold">SSD (Seller's Stamp Duty):</span> If sold within 3 years of purchase.</li>
+                                <li>Year 1: 12% · Year 2: 8% · Year 3: 4%</li>
+                                <li><span class="font-bold">No SSD</span> after 3 years from purchase date.</li>
+                                <li><span class="font-bold">HDB owners:</span> Must sell HDB within 6 months of private property completion.</li>
+                                <li><span class="font-bold">Rental income:</span> Taxable. Declare via IRAS annually.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Financing Guide -->
+                <div id="guide-content-financing" class="hidden">
+                    <h2 class="text-2xl font-bold mb-6 dark:text-white flex items-center gap-3"><i data-lucide="landmark" class="w-6 h-6 text-emerald-600"></i> Financing Guide</h2>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-5 mb-8">
+                        <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-100 dark:border-slate-700 card-shadow space-y-3">
+                            <h3 class="font-bold text-slate-900 dark:text-white">LTV Limits</h3>
+                            <table class="w-full text-sm">
+                                <thead><tr class="text-slate-400 text-xs uppercase"><th class="text-left pb-2">Loan Type</th><th class="text-right pb-2">Max LTV</th><th class="text-right pb-2">Min Cash</th></tr></thead>
+                                <tbody class="text-slate-700 dark:text-slate-300 space-y-1">
+                                    <tr><td>HDB Loan (1st)</td><td class="text-right font-bold">80%</td><td class="text-right">0%</td></tr>
+                                    <tr><td>Bank Loan (1st)</td><td class="text-right font-bold">75%</td><td class="text-right">5%</td></tr>
+                                    <tr><td>Bank Loan (2nd)</td><td class="text-right font-bold">45%</td><td class="text-right">25%</td></tr>
+                                    <tr><td>Bank Loan (3rd+)</td><td class="text-right font-bold">35%</td><td class="text-right">25%</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-100 dark:border-slate-700 card-shadow space-y-3">
+                            <h3 class="font-bold text-slate-900 dark:text-white">TDSR &amp; MSR Rules</h3>
+                            <ul class="text-sm text-slate-500 dark:text-slate-400 space-y-2">
+                                <li><span class="font-bold text-slate-700 dark:text-white">TDSR ≤55%:</span> All monthly debt repayments ÷ gross monthly income. Applies to all property loans.</li>
+                                <li><span class="font-bold text-slate-700 dark:text-white">MSR ≤30%:</span> Mortgage repayment ÷ gross income. Applies to HDB loans and bank loans for HDB flats only.</li>
+                                <li><span class="font-bold text-slate-700 dark:text-white">Stress test:</span> Banks compute TDSR at 4% interest floor (stress test rate).</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Policy News -->
+                <div id="guide-content-policy" class="hidden">
+                    <h2 class="text-2xl font-bold mb-6 dark:text-white flex items-center gap-3"><i data-lucide="newspaper" class="w-6 h-6 text-blue-600"></i> Latest Property Policy &amp; Market News</h2>
+                    <div class="flex gap-2 flex-wrap mb-6">
+                        <button onclick="loadGuidesNews('policy')" class="news-filter-btn px-4 py-1.5 rounded-full text-xs font-bold bg-blue-600 text-white">Policy</button>
+                        <button onclick="loadGuidesNews('hdb_resale')" class="news-filter-btn px-4 py-1.5 rounded-full text-xs font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200">HDB Resale</button>
+                        <button onclick="loadGuidesNews('condo')" class="news-filter-btn px-4 py-1.5 rounded-full text-xs font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200">Private Condo</button>
+                        <button onclick="loadGuidesNews('financing')" class="news-filter-btn px-4 py-1.5 rounded-full text-xs font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200">Financing</button>
+                    </div>
+                    <div id="guides-news-loading" class="text-sm text-slate-400 py-6 text-center">Loading news…</div>
+                    <div id="guides-news-list" class="hidden space-y-3"></div>
                 </div>
 
                 <!-- Calculators -->

@@ -53,7 +53,7 @@ function showView(viewId) {
 
     if (viewId === 'guides') {
         loadAgents();
-        renderRecentSearches();
+        switchGuideTab('hdb');
     }
 
     if (viewId === 'predict') {
@@ -2961,6 +2961,63 @@ function appendChatMessage(role, text, id) {
     wrapper.appendChild(bubble);
     container.appendChild(wrapper);
     container.scrollTop = container.scrollHeight;
+}
+
+// ── Guides — Tab Switching & News ────────────────────────────
+function switchGuideTab(tab) {
+    ['hdb','condo','financing','policy'].forEach(t => {
+        const content = document.getElementById(`guide-content-${t}`);
+        const btn     = document.getElementById(`guide-tab-${t}`);
+        if (content) content.classList.toggle('hidden', t !== tab);
+        if (btn) {
+            btn.className = t === tab
+                ? 'guide-tab-btn px-5 py-2.5 rounded-xl text-sm font-bold bg-blue-600 text-white transition-all'
+                : 'guide-tab-btn px-5 py-2.5 rounded-xl text-sm font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 transition-all';
+        }
+    });
+    if (tab === 'policy') loadGuidesNews('policy');
+}
+
+async function loadGuidesNews(topic = 'policy') {
+    // Update filter button states
+    document.querySelectorAll('.news-filter-btn').forEach(b => {
+        b.className = 'news-filter-btn px-4 py-1.5 rounded-full text-xs font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200';
+    });
+    const activeBtn = document.querySelector(`.news-filter-btn[onclick="loadGuidesNews('${topic}')"]`);
+    if (activeBtn) activeBtn.className = 'news-filter-btn px-4 py-1.5 rounded-full text-xs font-bold bg-blue-600 text-white';
+
+    const loading = document.getElementById('guides-news-loading');
+    const list    = document.getElementById('guides-news-list');
+    if (loading) { loading.classList.remove('hidden'); loading.textContent = 'Loading news…'; }
+    if (list)    list.classList.add('hidden');
+
+    try {
+        const res  = await fetch(`/api/guides-news?topic=${topic}`);
+        const data = await res.json();
+        const articles = data.articles || [];
+        if (loading) loading.classList.add('hidden');
+        if (!list) return;
+        if (!articles.length) {
+            list.innerHTML = '<p class="text-sm text-slate-400 text-center py-4">No recent articles found.</p>';
+            list.classList.remove('hidden');
+            return;
+        }
+        list.innerHTML = articles.map(a => `
+            <a href="${a.url || '#'}" target="_blank" rel="noopener"
+               class="flex items-start gap-4 p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 hover:border-blue-300 transition-all group no-underline block">
+                <div class="w-10 h-10 bg-blue-50 dark:bg-blue-900/30 rounded-xl flex items-center justify-center shrink-0 mt-0.5">
+                    <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10l6 6v8a2 2 0 01-2 2z"/><path d="M15 2v6h6"/></svg>
+                </div>
+                <div class="flex-1 min-w-0">
+                    <p class="font-bold text-slate-900 dark:text-white text-sm leading-snug group-hover:text-blue-600 transition-colors line-clamp-2">${a.title || ''}</p>
+                    <p class="text-xs text-slate-400 mt-1">${a.source || ''} · ${a.date || 'Recent'}</p>
+                </div>
+            </a>
+        `).join('');
+        list.classList.remove('hidden');
+    } catch {
+        if (loading) { loading.classList.remove('hidden'); loading.textContent = 'Unable to load news. Try again later.'; }
+    }
 }
 
 // ── Guides — Calculators ──────────────────────────────────────

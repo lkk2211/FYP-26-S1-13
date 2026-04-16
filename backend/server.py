@@ -1032,6 +1032,22 @@ def _cache_age_hrs(raw_ts):
         return 999
 
 
+@app.route('/api/guides-news', methods=['GET'])
+def get_guides_news():
+    """Fetch property policy and market news for the Guides tab."""
+    topic = request.args.get('topic', 'policy').strip()
+
+    _QUERIES = {
+        'policy':      'Singapore HDB resale policy CPF stamp duty 2025 2026 site:hdb.gov.sg OR site:iras.gov.sg OR site:mas.gov.sg OR site:propertyguru.com.sg OR site:edgeprop.sg OR site:straitstimes.com',
+        'hdb_resale':  'Singapore HDB resale flat price grant eligibility 2025 2026 site:propertyguru.com.sg OR site:edgeprop.sg OR site:straitstimes.com OR site:99.co',
+        'condo':       'Singapore private condominium price ABSD cooling measure 2025 2026 site:propertyguru.com.sg OR site:edgeprop.sg OR site:businesstimes.com.sg OR site:99.co',
+        'financing':   'Singapore home loan TDSR MSR interest rate HDB bank 2025 2026 site:propertyguru.com.sg OR site:moneysmart.sg OR site:straitstimes.com',
+    }
+    query = _QUERIES.get(topic, _QUERIES['policy'])
+    articles = fetch_news(query, limit=6, max_age_years=2)
+    return jsonify({'articles': articles, 'topic': topic})
+
+
 @app.route('/api/news', methods=['GET'])
 def get_news():
     neighbourhood = (request.args.get('neighbourhood') or '').strip()
@@ -1779,12 +1795,43 @@ def property_lookup():
         building = str(result.get('BUILDING') or '').strip().upper()
         blk_no   = str(result.get('BLK_NO') or '').strip()
 
-        # Detect HDB: no named building + numeric block number (e.g. "406", "123A")
-        is_hdb = (building in ('NIL', '')) and bool(_re.match(r'^\d+[A-Z]?$', blk_no))
-        # Condo: has a proper named building (not NIL)
-        is_condo  = not is_hdb and building not in ('NIL', '')
-        # Landed: not HDB, no building name — standalone house
-        is_landed = not is_hdb and not is_condo
+        # ── DB-first property type classification ────────────────────────
+        # HDB → exists in resale_flat_prices; Condo → exists in ura_transactions
+        # Landed → in neither (and no named building)
+        db_is_hdb   = False
+        db_is_condo = False
+        try:
+            _dbc = get_db(); _dbc_cur = _cursor(_dbc)
+            if blk_no:
+                _dbc_cur.execute(_q(
+                    "SELECT 1 FROM resale_flat_prices WHERE UPPER(block) = ? LIMIT 1"
+                ), (blk_no.upper(),))
+                db_is_hdb = _dbc_cur.fetchone() is not None
+            if not db_is_hdb and building not in ('NIL', ''):
+                _dbc_cur.execute(_q(
+                    "SELECT 1 FROM ura_transactions WHERE UPPER(project) = ? LIMIT 1"
+                ), (building.upper(),))
+                db_is_condo = _dbc_cur.fetchone() is not None
+            _dbc.close()
+        except Exception:
+            pass
+
+        # Combine DB signals with OneMap heuristic
+        onemap_looks_hdb   = (building in ('NIL', '')) and bool(_re.match(r'^\d+[A-Z]?$', blk_no))
+        onemap_looks_condo = building not in ('NIL', '')
+
+        if db_is_hdb:
+            is_hdb, is_condo, is_landed = True, False, False
+        elif db_is_condo:
+            is_hdb, is_condo, is_landed = False, True, False
+        elif onemap_looks_hdb:
+            # Block number present but not yet in our DB (e.g. new flat) — treat as HDB
+            is_hdb, is_condo, is_landed = True, False, False
+        elif onemap_looks_condo:
+            is_hdb, is_condo, is_landed = False, True, False
+        else:
+            # No named building + not in HDB DB → landed / unknown
+            is_hdb, is_condo, is_landed = False, False, True
 
         town = None
         if lat and lon:
@@ -1825,7 +1872,26 @@ def property_lookup():
             lease_type = 'Freehold'
         else:
             prop_type  = 'Condominium'
+            # Check tenure from URA transactions
             lease_type = 'Freehold'
+            if building not in ('NIL', ''):
+                try:
+                    _tc = get_db(); _tc_cur = _cursor(_tc)
+                    _tc_cur.execute(_q(
+                        "SELECT tenure FROM ura_transactions WHERE UPPER(project) = ? AND tenure IS NOT NULL LIMIT 1"
+                    ), (building.upper(),))
+                    _tr = _tc_cur.fetchone()
+                    _tc.close()
+                    if _tr:
+                        _tenure = str(_tr['tenure'] if hasattr(_tr, '__getitem__') else _tr[0]).upper()
+                        if '99' in _tenure:
+                            lease_type = '99-year Leasehold'
+                        elif '999' in _tenure:
+                            lease_type = '999-year Leasehold'
+                        elif 'FREEHOLD' in _tenure or 'FH' in _tenure:
+                            lease_type = 'Freehold'
+                except Exception:
+                    pass
         road_name = str(result.get('ROAD_NAME') or '').strip()
 
         # ── Query DB for accurate floor data ─────────────────────────────
