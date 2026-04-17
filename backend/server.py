@@ -2158,14 +2158,12 @@ def property_areas():
                 return sorted(set(float(r['floor_area_sqm'] if hasattr(r, '__getitem__') else r[0])
                                   for r in rows if (r['floor_area_sqm'] if hasattr(r, '__getitem__') else r[0])))
 
-            # Helper: try block+road → block-only → block+town → town → flat_type-wide
+            # Helper: block+road → block+town → town → flat_type-wide (no block-only step)
             def _fetch_hdb_areas_cascade(block, road, flat_type):
-                if block and road:
+                road_kw = road.split()[0] if road else ''
+                if block and road_kw:
                     r = _fetch_hdb_areas("AND UPPER(block) = ? AND UPPER(street_name) LIKE ?",
-                                         (flat_type, block, f'%{road}%'))
-                    if r: return r
-                if block:
-                    r = _fetch_hdb_areas("AND UPPER(block) = ?", (flat_type, block))
+                                         (flat_type, block, f'%{road_kw}%'))
                     if r: return r
                 if block and town:
                     r = _fetch_hdb_areas("AND UPPER(block) = ? AND UPPER(town) = ?", (flat_type, block, town))
@@ -2190,15 +2188,19 @@ def property_areas():
                 return [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0]) for r in rows]
 
             storeys = []
-            if block and road:
+            # Step 1: block + first word of road (avoids too-short / too-broad matches)
+            road_keyword = road.split()[0] if road else ''
+            if block and road_keyword:
                 storeys = _fetch_storeys("AND UPPER(block) = ? AND UPPER(street_name) LIKE ?",
-                                         (flat_type, block, f'%{road}%'))
-            if not storeys and block:
-                storeys = _fetch_storeys("AND UPPER(block) = ?", (flat_type, block))
+                                         (flat_type, block, f'%{road_keyword}%'))
+            # Step 2: block + town (skip block-only — same block number exists in many towns)
             if not storeys and block and town:
-                storeys = _fetch_storeys("AND UPPER(block) = ? AND UPPER(town) = ?", (flat_type, block, town))
+                storeys = _fetch_storeys("AND UPPER(block) = ? AND UPPER(town) = ?",
+                                         (flat_type, block, town))
+            # Step 3: town-wide for this flat type
             if not storeys and town:
                 storeys = _fetch_storeys("AND UPPER(town) = ?", (flat_type, town))
+            # Step 4: flat-type wide across all towns (last resort)
             if not storeys:
                 storeys = _fetch_storeys("", (flat_type,))
 

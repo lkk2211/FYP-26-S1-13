@@ -941,9 +941,9 @@ function showPinResultBar(postal, address, lat, lng, propInfo) {
     if (!_draggablePin) return;
 
     const isLanded    = propInfo?.is_landed === true;
-    // Only offer prediction when property is confirmed in our DB (not just OneMap heuristic)
+    // Only offer prediction when confirmed in our DB and not landed (URA also stores landed sales)
     const dbConfirmed = propInfo?.db_is_hdb === true || propInfo?.db_is_condo === true;
-    const canPredict  = postal && dbConfirmed;
+    const canPredict  = postal && dbConfirmed && !isLanded;
     const propType    = propInfo?.property_type || '';
 
     // Prediction availability badge
