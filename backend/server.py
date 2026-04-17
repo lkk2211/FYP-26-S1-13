@@ -1909,7 +1909,6 @@ def property_lookup():
             import re as _re2
             dbc = get_db(); dbc_cur = _cursor(dbc)
             if is_hdb and blk_no:
-                # Try block+road, then block-only, then block+town
                 def _q_storeys(extra, params):
                     dbc_cur.execute(_q(
                         "SELECT DISTINCT storey_range FROM resale_flat_prices "
@@ -1920,9 +1919,13 @@ def property_lookup():
 
                 block_upper = blk_no.upper()
                 road_upper  = road_name.upper()
-                srs = _q_storeys("AND UPPER(street_name) LIKE ?", (block_upper, f'%{road_upper[:6]}%')) if road_upper else []
-                if not srs:
-                    srs = _q_storeys("", (block_upper,))
+
+                # Step 1: block + road (use first word of road to avoid too-short matches)
+                road_keyword = road_upper.split()[0] if road_upper else ''
+                srs = _q_storeys("AND UPPER(street_name) LIKE ?",
+                                 (block_upper, f'%{road_keyword}%')) if road_keyword else []
+
+                # Step 2: block + town (skip block-only — it matches blocks from other towns)
                 if not srs and town:
                     dbc_cur.execute(_q(
                         "SELECT DISTINCT storey_range FROM resale_flat_prices "
@@ -1930,6 +1933,16 @@ def property_lookup():
                     ), (block_upper, town.upper()))
                     srs = [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0])
                            for r in dbc_cur.fetchall()]
+
+                # Step 3: town-wide fallback — typical ranges for any flat in this town
+                if not srs and town:
+                    dbc_cur.execute(_q(
+                        "SELECT DISTINCT storey_range FROM resale_flat_prices "
+                        "WHERE UPPER(town) = ? AND storey_range LIKE '% TO %' ORDER BY storey_range"
+                    ), (town.upper(),))
+                    srs = [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0])
+                           for r in dbc_cur.fetchall()]
+
                 storey_ranges = srs
                 if srs:
                     def _top(s):
@@ -1982,6 +1995,8 @@ def property_lookup():
             'project_name': project_name,
             'storey_ranges': storey_ranges,
             'remaining_lease_years': remaining_lease_years,
+            'db_is_hdb': db_is_hdb,
+            'db_is_condo': db_is_condo,
         }
         if max_floor is not None:
             resp['max_floor'] = int(max_floor)

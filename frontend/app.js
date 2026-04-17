@@ -941,7 +941,9 @@ function showPinResultBar(postal, address, lat, lng, propInfo) {
     if (!_draggablePin) return;
 
     const isLanded    = propInfo?.is_landed === true;
-    const canPredict  = postal && !isLanded && (propInfo?.property_type === 'HDB' || propInfo?.property_type === 'Condominium');
+    // Only offer prediction when property is confirmed in our DB (not just OneMap heuristic)
+    const dbConfirmed = propInfo?.db_is_hdb === true || propInfo?.db_is_condo === true;
+    const canPredict  = postal && dbConfirmed;
     const propType    = propInfo?.property_type || '';
 
     // Prediction availability badge
@@ -950,11 +952,9 @@ function showPinResultBar(postal, address, lat, lng, propInfo) {
             <span style="width:7px;height:7px;border-radius:50%;background:#16a34a;flex-shrink:0"></span>
             <span style="font-size:10px;font-weight:700;color:#15803d">Price prediction available for this ${propType}!</span>
            </div>`
-        : (isLanded
-            ? `<div style="background:#fefce8;border:1px solid #fde047;border-radius:10px;padding:5px 10px;margin-bottom:8px">
-                <span style="font-size:10px;font-weight:700;color:#a16207">Landed property — prediction unavailable</span>
-               </div>`
-            : '');
+        : `<div style="background:#fefce8;border:1px solid #fde047;border-radius:10px;padding:5px 10px;margin-bottom:8px">
+            <span style="font-size:10px;font-weight:700;color:#a16207">${isLanded ? 'Landed property' : 'Property not in our database'} — explore only</span>
+           </div>`;
 
     const predictBtn = canPredict
         ? `<button onclick="usePostalFromMap('${postal}')" style="background:linear-gradient(135deg,#2563eb,#7c3aed);color:white;border:none;padding:6px 14px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;margin-right:6px">Predict</button>`
