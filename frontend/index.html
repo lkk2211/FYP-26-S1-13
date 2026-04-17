@@ -1949,34 +1949,30 @@
 
     <!-- Chatbot Widget -->
     <div id="chat-widget" class="fixed bottom-6 right-6 z-[9998] flex flex-col items-end gap-3">
-        <!-- Chat Panel -->
-        <div id="chat-panel" class="hidden w-[340px] bg-white dark:bg-slate-900 rounded-[28px] shadow-2xl border border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden" style="height:460px">
+        <!-- Chat Panel — uses inline display style, not Tailwind flex+hidden conflict -->
+        <div id="chat-panel" style="display:none;width:340px;height:460px;flex-direction:column" class="bg-white dark:bg-slate-900 rounded-[28px] shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
             <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-700 bg-gradient-to-r from-blue-600 to-violet-600">
                 <div class="flex items-center gap-3">
-                    <div class="w-8 h-8 bg-white/20 rounded-xl flex items-center justify-center">
-                        <i data-lucide="bot" class="w-4 h-4 text-white"></i>
-                    </div>
+                    <div class="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center text-lg">🏡</div>
                     <div>
-                        <p class="text-sm font-bold text-white">PropBot</p>
-                        <p class="text-xs text-blue-100">Singapore Property AI</p>
+                        <p class="text-sm font-bold text-white">Kai</p>
+                        <p class="text-xs text-blue-100">Your property kaki — ask me anything!</p>
                     </div>
                 </div>
                 <button onclick="toggleChat()" class="p-1.5 hover:bg-white/20 rounded-lg transition-colors">
                     <i data-lucide="x" class="w-4 h-4 text-white"></i>
                 </button>
             </div>
-            <div id="chat-messages" class="flex-1 overflow-y-auto p-4 space-y-3">
+            <div id="chat-messages" class="overflow-y-auto p-4 space-y-3" style="flex:1">
                 <div class="flex gap-2">
-                    <div class="w-7 h-7 bg-blue-100 rounded-full flex items-center justify-center shrink-0">
-                        <i data-lucide="bot" class="w-3.5 h-3.5 text-blue-600"></i>
-                    </div>
-                    <div class="bg-slate-100 dark:bg-slate-800 rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm text-slate-700 dark:text-slate-200 max-w-[80%]">
-                        Hi! I'm PropBot 👋 Ask me anything about Singapore property — buying process, stamp duties, CPF, HDB grants, and more.
+                    <div class="w-7 h-7 bg-blue-100 rounded-full flex items-center justify-center shrink-0 text-sm">🏡</div>
+                    <div class="bg-slate-100 dark:bg-slate-800 rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm text-slate-700 dark:text-slate-200" style="max-width:80%">
+                        Hey! I'm Kai 👋 Got questions about buying, selling, or renting in Singapore? HDB resale, condo prices, CPF, stamp duties — just ask!
                     </div>
                 </div>
             </div>
             <div class="p-3 border-t border-slate-100 dark:border-slate-700 flex gap-2">
-                <input id="chat-input" type="text" placeholder="Ask about property…"
+                <input id="chat-input" type="text" placeholder="Ask Kai anything…"
                     class="flex-1 px-4 py-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-sm font-medium dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
                     onkeydown="if(event.key==='Enter')sendChatMessage()" />
                 <button onclick="sendChatMessage()" class="w-10 h-10 bg-blue-600 hover:bg-blue-700 rounded-2xl flex items-center justify-center transition-colors shrink-0">
@@ -1986,7 +1982,7 @@
         </div>
         <!-- Toggle Button -->
         <button onclick="toggleChat()" id="chat-toggle-btn" class="w-14 h-14 bg-gradient-to-br from-blue-600 to-violet-600 rounded-full shadow-lg flex items-center justify-center hover:scale-110 transition-transform">
-            <i data-lucide="message-circle" class="w-6 h-6 text-white" id="chat-toggle-icon"></i>
+            <span class="text-2xl" id="chat-toggle-emoji">🏡</span>
         </button>
     </div>
 

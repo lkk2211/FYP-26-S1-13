@@ -2901,9 +2901,13 @@ let _chatHistory = []; // [{role, content}]
 function toggleChat() {
     _chatOpen = !_chatOpen;
     const panel = document.getElementById('chat-panel');
-    const icon  = document.getElementById('chat-toggle-icon');
-    if (panel) { panel.classList.toggle('hidden', !_chatOpen); panel.classList.toggle('flex', _chatOpen); }
-    if (icon)  { icon.setAttribute('data-lucide', _chatOpen ? 'x' : 'message-circle'); lucide.createIcons(); }
+    const emoji = document.getElementById('chat-toggle-emoji');
+    if (panel) panel.style.display = _chatOpen ? 'flex' : 'none';
+    if (emoji) emoji.textContent   = _chatOpen ? '✕' : '🏡';
+    if (_chatOpen) {
+        const input = document.getElementById('chat-input');
+        if (input) setTimeout(() => input.focus(), 150);
+    }
 }
 
 async function sendChatMessage() {
@@ -2954,8 +2958,8 @@ function appendChatMessage(role, text, id) {
     bubble.textContent = text;
     if (!isUser) {
         const icon = document.createElement('div');
-        icon.className = 'w-7 h-7 bg-blue-100 rounded-full flex items-center justify-center shrink-0 self-end';
-        icon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 text-blue-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/></svg>';
+        icon.className = 'w-7 h-7 bg-blue-100 rounded-full flex items-center justify-center shrink-0 self-end text-sm';
+        icon.textContent = '🏡';
         wrapper.appendChild(icon);
     }
     wrapper.appendChild(bubble);
