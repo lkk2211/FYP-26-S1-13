@@ -2072,17 +2072,28 @@ async function handleCsvUpload() {
 
     let totalInserted = 0, totalRows = 0, errors = [];
     for (let i = 0; i < files.length; i++) {
-        if (status) status.textContent = `Uploading file ${i + 1} of ${files.length}: ${files[i].name}…`;
+        const fname = files[i].name;
+        if (status) status.textContent = `Uploading file ${i + 1} of ${files.length}: ${fname}…`;
         const formData = new FormData();
         formData.append('file', files[i]);
         formData.append('type', _uploadType);
         try {
             const res  = await fetch('/api/admin/upload-transactions', { method: 'POST', body: formData });
             const data = await res.json();
-            if (data.error) { errors.push(`${files[i].name}: ${data.error}`); continue; }
-            totalInserted += data.inserted || 0;
-            totalRows     += data.total_rows || 0;
-        } catch (e) { errors.push(`${files[i].name}: ${e.message}`); }
+            if (data.error) { errors.push(`${fname}: ${data.error}`); continue; }
+
+            // Postgres returns a job_id — poll until done
+            if (data.job_id) {
+                if (status) status.textContent = `Processing ${fname}… (this may take a minute)`;
+                const result = await _awaitUploadJob(data.job_id);
+                if (result.error) { errors.push(`${fname}: ${result.error}`); continue; }
+                totalInserted += result.inserted || 0;
+                totalRows     += result.total_rows || result.inserted || 0;
+            } else {
+                totalInserted += data.inserted || 0;
+                totalRows     += data.total_rows || 0;
+            }
+        } catch (e) { errors.push(`${fname}: ${e.message}`); }
     }
 
     btn.disabled = false;
@@ -2285,6 +2296,21 @@ document.addEventListener('click', e => {
         dd.classList.add('hidden');
     }
 });
+
+// Awaitable version — resolves with {inserted, total_rows} or {error}
+async function _awaitUploadJob(jobId) {
+    const start = Date.now();
+    while (true) {
+        await new Promise(r => setTimeout(r, 2500));
+        try {
+            const res  = await fetch(`/api/admin/upload-status?job_id=${jobId}`);
+            const data = await res.json();
+            if (data.state === 'done')   return { inserted: data.inserted, total_rows: data.inserted };
+            if (data.state === 'error')  return { error: data.message };
+            if (Date.now() - start > 300000) return { error: 'Timed out after 5 min' };
+        } catch (_) { /* keep polling */ }
+    }
+}
 
 async function _pollUploadStatus(jobId, statusEl) {
     const start = Date.now();
