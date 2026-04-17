@@ -1763,7 +1763,13 @@ def chatbot():
         result = _json.loads(resp.read())
         reply  = result["choices"][0]["message"]["content"]
         return jsonify({"reply": reply})
-    except Exception:
+    except Exception as e:
+        print(f"[chat] ERROR: {type(e).__name__}: {e}")
+        import urllib.error as _ue
+        if isinstance(e, _ue.HTTPError):
+            print(f"[chat] HTTP {e.code}: {e.read().decode('utf-8','replace')[:300]}")
+            if e.code == 401:
+                return jsonify({"reply": "Kai is currently unavailable — API authentication failed. Please try again later."}), 200
         return jsonify({"reply": "Sorry, I'm having trouble right now. Please try again shortly."}), 200
 
 
@@ -1950,6 +1956,24 @@ def property_lookup():
         except Exception:
             pass
 
+        # ── Remaining lease years from HDB DB ────────────────────────
+        remaining_lease_years = None
+        if is_hdb and blk_no:
+            try:
+                _rlc = get_db(); _rlc_cur = _cursor(_rlc)
+                _rlc_cur.execute(_q(
+                    "SELECT AVG(lease_commence_date) AS avg_lc "
+                    "FROM resale_flat_prices WHERE UPPER(block) = ? AND lease_commence_date IS NOT NULL"
+                ), (blk_no.upper(),))
+                _rlc_row = _rlc_cur.fetchone()
+                _rlc.close()
+                if _rlc_row:
+                    _avg_lc = (_rlc_row['avg_lc'] if hasattr(_rlc_row, '__getitem__') else _rlc_row[0])
+                    if _avg_lc:
+                        remaining_lease_years = max(0, round(99 - (2026 - float(_avg_lc))))
+            except Exception:
+                pass
+
         resp = {
             'town': town, 'property_type': prop_type,
             'lease_type': lease_type, 'is_hdb': is_hdb,
@@ -1957,6 +1981,7 @@ def property_lookup():
             'block': blk_no, 'road_name': road_name,
             'project_name': project_name,
             'storey_ranges': storey_ranges,
+            'remaining_lease_years': remaining_lease_years,
         }
         if max_floor is not None:
             resp['max_floor'] = int(max_floor)
@@ -2760,9 +2785,16 @@ def sync_ura():
 
     conn = get_db(); cur = _cursor(conn)
     try:
-        # Full refresh: clear existing URA data then insert fresh batch
-        cur.execute('DELETE FROM ura_transactions')
+        # Incremental upsert: skip records that already exist for same project+sale_date+floor_level
+        skipped = 0
         for row in rows:
+            proj, _, _, _, _, floor_lv, _, _, _, _, _, _, _, _, sale_dt, _ = row
+            cur.execute(_q(
+                "SELECT 1 FROM ura_transactions WHERE project = ? AND sale_date = ? AND floor_level = ? LIMIT 1"
+            ), (proj, sale_dt, floor_lv))
+            if cur.fetchone():
+                skipped += 1
+                continue
             cur.execute(_q("""
                 INSERT INTO ura_transactions
                     (project, street, property_type, market_segment,
@@ -2779,7 +2811,9 @@ def sync_ura():
         return jsonify({'error': str(e)}), 500
 
     conn.close()
-    return jsonify({'inserted': inserted, 'batch_id': batch_id, 'message': f'Synced {inserted} URA records (full refresh)'})
+    return jsonify({'inserted': inserted, 'skipped': skipped if 'skipped' in dir() else 0,
+                    'batch_id': batch_id,
+                    'message': f'Synced {inserted} new URA records ({skipped} already existed)'})
 
 
 @app.route('/api/feedback', methods=['POST'])
@@ -2835,6 +2869,48 @@ def submit_feedback():
         print(f"[FEEDBACK SMTP ERROR] {e}", flush=True)
         return jsonify({'error': f'Email delivery failed: {e}'}), 500
 
+    return jsonify({'ok': True})
+
+
+@app.route('/api/property-request', methods=['POST'])
+def property_request():
+    """Store a user's request to add an unlisted property."""
+    data    = request.get_json(force=True) or {}
+    postal  = str(data.get('postal', '')).strip()
+    desc    = str(data.get('description', '')).strip()
+    contact = str(data.get('contact', '')).strip()
+    if not postal:
+        return jsonify({'error': 'Postal code is required.'}), 400
+
+    conn = get_db(); cur = _cursor(conn)
+    try:
+        cur.execute(_q("""
+            CREATE TABLE IF NOT EXISTS property_requests (
+                id SERIAL PRIMARY KEY,
+                postal TEXT NOT NULL,
+                description TEXT,
+                contact TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """ if USE_POSTGRES else """
+            CREATE TABLE IF NOT EXISTS property_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                postal TEXT NOT NULL,
+                description TEXT,
+                contact TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        cur.execute(_q(
+            "INSERT INTO property_requests (postal, description, contact) VALUES (?,?,?)"
+        ), (postal, desc, contact))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return jsonify({'error': str(e)}), 500
+    conn.close()
+    print(f"[property-request] postal={postal} contact={contact} desc={desc}", flush=True)
     return jsonify({'ok': True})
 
 

@@ -319,6 +319,12 @@ async function handlePostalSearch() {
                 const landedEl  = document.getElementById('landed-rejection');
                 const detailsEl = document.getElementById('postal-details');
 
+                // Property not found — show modal
+                if (info.error || (!info.property_type && !info.town)) {
+                    openPropertyNotFoundModal(postal);
+                    return;
+                }
+
                 if (info.is_landed) {
                     // Show landed rejection, hide prediction form
                     if (landedEl)  landedEl.classList.remove('hidden');
@@ -343,6 +349,12 @@ async function handlePostalSearch() {
                 _predictBlock   = info.block        || '';
                 _predictRoad    = info.road_name    || '';
                 _predictProject = info.project_name || '';
+                // Cache remaining lease years from DB for use in the chart
+                if (info.remaining_lease_years != null) {
+                    window._cachedRemainingLease = info.remaining_lease_years;
+                } else {
+                    window._cachedRemainingLease = null;
+                }
                 // Apply floor data from DB lookup if available
                 if (info.storey_ranges && info.storey_ranges.length) {
                     _cachedStoreyRanges = info.storey_ranges;
@@ -357,7 +369,7 @@ async function handlePostalSearch() {
                 // Show/hide correct spec section, then apply cached floor data
                 _onPropertyTypeChange();
             })
-            .catch(() => {});
+            .catch(() => { openPropertyNotFoundModal(postal); });
     } catch {
         errorEl.textContent = 'Unable to search. Please try again.';
         errorEl.classList.remove('hidden');
@@ -464,11 +476,13 @@ async function handlePredict() {
         togglePredictView('output');
         renderPredictNews(postal);
 
-        // Lease decay chart
-        const remLease   = data.remaining_lease_years || null;
+        // Lease decay chart — prefer property-lookup remaining lease, fall back to model median
         const leaseType  = document.getElementById('input-lease-type')?.value || '';
         const isFreehold = leaseType.toLowerCase().includes('freehold');
-        renderLeaseDecayChart(data.estimated_value, isFreehold ? 0 : (remLease || 70), propType);
+        const remLease   = isFreehold ? 0
+            : (window._cachedRemainingLease != null ? window._cachedRemainingLease
+                : (data.remaining_lease_years || 70));
+        renderLeaseDecayChart(data.estimated_value, remLease, propType);
 
         // Save to recent searches
         const addrEl = document.getElementById('display-address');
@@ -1236,16 +1250,9 @@ const ABSD_LABELS = {
     entity: 'Entity / Company',
 };
 
-function setNeighbourhood(name, btn) {
-    currentNeighbourhood = name;
-    document.querySelectorAll('.neighbourhood-btn').forEach(b => {
-        b.className = 'neighbourhood-btn px-4 py-1.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors';
-    });
-    btn.className = 'neighbourhood-btn px-4 py-1.5 rounded-xl text-xs font-bold bg-blue-600 text-white transition-colors';
-    const subtitle = document.getElementById('trend-chart-subtitle');
-    if (subtitle) subtitle.innerText = `Historical price index — ${name}`;
-    renderTrendNews(name);
-    setTimeout(() => initTrendChart(currentRange), 50);
+function setNeighbourhood(name, _btn) {
+    // Legacy shim — delegates to new handler
+    setNeighbourhoodName(name);
 }
 
 function _newsCardHTML(a) {
@@ -1364,7 +1371,7 @@ function calcBSD(value) {
     return Math.round(bsd);
 }
 
-function getPolicyAlerts(profile, value, rate) {
+function getPolicyAlerts(profile, value, _rate) {
     const alerts = [];
     if (profile === 'sc1') {
         alerts.push({ icon: 'check-circle', borderClass: 'border-emerald-100 bg-emerald-50', iconClass: 'text-emerald-600', titleClass: 'text-emerald-800', title: 'No ABSD applicable', body: 'Singapore Citizens purchasing their first residential property are exempted from ABSD under current MAS guidelines.' });
@@ -1390,11 +1397,40 @@ let trendChart;
 let currentRange = '6m';
 
 const NEIGHBOURHOOD_BASE = {
-    'Clementi':   { base: 430000, growth: 0.018 },
-    'Queenstown': { base: 520000, growth: 0.022 },
-    'Hougang':    { base: 380000, growth: 0.015 },
-    'Toa Payoh':  { base: 460000, growth: 0.020 },
-    'Marina Bay': { base: 1800000, growth: 0.031 },
+    'Ang Mo Kio':       { base: 480000, growth: 0.019 },
+    'Bedok':            { base: 420000, growth: 0.016 },
+    'Bishan':           { base: 720000, growth: 0.022 },
+    'Bukit Batok':      { base: 390000, growth: 0.015 },
+    'Bukit Merah':      { base: 580000, growth: 0.021 },
+    'Bukit Panjang':    { base: 370000, growth: 0.014 },
+    'Bukit Timah':      { base: 1200000, growth: 0.025 },
+    'Central Area':     { base: 1400000, growth: 0.028 },
+    'Choa Chu Kang':    { base: 360000, growth: 0.013 },
+    'Clementi':         { base: 430000, growth: 0.018 },
+    'Geylang':          { base: 420000, growth: 0.016 },
+    'Hougang':          { base: 380000, growth: 0.015 },
+    'Jurong East':      { base: 410000, growth: 0.016 },
+    'Jurong West':      { base: 350000, growth: 0.013 },
+    'Kallang/Whampoa':  { base: 550000, growth: 0.021 },
+    'Marine Parade':    { base: 630000, growth: 0.022 },
+    'Marina Bay':       { base: 1800000, growth: 0.031 },
+    'Novena':           { base: 850000, growth: 0.023 },
+    'Orchard':          { base: 2100000, growth: 0.028 },
+    'Pasir Ris':        { base: 390000, growth: 0.015 },
+    'Potong Pasir':     { base: 510000, growth: 0.020 },
+    'Punggol':          { base: 400000, growth: 0.017 },
+    'Queenstown':       { base: 520000, growth: 0.022 },
+    'River Valley':     { base: 1600000, growth: 0.027 },
+    'Sembawang':        { base: 350000, growth: 0.013 },
+    'Sengkang':         { base: 400000, growth: 0.017 },
+    'Sentosa':          { base: 2500000, growth: 0.025 },
+    'Serangoon':        { base: 510000, growth: 0.019 },
+    'Tampines':         { base: 420000, growth: 0.016 },
+    'Toa Payoh':        { base: 460000, growth: 0.020 },
+    'Woodlands':        { base: 340000, growth: 0.013 },
+    'Yishun':           { base: 360000, growth: 0.014 },
+    'Paya Lebar':       { base: 490000, growth: 0.019 },
+    'Buona Vista':      { base: 800000, growth: 0.022 },
 };
 
 function generateNeighbourhoodPrices(neighbourhood, range) {
@@ -1429,6 +1465,11 @@ async function initTrendChart(range = currentRange) {
     const ctx = canvas.getContext('2d');
     if (trendChart) trendChart.destroy();
 
+    // Update subtitle to reflect current PSF type + neighbourhood
+    const psfLabel = PSF_TYPE_CONFIG[_currentPsfType]?.label || 'Historical price index';
+    const subtitle = document.getElementById('trend-chart-subtitle');
+    if (subtitle) subtitle.innerText = `${psfLabel} — ${currentNeighbourhood}`;
+
     const isDark = document.documentElement.classList.contains('dark');
     const gradient = ctx.createLinearGradient(0, 0, 0, 380);
     gradient.addColorStop(0, 'rgba(99, 179, 237, 0.35)');
@@ -1459,27 +1500,60 @@ async function initTrendChart(range = currentRange) {
         prices = gen.prices;
     }
 
+    // PSF type override
+    const psfCfg = PSF_TYPE_CONFIG[_currentPsfType] || PSF_TYPE_CONFIG['avg'];
+    if (_currentPsfType !== 'avg') {
+        const cfg = NEIGHBOURHOOD_BASE[currentNeighbourhood] || NEIGHBOURHOOD_BASE['Clementi'];
+        // Scale PSF base by neighbourhood price factor
+        const neighbourhoodFactor = cfg.base / 560000; // 4-room baseline
+        const psfBase = psfCfg.psfBase * Math.sqrt(neighbourhoodFactor) * psfCfg.growth;
+        const months = range === '6m' ? 6 : range === '1y' ? 12 : range === '3y' ? 36 : 60;
+        const step = range === '5y' ? 6 : range === '3y' ? 3 : 1;
+        prices = []; labels = [];
+        const now = new Date();
+        let p = psfBase * Math.pow(1 - cfg.growth / 12, months);
+        for (let i = months; i >= 0; i--) {
+            p = p * (1 + cfg.growth / 12 + (Math.sin(i * 0.7) * 0.001));
+            if (i % step !== 0) continue;
+            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            let label;
+            if (step >= 3) {
+                const q = Math.floor(d.getMonth() / 3) + 1;
+                label = `Q${q} '${String(d.getFullYear()).slice(2)}`;
+            } else {
+                label = d.toLocaleString('en-SG', { month: 'short', year: '2-digit' });
+            }
+            labels.push(label);
+            prices.push(Math.round(p));
+        }
+    }
+
     const tickColor  = isDark ? '#93C5FD' : '#64748B';
     const gridColor = isDark ? 'rgba(147,197,253,0.08)' : 'rgba(0,0,0,0.04)';
+    const isPsf      = _currentPsfType !== 'avg';
+    const chartColor = isPsf ? '#7C3AED' : '#3B82F6';
+    const chartGrad  = ctx.createLinearGradient(0, 0, 0, 380);
+    chartGrad.addColorStop(0, isPsf ? 'rgba(124,58,237,0.3)' : 'rgba(99, 179, 237, 0.35)');
+    chartGrad.addColorStop(1, 'rgba(0,0,0,0)');
 
     trendChart = new Chart(ctx, {
         type: 'line',
         data: {
             labels,
             datasets: [{
-                label: 'Avg Price (S$)',
+                label: psfCfg.label,
                 data: prices,
-                borderColor: '#3B82F6',
+                borderColor: chartColor,
                 borderWidth: 3,
                 fill: true,
-                backgroundColor: gradient,
+                backgroundColor: chartGrad,
                 tension: 0.4,
                 pointRadius: 3,
-                pointBackgroundColor: '#3B82F6',
+                pointBackgroundColor: chartColor,
                 pointBorderColor: isDark ? '#1E3A5F' : '#fff',
                 pointBorderWidth: 2,
                 pointHoverRadius: 7,
-                pointHoverBackgroundColor: '#60A5FA',
+                pointHoverBackgroundColor: isPsf ? '#A78BFA' : '#60A5FA',
                 pointHoverBorderColor: '#fff',
                 pointHoverBorderWidth: 3
             }]
@@ -1500,7 +1574,9 @@ async function initTrendChart(range = currentRange) {
                     cornerRadius: 10,
                     displayColors: false,
                     callbacks: {
-                        label: ctx => `Avg Price (S$): ${ctx.parsed.y.toLocaleString()}`
+                        label: ctx => isPsf
+                            ? `${psfCfg.label}: S$${ctx.parsed.y.toLocaleString()}/sqft`
+                            : `Avg Price: S$${ctx.parsed.y.toLocaleString()}`
                     }
                 }
             },
@@ -1509,7 +1585,7 @@ async function initTrendChart(range = currentRange) {
                     beginAtZero: false,
                     grid: { color: gridColor, drawBorder: false },
                     ticks: { font: { size: 11, weight: '600' }, color: tickColor,
-                        callback: v => v >= 1000000 ? `${(v/1000000).toFixed(1)}M` : `${(v/1000).toFixed(0)}K` }
+                        callback: v => isPsf ? `S$${v}` : (v >= 1000000 ? `${(v/1000000).toFixed(1)}M` : `${(v/1000).toFixed(0)}K`) }
                 },
                 x: {
                     grid: { display: false },
@@ -1967,9 +2043,10 @@ function setUploadType(type) {
 }
 
 function onCsvFileSelected(event) {
-    const file  = event.target.files[0];
+    const files = event.target.files;
     const label = document.getElementById('upload-file-label');
-    if (file && label) label.textContent = file.name;
+    if (!files.length) return;
+    if (label) label.textContent = files.length === 1 ? files[0].name : `${files.length} files selected`;
 }
 
 async function handleCsvUpload() {
@@ -1978,10 +2055,54 @@ async function handleCsvUpload() {
     const btn    = document.getElementById('upload-submit-btn');
     if (!input || !input.files.length) { showToast('Please select a CSV file first'); return; }
 
-    const formData = new FormData();
-    formData.append('file', input.files[0]);
-    formData.append('type', _uploadType);
+    const files = Array.from(input.files);
+    if (files.length === 1) {
+        const fd = new FormData();
+        fd.append('file', files[0]);
+        fd.append('type', _uploadType);
+        await _doUploadFile(fd, status, btn, input);
+        return;
+    }
 
+    // Multiple files — sequential uploads
+    btn.disabled = true;
+    btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Uploading…';
+    lucide.createIcons();
+    if (status) { status.className = 'text-sm text-slate-500'; status.textContent = `Uploading ${files.length} files…`; status.classList.remove('hidden'); }
+
+    let totalInserted = 0, totalRows = 0, errors = [];
+    for (let i = 0; i < files.length; i++) {
+        if (status) status.textContent = `Uploading file ${i + 1} of ${files.length}: ${files[i].name}…`;
+        const formData = new FormData();
+        formData.append('file', files[i]);
+        formData.append('type', _uploadType);
+        try {
+            const res  = await fetch('/api/admin/upload-transactions', { method: 'POST', body: formData });
+            const data = await res.json();
+            if (data.error) { errors.push(`${files[i].name}: ${data.error}`); continue; }
+            totalInserted += data.inserted || 0;
+            totalRows     += data.total_rows || 0;
+        } catch (e) { errors.push(`${files[i].name}: ${e.message}`); }
+    }
+
+    btn.disabled = false;
+    btn.innerHTML = '<i data-lucide="upload" class="w-4 h-4"></i> Upload to Database';
+    lucide.createIcons();
+    input.value = '';
+    const label2 = document.getElementById('upload-file-label');
+    if (label2) label2.textContent = 'Click to select a file';
+
+    if (errors.length) {
+        if (status) { status.className = 'text-sm text-red-500 font-medium'; status.textContent = `Errors: ${errors.join('; ')}`; }
+    } else {
+        const msg = `Uploaded ${totalInserted.toLocaleString()} of ${totalRows.toLocaleString()} rows across ${files.length} files.`;
+        if (status) { status.className = 'text-sm text-emerald-600 font-medium'; status.textContent = msg; }
+        showToast(msg);
+    }
+    loadDataTabStats();
+}
+
+async function _doUploadFile(formData, status, btn, input) {
     btn.disabled = true;
     btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Uploading...';
     lucide.createIcons();
@@ -1996,7 +2117,7 @@ async function handleCsvUpload() {
         if (data.job_id) {
             input.value = '';
             const label = document.getElementById('upload-file-label');
-            if (label) label.textContent = 'Click to select a CSV file';
+            if (label) label.textContent = 'Click to select a file';
             btn.disabled = false;
             btn.innerHTML = '<i data-lucide="upload" class="w-4 h-4"></i> Upload to Database';
             lucide.createIcons();
@@ -2010,7 +2131,7 @@ async function handleCsvUpload() {
         showToast(msg);
         input.value = '';
         const label2 = document.getElementById('upload-file-label');
-        if (label2) label2.textContent = 'Click to select a CSV file';
+        if (label2) label2.textContent = 'Click to select a file';
         loadDataTabStats();
     } catch (e) {
         if (status) { status.className = 'text-sm text-red-500 font-medium'; status.textContent = `Error: ${e.message}`; }
@@ -2021,6 +2142,149 @@ async function handleCsvUpload() {
         lucide.createIcons();
     }
 }
+
+// ── URA API Sync ─────────────────────────────────────────────
+async function handleSyncUra() {
+    const btn    = document.getElementById('ura-sync-btn');
+    const status = document.getElementById('ura-sync-status');
+    if (!btn) return;
+    btn.disabled = true;
+    btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Syncing…';
+    lucide.createIcons();
+    if (status) { status.classList.remove('hidden'); status.textContent = 'Connecting to URA DataService…'; }
+    try {
+        const res  = await fetch('/api/admin/sync-ura', { method: 'POST' });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        const msg = data.message || `Synced ${(data.inserted||0).toLocaleString()} new records.`;
+        if (status) status.textContent = msg;
+        showToast(msg);
+        loadDataTabStats();
+    } catch (e) {
+        if (status) status.textContent = `Error: ${e.message}`;
+        showToast('URA sync failed: ' + e.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i data-lucide="refresh-cw" class="w-4 h-4"></i> Sync URA Transactions';
+        lucide.createIcons();
+    }
+}
+
+// ── Property Not Found Modal ──────────────────────────────────
+function openPropertyNotFoundModal(postal) {
+    const modal   = document.getElementById('property-not-found-modal');
+    const postalEl = document.getElementById('pnf-postal');
+    const statusEl = document.getElementById('pnf-status');
+    const contactEl = document.getElementById('pnf-contact');
+    const descEl   = document.getElementById('pnf-desc');
+    if (!modal) return;
+    if (postalEl) postalEl.value = postal || '';
+    if (statusEl) { statusEl.classList.add('hidden'); statusEl.textContent = ''; }
+    if (contactEl) contactEl.value = '';
+    if (descEl) descEl.value = '';
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+}
+
+function closePropertyNotFoundModal() {
+    const modal = document.getElementById('property-not-found-modal');
+    if (modal) { modal.classList.add('hidden'); modal.classList.remove('flex'); }
+}
+
+async function submitPropertyRequest() {
+    const postal   = document.getElementById('pnf-postal')?.value || '';
+    const contact  = document.getElementById('pnf-contact')?.value || '';
+    const desc     = document.getElementById('pnf-desc')?.value || '';
+    const statusEl = document.getElementById('pnf-status');
+    try {
+        const res  = await fetch('/api/property-request', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ postal, contact, description: desc })
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        if (statusEl) { statusEl.textContent = 'Request submitted! We\'ll review and add it soon.'; statusEl.classList.remove('hidden'); }
+        setTimeout(closePropertyNotFoundModal, 2200);
+    } catch (e) {
+        if (statusEl) { statusEl.textContent = `Error: ${e.message}`; statusEl.classList.remove('hidden'); statusEl.className = 'text-xs text-center mt-3 text-red-500 font-medium'; }
+    }
+}
+
+// ── Neighbourhood PSF / Search ────────────────────────────────
+const ALL_NEIGHBOURHOODS = [
+    'Ang Mo Kio','Bedok','Bishan','Bukit Batok','Bukit Merah','Bukit Panjang',
+    'Bukit Timah','Central Area','Choa Chu Kang','Clementi','Geylang',
+    'Hougang','Jurong East','Jurong West','Kallang/Whampoa','Marine Parade',
+    'Marina Bay','Orchard','Pasir Ris','Punggol','Queenstown','Sembawang',
+    'Sengkang','Serangoon','Tampines','Toa Payoh','Woodlands','Yishun',
+    'Novena','River Valley','Sentosa','Potong Pasir','Buona Vista','Paya Lebar'
+];
+
+let _currentPsfType = 'avg';
+
+const PSF_TYPE_CONFIG = {
+    avg:    { label: 'Overall Avg Price (S$)', psfFactor: null,  growth: 1.0,  yTick: v => 'S$' + (v/1000).toFixed(0) + 'k' },
+    hdb2:   { label: 'HDB 2-Room PSF (S$/sqft)', psfBase: 710,  growth: 0.90, yTick: v => 'S$' + v },
+    hdb3:   { label: 'HDB 3-Room PSF (S$/sqft)', psfBase: 680,  growth: 0.95, yTick: v => 'S$' + v },
+    hdb4:   { label: 'HDB 4-Room PSF (S$/sqft)', psfBase: 655,  growth: 1.00, yTick: v => 'S$' + v },
+    hdb5:   { label: 'HDB 5-Room PSF (S$/sqft)', psfBase: 620,  growth: 1.00, yTick: v => 'S$' + v },
+    hdb3gen:{ label: '3-Gen HDB PSF (S$/sqft)',  psfBase: 555,  growth: 0.85, yTick: v => 'S$' + v },
+    condo:  { label: 'Private Condo PSF (S$/sqft)', psfBase: 1640, growth: 1.20, yTick: v => 'S$' + v },
+};
+
+function setPsfType(type) {
+    _currentPsfType = type;
+    document.querySelectorAll('.psf-type-btn').forEach(b => {
+        b.className = 'psf-type-btn px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors';
+    });
+    const activeBtn = document.querySelector(`[onclick="setPsfType('${type}')"]`);
+    if (activeBtn) activeBtn.className = 'psf-type-btn px-3 py-1.5 rounded-xl text-xs font-bold bg-violet-600 text-white transition-colors';
+    setTimeout(() => initTrendChart(currentRange), 50);
+}
+
+function setNeighbourhoodName(name) {
+    // Close dropdown, update quick buttons, then set neighbourhood
+    const dd = document.getElementById('neighbourhood-dropdown');
+    const inp = document.getElementById('neighbourhood-search');
+    if (dd) { dd.classList.add('hidden'); dd.innerHTML = ''; }
+    if (inp) inp.value = '';
+
+    document.querySelectorAll('.neighbourhood-btn').forEach(b => {
+        b.className = 'neighbourhood-btn px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors';
+    });
+    const matching = document.querySelector(`[onclick="setNeighbourhoodName('${name}')"]`);
+    if (matching) matching.className = 'neighbourhood-btn px-3 py-1.5 rounded-xl text-xs font-bold bg-blue-600 text-white transition-colors';
+
+    currentNeighbourhood = name;
+    const subtitle = document.getElementById('trend-chart-subtitle');
+    if (subtitle) subtitle.innerText = `${PSF_TYPE_CONFIG[_currentPsfType]?.label || 'Historical price index'} — ${name}`;
+    renderTrendNews(name);
+    setTimeout(() => initTrendChart(currentRange), 50);
+}
+
+function filterNeighbourhoods(query) {
+    const dd = document.getElementById('neighbourhood-dropdown');
+    if (!dd) return;
+    const q = query.trim().toLowerCase();
+    if (!q) { dd.classList.add('hidden'); dd.innerHTML = ''; return; }
+    const matches = ALL_NEIGHBOURHOODS.filter(n => n.toLowerCase().includes(q)).slice(0, 8);
+    if (!matches.length) { dd.classList.add('hidden'); return; }
+    dd.innerHTML = matches.map(n => `
+        <button onclick="setNeighbourhoodName('${n}');document.getElementById('neighbourhood-search').value=''"
+            class="w-full text-left px-4 py-2.5 text-sm hover:bg-slate-50 transition-colors font-medium text-slate-700 first:rounded-t-xl last:rounded-b-xl">
+            ${n}
+        </button>`).join('');
+    dd.classList.remove('hidden');
+}
+
+// Close neighbourhood dropdown on outside click
+document.addEventListener('click', e => {
+    const dd  = document.getElementById('neighbourhood-dropdown');
+    const inp = document.getElementById('neighbourhood-search');
+    if (dd && inp && !dd.contains(e.target) && e.target !== inp) {
+        dd.classList.add('hidden');
+    }
+});
 
 async function _pollUploadStatus(jobId, statusEl) {
     const start = Date.now();
