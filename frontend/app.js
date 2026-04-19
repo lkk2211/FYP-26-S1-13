@@ -147,7 +147,7 @@ function _storeyRangeMidpoint(range) {
     return parseInt(range) || 10;
 }
 
-function _populateFloorRanges(ranges, maxFloor) {
+function _populateFloorRanges(ranges, maxFloor, defaultRange) {
     const sel = document.getElementById('input-floor-range');
     if (!sel) return;
     if (!ranges || ranges.length === 0) {
@@ -160,12 +160,16 @@ function _populateFloorRanges(ranges, maxFloor) {
     }
     const prevVal = sel.value;
     sel.innerHTML = ranges.map(r => {
-        // Display as "01 to 03" style (lowercase)
         const label = r.replace(' TO ', ' to ');
         return `<option value="${r}">${label}</option>`;
     }).join('');
-    // Try to restore previous selection
-    if ([...sel.options].some(o => o.value === prevVal)) sel.value = prevVal;
+
+    // Priority: 1) most-frequent range for this block, 2) previous selection, 3) first option
+    if (defaultRange && [...sel.options].some(o => o.value === defaultRange)) {
+        sel.value = defaultRange;
+    } else if ([...sel.options].some(o => o.value === prevVal)) {
+        sel.value = prevVal;
+    }
 }
 
 async function _loadFlatSpecs() {
@@ -199,13 +203,15 @@ async function _loadFlatSpecs() {
 
         const areas = data.floor_areas || [];
         // Use cached floor data from property_lookup if backend couldn't narrow it down
-        const maxFloor     = data.max_floor     || _cachedMaxFloor     || 50;
+        // Default 20 (not 50) — typical HDB mid-range, avoids inflating predictions
+        const maxFloor     = data.max_floor     || _cachedMaxFloor     || 20;
         const storeyRanges = (data.storey_ranges && data.storey_ranges.length)
                              ? data.storey_ranges
                              : (_cachedStoreyRanges.length ? _cachedStoreyRanges : []);
+        const defaultRange = data.default_storey_range || null;
 
         // ── Floor range dropdown (HDB only) ──────────────────────
-        if (isHdb) _populateFloorRanges(storeyRanges, maxFloor);
+        if (isHdb) _populateFloorRanges(storeyRanges, maxFloor, defaultRange);
 
         // ── Floor slider (condo only) ─────────────────────────────
         if (!isHdb) {

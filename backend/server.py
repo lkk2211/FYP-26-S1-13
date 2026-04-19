@@ -2139,9 +2139,10 @@ def property_areas():
     flat_type_param = request.args.get('flat_type', '').strip().upper()
     flat_type = flat_type_param if flat_type_param in _BEDS_TO_FLAT.values() else _BEDS_TO_FLAT.get(bedrooms, '3 ROOM')
 
-    floor_areas   = []
-    max_floor     = 50
-    storey_ranges = []
+    floor_areas      = []
+    max_floor        = None   # computed from real data; frontend falls back to 20 if still None
+    storey_ranges    = []
+    default_storey_range = None   # most frequent range for this block — pre-selects in UI
 
     try:
         conn = get_db()
@@ -2207,15 +2208,33 @@ def property_areas():
             def _top(s):
                 try: return int(s.split(' TO ')[-1].strip())
                 except: return 0
+
+            import statistics as _stats
             top_floors = [_top(s) for s in storeys]
             if top_floors:
-                max_floor = max(top_floors)
+                # Use median top floor so a single high-rise doesn't inflate the default
+                max_floor = int(_stats.median(top_floors))
 
             raw_ranges = sorted(
                 set(storeys),
                 key=lambda s: int(s.split(' TO ')[0].strip()) if ' TO ' in s else 0
             )
             storey_ranges = raw_ranges
+
+            # Most frequent storey range for this specific block → pre-select in UI
+            if block:
+                _mf_extra = "AND UPPER(block) = ? AND UPPER(town) = ?" if town else "AND UPPER(block) = ?"
+                _mf_params = (flat_type, block, town) if town else (flat_type, block)
+                cur.execute(_q(
+                    "SELECT storey_range, COUNT(*) AS cnt FROM resale_flat_prices "
+                    f"WHERE flat_type = ? {_mf_extra} AND storey_range LIKE '% TO %' "
+                    "GROUP BY storey_range ORDER BY cnt DESC LIMIT 1"
+                ), _mf_params)
+                _mf_row = cur.fetchone()
+                if _mf_row:
+                    default_storey_range = str(
+                        _mf_row['storey_range'] if hasattr(_mf_row, '__getitem__') else _mf_row[0]
+                    )
 
         else:  # Condominium
             def _condo_query(where, params):
@@ -2259,7 +2278,8 @@ def property_areas():
                 floor_areas = sorted(set(round(v / 50.0) * 50 for v in raw))
             tops = [_fl_top(s) for s in fl_rows]
             if tops:
-                max_floor = max(tops)
+                import statistics as _stats
+                max_floor = int(_stats.median(tops))
 
         conn.close()
     except Exception:
@@ -2278,7 +2298,12 @@ def property_areas():
         else:
             floor_areas = _CONDO_PRESETS.get(bedrooms, _CONDO_PRESETS[3])
 
-    return jsonify({'floor_areas': floor_areas, 'max_floor': int(max_floor), 'storey_ranges': storey_ranges})
+    return jsonify({
+        'floor_areas': floor_areas,
+        'max_floor': int(max_floor) if max_floor is not None else 20,
+        'storey_ranges': storey_ranges,
+        'default_storey_range': default_storey_range,
+    })
 
 
 @app.route('/api/admin/upload-transactions', methods=['POST'])
