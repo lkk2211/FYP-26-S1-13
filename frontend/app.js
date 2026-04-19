@@ -560,6 +560,7 @@ function showTab(tabId) {
         'border-b-2'
     );
 
+    if (tabId === 'security') load2FAStatus();
     lucide.createIcons();
 }
 
@@ -2605,6 +2606,20 @@ async function handleSignIn(e) {
     }
 
     document.getElementById('signin-error').classList.add('hidden');
+
+    // 2FA required — show verification modal
+    if (data.requires_2fa) {
+        window._2faTempToken = data.temp_token;
+        const modal = document.getElementById('twofa-verify-modal');
+        document.getElementById('twofa-verify-code').value = '';
+        document.getElementById('twofa-verify-error').classList.add('hidden');
+        document.getElementById('twofa-remember-device').checked = false;
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+        setTimeout(() => document.getElementById('twofa-verify-code').focus(), 100);
+        return;
+    }
+
     currentUser = data.user;
     saveCurrentUser();
     updateAuthUI();
@@ -3671,4 +3686,217 @@ async function submitFeedback() {
 }
 
 
+// ── 2FA: post-login verification modal ───────────────────────────────────────
+
+async function submitVerify2FA() {
+    const code   = document.getElementById('twofa-verify-code').value.trim();
+    const remember = document.getElementById('twofa-remember-device').checked;
+    const errEl  = document.getElementById('twofa-verify-error');
+
+    if (code.length !== 6) {
+        errEl.textContent = 'Please enter a 6-digit code.';
+        errEl.classList.remove('hidden');
+        return;
+    }
+    errEl.classList.add('hidden');
+
+    try {
+        const res  = await fetch('/api/2fa/verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ temp_token: window._2faTempToken, code, remember_device: remember }),
+            credentials: 'include',
+        });
+        const data = await res.json();
+
+        if (data.error) {
+            errEl.textContent = data.error;
+            errEl.classList.remove('hidden');
+            return;
+        }
+
+        // Success — close modal, complete login
+        const modal = document.getElementById('twofa-verify-modal');
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        window._2faTempToken = null;
+
+        currentUser = data.user;
+        saveCurrentUser();
+        updateAuthUI();
+        loadProfileForm();
+        showView('home');
+    } catch (err) {
+        errEl.textContent = 'Network error — please try again.';
+        errEl.classList.remove('hidden');
+    }
+}
+
+function cancelVerify2FA() {
+    const modal = document.getElementById('twofa-verify-modal');
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
+    window._2faTempToken = null;
+}
+
+// ── 2FA: Settings > Security tab ─────────────────────────────────────────────
+
+function load2FAStatus() {
+    if (!currentUser) return;
+    const enabled = currentUser.totp_enabled;
+    const icon   = document.getElementById('twofa-status-icon');
+    const title  = document.getElementById('twofa-status-title');
+    const desc   = document.getElementById('twofa-status-desc');
+    const btnEn  = document.getElementById('twofa-enable-btn');
+    const btnDis = document.getElementById('twofa-disable-btn');
+
+    if (enabled) {
+        icon.className  = 'w-12 h-12 rounded-full bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center';
+        icon.innerHTML  = '<i data-lucide="shield-check" class="w-6 h-6 text-emerald-600"></i>';
+        title.textContent = '2FA Enabled';
+        title.className   = 'font-bold text-emerald-700 dark:text-emerald-400';
+        desc.textContent  = 'Your account is secured with an authenticator app.';
+        btnEn.classList.add('hidden');
+        btnDis.classList.remove('hidden');
+    } else {
+        icon.className  = 'w-12 h-12 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center';
+        icon.innerHTML  = '<i data-lucide="shield" class="w-6 h-6 text-slate-400"></i>';
+        title.textContent = '2FA Not Enabled';
+        title.className   = 'font-bold text-slate-900 dark:text-white';
+        desc.textContent  = 'Your account is protected by password only.';
+        btnEn.classList.remove('hidden');
+        btnDis.classList.add('hidden');
+    }
+    lucide.createIcons();
+}
+
+async function initSetup2FA() {
+    if (!currentUser) return;
+    const panel = document.getElementById('twofa-setup-panel');
+    panel.classList.remove('hidden');
+    document.getElementById('twofa-setup-code').value = '';
+    document.getElementById('twofa-setup-error').classList.add('hidden');
+    document.getElementById('twofa-qr-canvas').innerHTML = '';
+    document.getElementById('twofa-manual-secret').textContent = 'Loading…';
+    document.getElementById('twofa-enable-btn').classList.add('hidden');
+
+    try {
+        const res  = await fetch('/api/2fa/setup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: currentUser.id }),
+        });
+        const data = await res.json();
+        if (data.error) { alert(data.error); return; }
+
+        document.getElementById('twofa-manual-secret').textContent = data.secret;
+
+        // Render QR code
+        const canvas = document.getElementById('twofa-qr-canvas');
+        canvas.innerHTML = '';
+        if (typeof QRCode !== 'undefined') {
+            new QRCode(canvas, { text: data.uri, width: 180, height: 180, correctLevel: QRCode.CorrectLevel.M });
+        } else {
+            canvas.textContent = 'QR library not loaded — use manual code above.';
+        }
+        setTimeout(() => document.getElementById('twofa-setup-code').focus(), 300);
+    } catch (err) {
+        alert('Failed to start 2FA setup. Please try again.');
+        cancelSetup2FA();
+    }
+}
+
+function cancelSetup2FA() {
+    document.getElementById('twofa-setup-panel').classList.add('hidden');
+    document.getElementById('twofa-enable-btn').classList.remove('hidden');
+}
+
+async function enable2FA() {
+    const code  = document.getElementById('twofa-setup-code').value.trim();
+    const errEl = document.getElementById('twofa-setup-error');
+    if (code.length !== 6) {
+        errEl.textContent = 'Please enter a 6-digit code.';
+        errEl.classList.remove('hidden');
+        return;
+    }
+    errEl.classList.add('hidden');
+
+    const res  = await fetch('/api/2fa/enable', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: currentUser.id, code }),
+    });
+    const data = await res.json();
+
+    if (data.error) {
+        errEl.textContent = data.error;
+        errEl.classList.remove('hidden');
+        return;
+    }
+
+    // Update local user state
+    currentUser.totp_enabled = true;
+    saveCurrentUser();
+    cancelSetup2FA();
+    load2FAStatus();
+    showToast('2FA enabled successfully!');
+}
+
+function openDisable2FAModal() {
+    document.getElementById('twofa-disable-code').value = '';
+    document.getElementById('twofa-disable-error').classList.add('hidden');
+    const modal = document.getElementById('twofa-disable-modal');
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    setTimeout(() => document.getElementById('twofa-disable-code').focus(), 100);
+}
+
+function closeDisable2FAModal() {
+    const modal = document.getElementById('twofa-disable-modal');
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
+}
+
+async function confirmDisable2FA() {
+    const code  = document.getElementById('twofa-disable-code').value.trim();
+    const errEl = document.getElementById('twofa-disable-error');
+    if (code.length !== 6) {
+        errEl.textContent = 'Please enter a 6-digit code.';
+        errEl.classList.remove('hidden');
+        return;
+    }
+    errEl.classList.add('hidden');
+
+    const res  = await fetch('/api/2fa/disable', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: currentUser.id, code }),
+        credentials: 'include',
+    });
+    const data = await res.json();
+
+    if (data.error) {
+        errEl.textContent = data.error;
+        errEl.classList.remove('hidden');
+        return;
+    }
+
+    currentUser.totp_enabled = false;
+    saveCurrentUser();
+    closeDisable2FAModal();
+    load2FAStatus();
+    showToast('2FA has been disabled.');
+}
+
+// Helper toast (reuse if already defined, else simple alert fallback)
+function showToast(msg) {
+    const existing = document.getElementById('_toast_notify');
+    if (existing) existing.remove();
+    const t = document.createElement('div');
+    t.id = '_toast_notify';
+    t.className = 'fixed bottom-8 left-1/2 -translate-x-1/2 z-[99999] px-6 py-3 bg-slate-900 text-white text-sm font-bold rounded-2xl shadow-xl transition-all';
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 3000);
+}
 

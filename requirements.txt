@@ -12,3 +12,4 @@ requests
 gunicorn
 reportlab
 openpyxl
+pyotp

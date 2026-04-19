@@ -1,7 +1,10 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, make_response
 from flask_cors import CORS
 import sqlite3
 import hashlib
+import hmac as _hmac
+import base64
+import secrets
 import os
 import json
 import sys
@@ -17,6 +20,60 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from predict import predict_price
 import predict as _predict_module
+
+# ─── 2FA / Security helpers ──────────────────────────────────────────────────
+MASTER_SECRET = os.environ.get('MASTER_SECRET', 'dev-fallback-change-in-prod-99x')
+
+def _get_client_ip():
+    """Return real client IP, honouring X-Forwarded-For on Render."""
+    xff = request.headers.get('X-Forwarded-For', '')
+    if xff:
+        return xff.split(',')[0].strip()
+    return request.remote_addr or ''
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+def _encrypt_secret(plaintext: str) -> str:
+    """XOR-encrypt TOTP secret with MASTER_SECRET-derived key, return base64."""
+    key = hashlib.sha256((MASTER_SECRET + ':totp').encode()).digest()
+    data = plaintext.encode()
+    key_ext = (key * (len(data) // len(key) + 1))[:len(data)]
+    encrypted = bytes(a ^ b for a, b in zip(data, key_ext))
+    return base64.b64encode(encrypted).decode()
+
+def _decrypt_secret(ciphertext: str) -> str:
+    """Decrypt XOR-encrypted TOTP secret."""
+    key = hashlib.sha256((MASTER_SECRET + ':totp').encode()).digest()
+    data = base64.b64decode(ciphertext)
+    key_ext = (key * (len(data) // len(key) + 1))[:len(data)]
+    return bytes(a ^ b for a, b in zip(data, key_ext)).decode()
+
+def _make_temp_token(user_id: int) -> str:
+    """Create a short-lived (5 min) signed token encoding user_id."""
+    expiry = int(time.time()) + 300
+    payload = f"{user_id}:{expiry}"
+    sig = _hmac.new(MASTER_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return base64.urlsafe_b64encode(f"{payload}:{sig}".encode()).decode()
+
+def _verify_temp_token(token: str):
+    """Return user_id (int) if valid and not expired, else None."""
+    try:
+        decoded = base64.urlsafe_b64decode(token).decode()
+        parts = decoded.split(':')
+        if len(parts) != 3:
+            return None
+        user_id_str, expiry_str, sig = parts
+        if time.time() > int(expiry_str):
+            return None
+        expected = _hmac.new(MASTER_SECRET.encode(),
+                             f"{user_id_str}:{expiry_str}".encode(),
+                             hashlib.sha256).hexdigest()
+        if not _hmac.compare_digest(sig, expected):
+            return None
+        return int(user_id_str)
+    except Exception:
+        return None
 
 # ─── Live retraining state ────────────────────────────────────────────────────
 
@@ -653,6 +710,26 @@ def migrate_db():
             ]:
                 try: cur.execute(col_def)
                 except Exception: pass
+            # 2FA columns on users
+            for col_def in [
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret TEXT",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN DEFAULT FALSE",
+            ]:
+                try: cur.execute(col_def)
+                except Exception: pass
+            # Trusted devices table for 2FA "remember me"
+            try:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS trusted_devices (
+                        id          SERIAL PRIMARY KEY,
+                        user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                        token_hash  TEXT NOT NULL UNIQUE,
+                        ip_address  TEXT,
+                        expires_at  TIMESTAMP NOT NULL,
+                        created_at  TIMESTAMP DEFAULT NOW()
+                    )
+                """)
+            except Exception: pass
             # Ensure ura_transactions has all required columns
             for col_def in [
                 "ALTER TABLE ura_transactions ADD COLUMN IF NOT EXISTS project TEXT",
@@ -682,6 +759,8 @@ def migrate_db():
                 "ALTER TABLE users ADD COLUMN cea_number TEXT DEFAULT ''",
                 "ALTER TABLE users ADD COLUMN whatsapp TEXT DEFAULT ''",
                 "ALTER TABLE users ADD COLUMN bio TEXT DEFAULT ''",
+                "ALTER TABLE users ADD COLUMN totp_secret TEXT",
+                "ALTER TABLE users ADD COLUMN totp_enabled INTEGER DEFAULT 0",
                 "ALTER TABLE geocoded_addresses ADD COLUMN search_text TEXT",
                 "ALTER TABLE geocoded_addresses ADD COLUMN lat REAL",
                 "ALTER TABLE geocoded_addresses ADD COLUMN lon REAL",
@@ -700,6 +779,18 @@ def migrate_db():
             for tbl in ('hdb_transactions', 'private_transactions', 'sync_log'):
                 try: conn.execute(f"DROP TABLE IF EXISTS {tbl}")
                 except Exception: pass
+            try:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS trusted_devices (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        token_hash TEXT NOT NULL UNIQUE,
+                        ip_address TEXT,
+                        expires_at TEXT NOT NULL,
+                        created_at TEXT DEFAULT (datetime('now'))
+                    )
+                """)
+            except Exception: pass
             conn.commit()
     except Exception as e:
         print(f"migrate_db warning: {e}")
@@ -1547,21 +1638,243 @@ def login():
     cur  = _cursor(conn)
     cur.execute(_q("SELECT * FROM users WHERE email = ?"), (email,))
     user = _row(cur)
-    conn.close()
 
     if not user:
+        conn.close()
         return jsonify({"error": "User not found"}), 404
 
     if user['password_hash'] != hashlib.sha256(password.encode()).hexdigest():
+        conn.close()
         return jsonify({"error": "Wrong password"}), 401
 
-    return jsonify({"user": {"id": user["id"], "full_name": user["full_name"],
-                              "email": user["email"], "phone": user["phone"],
-                              "role": user["role"], "is_admin": user["role"] == "admin",
-                              "account_type": user.get("account_type", "homeowner"),
-                              "cea_number": user.get("cea_number", ""),
-                              "whatsapp": user.get("whatsapp", ""),
-                              "bio": user.get("bio", "")}})
+    user_obj = {
+        "id": user["id"], "full_name": user["full_name"],
+        "email": user["email"], "phone": user["phone"],
+        "role": user["role"], "is_admin": user["role"] == "admin",
+        "account_type": user.get("account_type", "homeowner"),
+        "cea_number": user.get("cea_number", ""),
+        "whatsapp": user.get("whatsapp", ""),
+        "bio": user.get("bio", ""),
+        "totp_enabled": bool(user.get("totp_enabled")),
+    }
+
+    # ── 2FA check ────────────────────────────────────────────────────────────
+    if user.get("totp_enabled"):
+        # Check trusted device cookie first
+        td_cookie = request.cookies.get('td_token', '')
+        if td_cookie:
+            td_hash = _hash_token(td_cookie)
+            now_str = datetime.datetime.utcnow().isoformat()
+            cur.execute(_q(
+                "SELECT id FROM trusted_devices WHERE token_hash = ? AND user_id = ? AND expires_at > ?"
+            ), (td_hash, user["id"], now_str))
+            if _row(cur):
+                conn.close()
+                return jsonify({"user": user_obj})
+
+        conn.close()
+        temp_token = _make_temp_token(user["id"])
+        return jsonify({"requires_2fa": True, "temp_token": temp_token})
+
+    conn.close()
+    return jsonify({"user": user_obj})
+
+
+# ── 2FA Endpoints ─────────────────────────────────────────────────────────────
+
+@app.route('/api/2fa/setup', methods=['POST'])
+def twofa_setup():
+    """Generate a new TOTP secret for the user and return QR URI (does not enable yet)."""
+    try:
+        import pyotp
+    except ImportError:
+        return jsonify({"error": "2FA library not installed on server"}), 500
+
+    data    = request.json or {}
+    user_id = data.get('user_id')
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
+
+    conn = get_db()
+    cur  = _cursor(conn)
+    cur.execute(_q("SELECT id, email, totp_enabled FROM users WHERE id = ?"), (user_id,))
+    user = _row(cur)
+    if not user:
+        conn.close()
+        return jsonify({"error": "User not found"}), 404
+
+    # Generate new secret (not yet enabled)
+    raw_secret = pyotp.random_base32()
+    encrypted  = _encrypt_secret(raw_secret)
+    cur.execute(_q("UPDATE users SET totp_secret = ?, totp_enabled = FALSE WHERE id = ?"),
+                (encrypted, user_id))
+    conn.commit()
+    conn.close()
+
+    totp = pyotp.TOTP(raw_secret)
+    uri  = totp.provisioning_uri(name=user['email'], issuer_name='PropAI.sg')
+    return jsonify({"secret": raw_secret, "uri": uri})
+
+
+@app.route('/api/2fa/enable', methods=['POST'])
+def twofa_enable():
+    """Verify a TOTP code and enable 2FA on the account."""
+    try:
+        import pyotp
+    except ImportError:
+        return jsonify({"error": "2FA library not installed on server"}), 500
+
+    data    = request.json or {}
+    user_id = data.get('user_id')
+    code    = str(data.get('code', '')).strip()
+    if not user_id or not code:
+        return jsonify({"error": "user_id and code required"}), 400
+
+    conn = get_db()
+    cur  = _cursor(conn)
+    cur.execute(_q("SELECT totp_secret, totp_enabled FROM users WHERE id = ?"), (user_id,))
+    row = _row(cur)
+    if not row or not row.get('totp_secret'):
+        conn.close()
+        return jsonify({"error": "Call /api/2fa/setup first"}), 400
+
+    raw_secret = _decrypt_secret(row['totp_secret'])
+    totp = pyotp.TOTP(raw_secret)
+    if not totp.verify(code, valid_window=1):
+        conn.close()
+        return jsonify({"error": "Invalid code — try again"}), 400
+
+    cur.execute(_q("UPDATE users SET totp_enabled = TRUE WHERE id = ?"), (user_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({"success": True, "message": "2FA enabled successfully"})
+
+
+@app.route('/api/2fa/verify', methods=['POST'])
+def twofa_verify():
+    """Verify a TOTP code after login (temp_token flow). Returns user + optional trusted-device cookie."""
+    try:
+        import pyotp
+    except ImportError:
+        return jsonify({"error": "2FA library not installed on server"}), 500
+
+    data           = request.json or {}
+    temp_token     = data.get('temp_token', '')
+    code           = str(data.get('code', '')).strip()
+    remember_device = bool(data.get('remember_device', False))
+
+    user_id = _verify_temp_token(temp_token)
+    if not user_id:
+        return jsonify({"error": "Session expired — please log in again"}), 401
+
+    conn = get_db()
+    cur  = _cursor(conn)
+    cur.execute(_q("SELECT * FROM users WHERE id = ?"), (user_id,))
+    user = _row(cur)
+    if not user or not user.get('totp_secret'):
+        conn.close()
+        return jsonify({"error": "2FA not configured"}), 400
+
+    raw_secret = _decrypt_secret(user['totp_secret'])
+    totp = pyotp.TOTP(raw_secret)
+    if not totp.verify(code, valid_window=1):
+        conn.close()
+        return jsonify({"error": "Invalid code — try again"}), 400
+
+    user_obj = {
+        "id": user["id"], "full_name": user["full_name"],
+        "email": user["email"], "phone": user["phone"],
+        "role": user["role"], "is_admin": user["role"] == "admin",
+        "account_type": user.get("account_type", "homeowner"),
+        "cea_number": user.get("cea_number", ""),
+        "whatsapp": user.get("whatsapp", ""),
+        "bio": user.get("bio", ""),
+        "totp_enabled": True,
+    }
+
+    resp = make_response(jsonify({"user": user_obj}))
+
+    if remember_device:
+        raw_token  = secrets.token_urlsafe(32)
+        token_hash = _hash_token(raw_token)
+        expires_dt = datetime.datetime.utcnow() + datetime.timedelta(days=30)
+        expires_str = expires_dt.isoformat()
+        client_ip  = _get_client_ip()
+        try:
+            cur.execute(_q("""
+                INSERT INTO trusted_devices (user_id, token_hash, ip_address, expires_at)
+                VALUES (?, ?, ?, ?)
+            """), (user_id, token_hash, client_ip, expires_str))
+            conn.commit()
+            # Set HttpOnly cookie (30 days)
+            resp.set_cookie(
+                'td_token', raw_token,
+                max_age=30 * 24 * 3600,
+                httponly=True, secure=True, samesite='Strict',
+                path='/'
+            )
+        except Exception as e:
+            print(f"[2fa/verify] trusted_device insert error: {e}")
+
+    conn.close()
+    return resp
+
+
+@app.route('/api/2fa/disable', methods=['POST'])
+def twofa_disable():
+    """Verify TOTP code then disable 2FA and clear all trusted devices."""
+    try:
+        import pyotp
+    except ImportError:
+        return jsonify({"error": "2FA library not installed on server"}), 500
+
+    data    = request.json or {}
+    user_id = data.get('user_id')
+    code    = str(data.get('code', '')).strip()
+    if not user_id or not code:
+        return jsonify({"error": "user_id and code required"}), 400
+
+    conn = get_db()
+    cur  = _cursor(conn)
+    cur.execute(_q("SELECT totp_secret, totp_enabled FROM users WHERE id = ?"), (user_id,))
+    row = _row(cur)
+    if not row or not row.get('totp_secret') or not row.get('totp_enabled'):
+        conn.close()
+        return jsonify({"error": "2FA is not enabled"}), 400
+
+    raw_secret = _decrypt_secret(row['totp_secret'])
+    totp = pyotp.TOTP(raw_secret)
+    if not totp.verify(code, valid_window=1):
+        conn.close()
+        return jsonify({"error": "Invalid code — try again"}), 400
+
+    cur.execute(_q("UPDATE users SET totp_secret = NULL, totp_enabled = FALSE WHERE id = ?"), (user_id,))
+    try:
+        cur.execute(_q("DELETE FROM trusted_devices WHERE user_id = ?"), (user_id,))
+    except Exception:
+        pass
+    conn.commit()
+    conn.close()
+
+    resp = make_response(jsonify({"success": True, "message": "2FA disabled"}))
+    resp.delete_cookie('td_token', path='/')
+    return resp
+
+
+@app.route('/api/2fa/status', methods=['GET'])
+def twofa_status():
+    """Return whether 2FA is enabled for a user."""
+    user_id = request.args.get('user_id')
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
+    conn = get_db()
+    cur  = _cursor(conn)
+    cur.execute(_q("SELECT totp_enabled FROM users WHERE id = ?"), (user_id,))
+    row = _row(cur)
+    conn.close()
+    if not row:
+        return jsonify({"error": "User not found"}), 404
+    return jsonify({"totp_enabled": bool(row.get("totp_enabled"))})
 
 
 @app.route('/api/users', methods=['GET'])

@@ -12,6 +12,7 @@
     </script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <link rel="stylesheet" href="style.css">
@@ -1280,6 +1281,7 @@
                     <button onclick="showTab('profile')" class="setting-tab pb-5 text-sm font-bold text-slate-900 border-b-2 border-slate-900 transition-all" id="tab-btn-profile">Profile</button>
                     <button onclick="showTab('notifications')" class="setting-tab pb-5 text-sm font-bold text-slate-400 hover:text-slate-600 transition-all" id="tab-btn-notifications">Notifications</button>
                     <button onclick="showTab('preferences')" class="setting-tab pb-5 text-sm font-bold text-slate-400 hover:text-slate-600 transition-all" id="tab-btn-preferences">Preferences</button>
+                    <button onclick="showTab('security')" class="setting-tab pb-5 text-sm font-bold text-slate-400 hover:text-slate-600 transition-all" id="tab-btn-security">Security</button>
                 </div>
 
                 <div class="bg-white dark:bg-slate-900 rounded-[40px] p-12 border border-slate-100 dark:border-slate-700 card-shadow">
@@ -1471,9 +1473,145 @@
                             <button onclick="savePreferences()" class="px-8 py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-black transition-all">Save Changes</button>
                         </div>
                     </div>
+
+                    <!-- Security Tab -->
+                    <div id="tab-security" class="tab-content space-y-10">
+                        <div class="space-y-6">
+                            <div>
+                                <h4 class="font-bold text-slate-900 dark:text-white text-lg">Two-Factor Authentication (2FA)</h4>
+                                <p class="text-sm text-slate-400 mt-1">Add an extra layer of security using an authenticator app (Google Authenticator, Authy, etc.)</p>
+                            </div>
+
+                            <!-- 2FA Status Badge -->
+                            <div class="flex items-center gap-4 p-5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700">
+                                <div id="twofa-status-icon" class="w-12 h-12 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center">
+                                    <i data-lucide="shield" class="w-6 h-6 text-slate-400"></i>
+                                </div>
+                                <div class="flex-1">
+                                    <p id="twofa-status-title" class="font-bold text-slate-900 dark:text-white">2FA Not Enabled</p>
+                                    <p id="twofa-status-desc" class="text-sm text-slate-400">Your account is protected by password only.</p>
+                                </div>
+                                <div id="twofa-action-btn-wrap">
+                                    <button onclick="initSetup2FA()" id="twofa-enable-btn"
+                                        class="px-6 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-black transition-all">
+                                        Enable 2FA
+                                    </button>
+                                    <button onclick="openDisable2FAModal()" id="twofa-disable-btn" class="hidden px-6 py-2.5 bg-rose-600 text-white rounded-xl text-sm font-bold hover:bg-rose-700 transition-all">
+                                        Disable 2FA
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- QR Setup Panel (hidden until "Enable 2FA" clicked) -->
+                            <div id="twofa-setup-panel" class="hidden space-y-6 p-8 rounded-2xl border-2 border-blue-100 dark:border-blue-900 bg-blue-50/50 dark:bg-blue-900/10">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center text-sm font-bold">1</div>
+                                    <p class="font-bold text-slate-900 dark:text-white">Scan this QR code with your authenticator app</p>
+                                </div>
+                                <div class="flex flex-col md:flex-row gap-8 items-start">
+                                    <div class="flex flex-col items-center gap-4">
+                                        <div id="twofa-qr-canvas" class="p-3 bg-white rounded-2xl border border-slate-200 shadow-sm"></div>
+                                        <p class="text-xs text-slate-400 text-center">Or enter this code manually:</p>
+                                        <code id="twofa-manual-secret" class="px-4 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl text-sm font-mono tracking-wider text-slate-700 dark:text-slate-300 select-all"></code>
+                                    </div>
+                                    <div class="flex-1 space-y-4">
+                                        <div class="flex items-center gap-3">
+                                            <div class="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center text-sm font-bold">2</div>
+                                            <p class="font-bold text-slate-900 dark:text-white">Enter the 6-digit code to verify</p>
+                                        </div>
+                                        <input id="twofa-setup-code" type="text" inputmode="numeric" pattern="[0-9]*"
+                                            maxlength="6" placeholder="000 000"
+                                            class="w-full px-6 py-4 rounded-2xl bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white text-2xl font-mono tracking-widest text-center focus:outline-none focus:border-blue-500 transition-all"
+                                            oninput="this.value=this.value.replace(/\D/g,'').slice(0,6)" />
+                                        <p id="twofa-setup-error" class="hidden text-sm text-rose-500 font-medium"></p>
+                                        <div class="flex gap-3 pt-2">
+                                            <button onclick="cancelSetup2FA()" class="px-6 py-3 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-white rounded-xl font-bold hover:bg-slate-200 transition-all text-sm">
+                                                Cancel
+                                            </button>
+                                            <button onclick="enable2FA()" class="px-8 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-all text-sm">
+                                                Verify &amp; Enable
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Trusted Devices info -->
+                            <div class="p-5 rounded-2xl bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-800">
+                                <div class="flex items-start gap-3">
+                                    <i data-lucide="info" class="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0"></i>
+                                    <div>
+                                        <p class="font-bold text-amber-800 dark:text-amber-300 text-sm">Trusted Devices</p>
+                                        <p class="text-xs text-amber-700 dark:text-amber-400 mt-1">When you verify your identity, you can choose to trust your current device for 30 days. You can revoke all trusted devices by disabling and re-enabling 2FA.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </main>
         </section>
+
+        <!-- 2FA Verification Modal (shown post-login when requires_2fa) -->
+        <div id="twofa-verify-modal" class="fixed inset-0 z-[9999] hidden items-center justify-center p-6 bg-black/70 backdrop-blur-sm">
+            <div class="bg-white dark:bg-slate-900 rounded-[32px] max-w-md w-full p-10 shadow-2xl">
+                <div class="text-center mb-8">
+                    <div class="w-16 h-16 bg-blue-50 dark:bg-blue-900/30 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                        <i data-lucide="shield-check" class="w-8 h-8 text-blue-600"></i>
+                    </div>
+                    <h3 class="text-2xl font-bold text-slate-900 dark:text-white">Two-Factor Verification</h3>
+                    <p class="text-sm text-slate-400 mt-2">Enter the 6-digit code from your authenticator app</p>
+                </div>
+                <div class="space-y-5">
+                    <input id="twofa-verify-code" type="text" inputmode="numeric" pattern="[0-9]*"
+                        maxlength="6" placeholder="000 000"
+                        class="w-full px-6 py-5 rounded-2xl bg-slate-50 dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white text-3xl font-mono tracking-widest text-center focus:outline-none focus:border-blue-500 transition-all"
+                        oninput="this.value=this.value.replace(/\D/g,'').slice(0,6)"
+                        onkeydown="if(event.key==='Enter')submitVerify2FA()" />
+                    <p id="twofa-verify-error" class="hidden text-sm text-rose-500 font-medium text-center"></p>
+                    <label class="flex items-center gap-3 cursor-pointer select-none">
+                        <input type="checkbox" id="twofa-remember-device" class="w-4 h-4 rounded accent-blue-600">
+                        <span class="text-sm text-slate-600 dark:text-slate-300">Remember this device for 30 days</span>
+                    </label>
+                    <button onclick="submitVerify2FA()"
+                        class="w-full py-4 bg-blue-600 text-white rounded-2xl font-bold text-base hover:bg-blue-700 transition-all">
+                        Verify
+                    </button>
+                    <button onclick="cancelVerify2FA()" class="w-full py-3 text-slate-400 text-sm hover:text-slate-600 transition-all">
+                        Back to Login
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2FA Disable Confirmation Modal -->
+        <div id="twofa-disable-modal" class="fixed inset-0 z-[9999] hidden items-center justify-center p-6 bg-black/70 backdrop-blur-sm">
+            <div class="bg-white dark:bg-slate-900 rounded-[32px] max-w-md w-full p-10 shadow-2xl">
+                <div class="text-center mb-8">
+                    <div class="w-16 h-16 bg-rose-50 dark:bg-rose-900/30 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                        <i data-lucide="shield-off" class="w-8 h-8 text-rose-500"></i>
+                    </div>
+                    <h3 class="text-2xl font-bold text-slate-900 dark:text-white">Disable 2FA</h3>
+                    <p class="text-sm text-slate-400 mt-2">Enter your authenticator code to confirm. This will also clear all trusted devices.</p>
+                </div>
+                <div class="space-y-5">
+                    <input id="twofa-disable-code" type="text" inputmode="numeric" pattern="[0-9]*"
+                        maxlength="6" placeholder="000 000"
+                        class="w-full px-6 py-5 rounded-2xl bg-slate-50 dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white text-3xl font-mono tracking-widest text-center focus:outline-none focus:border-blue-500 transition-all"
+                        oninput="this.value=this.value.replace(/\D/g,'').slice(0,6)"
+                        onkeydown="if(event.key==='Enter')confirmDisable2FA()" />
+                    <p id="twofa-disable-error" class="hidden text-sm text-rose-500 font-medium text-center"></p>
+                    <div class="flex gap-3 pt-2">
+                        <button onclick="closeDisable2FAModal()" class="flex-1 py-3 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-white rounded-xl font-bold hover:bg-slate-200 transition-all">
+                            Cancel
+                        </button>
+                        <button onclick="confirmDisable2FA()" class="flex-1 py-3 bg-rose-600 text-white rounded-xl font-bold hover:bg-rose-700 transition-all">
+                            Disable 2FA
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
 
         <!-- Admin View -->
         <section id="view-admin" class="view-section">
