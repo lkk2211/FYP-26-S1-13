@@ -27,7 +27,7 @@ function showView(viewId) {
     if (activeLink) activeLink.classList.add('active');
 
     if (viewId === 'trend') {
-        setTimeout(() => { loadMarketWatch(); initTrendChart(); renderTrendNews(currentNeighbourhood); runABSDSimulation(); }, 100);
+        setTimeout(() => { loadMarketWatch(); initTrendChart(); renderTrendNews(currentNeighbourhood); runABSDSimulation(); loadMopLeads(); }, 100);
     }
     if (viewId === 'map') {
         if (lastMapPostal) {
@@ -494,6 +494,22 @@ async function handlePredict() {
         if (data.price_forecast && data.price_forecast.length) {
             renderForecastChart(data.estimated_value, data.price_forecast);
         }
+
+        // SHAP feature contributions chart
+        if (data.shap_contributions && data.shap_contributions.length) {
+            renderShapChart(data.shap_contributions);
+        } else {
+            document.getElementById('shap-section').classList.add('hidden');
+        }
+
+        // What-if sliders — initialise with current prediction values
+        initWhatIfSliders({
+            floor:   body.floor || 10,
+            area:    body.area  || 90,
+            lease:   data.remaining_lease_years || 65,
+            basePrice: data.estimated_value,
+            isCondo: propType.toLowerCase().includes('condo') || propType.toLowerCase().includes('private'),
+        });
 
         // Save to recent searches
         const addrEl = document.getElementById('display-address');
@@ -2298,6 +2314,16 @@ function setNeighbourhoodName(name) {
     if (subtitle) subtitle.innerText = `${PSF_TYPE_CONFIG[_currentPsfType]?.label || 'Historical price index'} — ${name}`;
     renderTrendNews(name);
     setTimeout(() => initTrendChart(currentRange), 50);
+    // Refresh MOP leads for the new neighbourhood (map neighbourhood name → HDB town)
+    const townMap = { 'Clementi': 'CLEMENTI', 'Ang Mo Kio': 'ANG MO KIO', 'Bedok': 'BEDOK',
+        'Bishan': 'BISHAN', 'Bukit Batok': 'BUKIT BATOK', 'Bukit Merah': 'BUKIT MERAH',
+        'Bukit Panjang': 'BUKIT PANJANG', 'Choa Chu Kang': 'CHOA CHU KANG',
+        'Geylang': 'GEYLANG', 'Hougang': 'HOUGANG', 'Jurong East': 'JURONG EAST',
+        'Jurong West': 'JURONG WEST', 'Kallang': 'KALLANG/WHAMPOA', 'Marine Parade': 'MARINE PARADE',
+        'Pasir Ris': 'PASIR RIS', 'Punggol': 'PUNGGOL', 'Queenstown': 'QUEENSTOWN',
+        'Sembawang': 'SEMBAWANG', 'Sengkang': 'SENGKANG', 'Serangoon': 'SERANGOON',
+        'Tampines': 'TAMPINES', 'Toa Payoh': 'TOA PAYOH', 'Woodlands': 'WOODLANDS', 'Yishun': 'YISHUN' };
+    loadMopLeads(townMap[name] || name.toUpperCase());
 }
 
 function filterNeighbourhoods(query) {
@@ -3794,6 +3820,196 @@ function renderForecastChart(currentPrice, forecast) {
             }
         }
     });
+}
+
+// ── SHAP Feature Contributions Chart ─────────────────────────────────────────
+let _shapChart = null;
+function renderShapChart(contributions) {
+    const section = document.getElementById('shap-section');
+    const canvas  = document.getElementById('shap-chart');
+    if (!section || !canvas || !contributions || !contributions.length) return;
+
+    section.classList.remove('hidden');
+    const ctx = canvas.getContext('2d');
+    if (_shapChart) { _shapChart.destroy(); _shapChart = null; }
+
+    const isDark = document.documentElement.classList.contains('dark');
+    const labels = contributions.map(c => c.name);
+    const values = contributions.map(c => c.value);
+    const colors = values.map(v => v >= 0 ? 'rgba(16,185,129,0.85)' : 'rgba(239,68,68,0.85)');
+    const borderColors = values.map(v => v >= 0 ? '#059669' : '#dc2626');
+
+    _shapChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [{
+                label: 'SHAP Value',
+                data: values,
+                backgroundColor: colors,
+                borderColor: borderColors,
+                borderWidth: 1.5,
+                borderRadius: 6,
+            }]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: (ctx) => {
+                            const v = ctx.parsed.x;
+                            return `  ${v > 0 ? '+' : ''}${v.toFixed(4)} (${v > 0 ? 'pushes price up' : 'pushes price down'})`;
+                        },
+                    },
+                    backgroundColor: '#0f172a', padding: 12, cornerRadius: 10,
+                    titleFont: { size: 11 }, bodyFont: { size: 12 },
+                },
+            },
+            scales: {
+                x: {
+                    grid: { color: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' },
+                    ticks: { font: { size: 10 }, color: isDark ? '#94a3b8' : '#64748b',
+                             callback: v => v > 0 ? `+${v.toFixed(3)}` : v.toFixed(3) },
+                },
+                y: {
+                    grid: { display: false },
+                    ticks: { font: { size: 11 }, color: isDark ? '#e2e8f0' : '#334155' },
+                },
+            }
+        }
+    });
+}
+
+// ── What-If Sliders ───────────────────────────────────────────────────────────
+let _whatIfBase = null;
+function initWhatIfSliders({ floor, area, lease, basePrice, isCondo }) {
+    const section = document.getElementById('whatif-section');
+    if (!section) return;
+    section.classList.remove('hidden');
+
+    _whatIfBase = { floor, area, lease, basePrice, isCondo };
+
+    const floorEl = document.getElementById('wi-floor');
+    const areaEl  = document.getElementById('wi-area');
+    const leaseEl = document.getElementById('wi-lease');
+    const leaseRow = document.getElementById('wi-lease-row');
+
+    if (floorEl) { floorEl.value = Math.round(floor); document.getElementById('wi-floor-val').textContent = Math.round(floor); }
+    if (areaEl)  { areaEl.value  = Math.round(area);  document.getElementById('wi-area-val').textContent  = Math.round(area); }
+    if (leaseEl) { leaseEl.value = Math.round(lease); document.getElementById('wi-lease-val').textContent = Math.round(lease); }
+
+    // Hide lease slider for condo/freehold
+    if (leaseRow) leaseRow.style.display = isCondo ? 'none' : '';
+
+    document.getElementById('whatif-result').classList.add('hidden');
+}
+
+function updateWhatIf() {
+    if (!_whatIfBase) return;
+
+    const floor = parseInt(document.getElementById('wi-floor').value);
+    const area  = parseInt(document.getElementById('wi-area').value);
+    const lease = parseInt(document.getElementById('wi-lease').value);
+
+    document.getElementById('wi-floor-val').textContent = floor;
+    document.getElementById('wi-area-val').textContent  = area;
+    document.getElementById('wi-lease-val').textContent = lease;
+
+    // Multiplicative adjustment relative to base inputs
+    const baseFloor = _whatIfBase.floor || 10;
+    const baseArea  = _whatIfBase.area  || 90;
+    const baseLease = _whatIfBase.lease || 65;
+    const isCondo   = _whatIfBase.isCondo;
+
+    // Floor: ~0.6% per level for HDB, ~1.2% for condo
+    const floorRate = isCondo ? 0.012 : 0.006;
+    const floorAdj  = 1 + floorRate * (floor - baseFloor);
+
+    // Area: linear proportion
+    const areaAdj = area / Math.max(baseArea, 1);
+
+    // Lease: ~0.8% per year for HDB (not applicable for condo)
+    const leaseAdj = isCondo ? 1 : (1 + 0.008 * (lease - baseLease));
+
+    const adjusted = Math.round(_whatIfBase.basePrice * floorAdj * areaAdj * leaseAdj);
+    const delta    = adjusted - _whatIfBase.basePrice;
+    const pct      = ((delta / _whatIfBase.basePrice) * 100).toFixed(1);
+
+    const resultEl = document.getElementById('whatif-result');
+    resultEl.classList.remove('hidden');
+    document.getElementById('wi-price').textContent = `S$${adjusted.toLocaleString()}`;
+    const deltaEl = document.getElementById('wi-delta');
+    deltaEl.textContent = `${delta >= 0 ? '+' : ''}S$${Math.abs(delta).toLocaleString()} (${delta >= 0 ? '+' : ''}${pct}%)`;
+    deltaEl.className   = delta >= 0 ? 'text-lg font-semibold text-emerald-600' : 'text-lg font-semibold text-rose-500';
+}
+
+// ── MOP Leads (Agent Tool) ────────────────────────────────────────────────────
+async function loadMopLeads(town) {
+    const section = document.getElementById('mop-leads-section');
+    const body    = document.getElementById('mop-leads-body');
+    if (!section || !body) return;
+
+    // Only show for agent accounts
+    if (!currentUser || currentUser.account_type !== 'agent') return;
+    section.classList.remove('hidden');
+
+    const t = town || (document.getElementById('trend-town')?.value || '');
+    body.innerHTML = '<p class="text-slate-400 text-sm animate-pulse">Loading MOP leads…</p>';
+
+    try {
+        const params = t ? `?town=${encodeURIComponent(t)}` : '';
+        const res  = await fetch(`/api/agent/mop-leads${params}`, {
+            headers: { Authorization: `Bearer ${currentUser.token}` },
+        });
+        const data = await res.json();
+        if (data.error) { body.innerHTML = `<p class="text-rose-500 text-sm">${data.error}</p>`; return; }
+
+        const leads = data.leads || [];
+        if (!leads.length) {
+            body.innerHTML = '<p class="text-slate-400 text-sm">No MOP leads found for this area.</p>';
+            return;
+        }
+
+        body.innerHTML = `
+        <table class="w-full text-left text-sm">
+            <thead>
+                <tr class="text-slate-400 text-xs font-bold uppercase tracking-widest border-b border-slate-100 dark:border-slate-700">
+                    <th class="pb-3 pl-2">Block / Street</th>
+                    <th class="pb-3">Town</th>
+                    <th class="pb-3">Flat Type</th>
+                    <th class="pb-3">MOP Year</th>
+                    <th class="pb-3 pr-2 text-right">Status</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-50 dark:divide-slate-700">
+                ${leads.map(l => `
+                <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
+                    <td class="py-3 pl-2">
+                        <p class="font-semibold dark:text-white">${l.block} ${l.street_name}</p>
+                        <p class="text-xs text-slate-400">${l.storey_range}</p>
+                    </td>
+                    <td class="py-3 text-slate-600 dark:text-slate-300">${l.town}</td>
+                    <td class="py-3 text-slate-600 dark:text-slate-300">${l.flat_type}</td>
+                    <td class="py-3 text-slate-600 dark:text-slate-300">${l.mop_year}</td>
+                    <td class="py-3 pr-2 text-right">
+                        <span class="text-xs px-2 py-1 rounded-full font-semibold ${l.status === 'eligible'
+                            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+                            : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'}">
+                            ${l.status === 'eligible' ? 'Eligible Now' : `${l.months_to_mop}mo`}
+                        </span>
+                    </td>
+                </tr>`).join('')}
+            </tbody>
+        </table>
+        <p class="text-xs text-slate-400 mt-4">Showing ${leads.length} units. MOP = 5 years from lease commencement. Contact blocks direct or cross-reference HDB Resale Portal.</p>
+        `;
+    } catch (e) {
+        body.innerHTML = `<p class="text-rose-500 text-sm">Failed to load leads: ${e.message}</p>`;
+    }
 }
 
 // ── Password strength validator ───────────────────────────────────────────────

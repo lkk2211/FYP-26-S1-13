@@ -180,16 +180,92 @@ _pipelines = None
 _meta = None
 _private_pipelines = None
 _private_meta = None
+_shap_hdb = None
+_shap_private = None
 
 
 def reset_model_cache():
     """Called after live retraining to force reload on next prediction."""
-    global _pipelines, _meta, _private_pipelines, _private_meta
+    global _pipelines, _meta, _private_pipelines, _private_meta, _shap_hdb, _shap_private
     _pipelines = None
     _meta = None
     _private_pipelines = None
     _private_meta = None
+    _shap_hdb = None
+    _shap_private = None
     print("[predict] Model cache reset — will reload fresh .joblib files on next prediction")
+
+
+def _load_shap_hdb():
+    global _shap_hdb
+    if _shap_hdb is not None:
+        return True
+    try:
+        _shap_hdb = joblib.load(os.path.join(MODELS_DIR, 'shap_hdb.joblib'))
+        print("[predict] SHAP HDB explainer loaded")
+        return True
+    except Exception as e:
+        print(f"[predict] SHAP HDB not available: {e}")
+        return False
+
+
+def _load_shap_private():
+    global _shap_private
+    if _shap_private is not None:
+        return True
+    try:
+        _shap_private = joblib.load(os.path.join(MODELS_DIR, 'shap_private.joblib'))
+        print("[predict] SHAP Private explainer loaded")
+        return True
+    except Exception as e:
+        print(f"[predict] SHAP Private not available: {e}")
+        return False
+
+
+def _group_shap_values(shap_vals, feature_names, cat_cols):
+    """
+    Aggregate per-OHE-column SHAP values back to original feature groups.
+    E.g. cat__town_HOUGANG + cat__town_BEDOK → 'town'
+    Returns list of {name, value} sorted by abs(value) descending, top 8.
+    """
+    grouped = {}
+    for val, fname in zip(shap_vals, feature_names):
+        # Strip ColumnTransformer prefixes: 'cat__town_HOUGANG' → 'town'
+        # or 'num__floor_area_sqm' → 'floor_area_sqm'
+        if '__' in fname:
+            raw = fname.split('__', 1)[1]
+        else:
+            raw = fname
+        # For OHE columns, raw is 'town_HOUGANG' — strip the value suffix
+        # by matching against known categorical col names
+        group = raw
+        for cat in cat_cols:
+            if raw == cat or raw.startswith(cat + '_'):
+                group = cat
+                break
+        grouped[group] = grouped.get(group, 0.0) + float(val)
+
+    # Friendly display names
+    _friendly = {
+        'town': 'Town', 'flat_type': 'Flat Type', 'flat_model': 'Flat Model',
+        'floor_area_sqm': 'Floor Area (sqm)', 'storey_mid': 'Floor Level',
+        'remaining_lease_years': 'Remaining Lease', 'flat_age_years': 'Flat Age',
+        'sora': 'Interest Rate (SORA)', 'policy_impact': 'Policy Impact',
+        'direction': 'Policy Direction', 'severity': 'Policy Severity',
+        'months_since_policy_change': 'Months Since Policy',
+        'time_idx': 'Time Trend', 'year': 'Year', 'quarter': 'Quarter',
+        'lat': 'Latitude', 'lon': 'Longitude',
+        'property_type': 'Property Type', 'market_segment': 'Market Segment',
+        'type_of_sale': 'Sale Type', 'postal_district': 'Postal District',
+        'floor_area_sqft': 'Floor Area (sqft)', 'floor_level_num': 'Floor Level',
+        'tenure_remaining_years': 'Tenure Remaining', 'is_strata': 'Strata Unit',
+    }
+    items = [
+        {"name": _friendly.get(k, k.replace('_', ' ').title()), "value": round(v, 4)}
+        for k, v in grouped.items()
+    ]
+    items.sort(key=lambda x: abs(x['value']), reverse=True)
+    return items[:8]
 
 
 def _load_models():
@@ -392,6 +468,21 @@ def _predict_ml(features):
         ensemble_log = float(np.mean(preds_log))
     estimated_value = int(np.exp(ensemble_log))
 
+    # ── SHAP contributions (lazy load) ────────────────────────────────────────
+    shap_contributions = None
+    try:
+        if _load_shap_hdb():
+            xgb_pipe = _pipelines[0]
+            preprocessor = xgb_pipe.named_steps['preprocessor']
+            transformed  = preprocessor.transform(row)
+            sv = _shap_hdb['explainer'].shap_values(transformed)
+            if sv is not None and len(sv) > 0:
+                shap_contributions = _group_shap_values(
+                    sv[0], _shap_hdb['feature_names'], _shap_hdb['categorical_cols']
+                )
+    except Exception as _se:
+        print(f"[predict] SHAP HDB inference skipped: {_se}")
+
     # Confidence: higher when all three models agree
     spread = float(np.std([np.exp(v) for v in preds_log]))
     cv = spread / estimated_value
@@ -477,7 +568,7 @@ def _predict_ml(features):
     if pol_dir > 0: annual_rate += 0.003
     price_forecast = _build_forecast(estimated_value, annual_rate)
 
-    return {
+    result = {
         "estimated_value": estimated_value,
         "min_value":        min_value,
         "max_value":        max_value,
@@ -495,6 +586,9 @@ def _predict_ml(features):
         "price_forecast":   price_forecast,
         "remaining_lease_years": int(remaining_lease_years),
     }
+    if shap_contributions:
+        result["shap_contributions"] = shap_contributions
+    return result
 
 
 # ─── Rule-based fallback ──────────────────────────────────────────────────────
@@ -659,6 +753,21 @@ def _predict_private_ml(features):
         print(f"[predict_private] inference error: {e}")
         return None
 
+    # ── SHAP contributions (lazy load) ────────────────────────────────────────
+    shap_contributions = None
+    try:
+        if _load_shap_private():
+            xgb_pipe = _private_pipelines[0]
+            preprocessor = xgb_pipe.named_steps['preprocessor']
+            transformed  = preprocessor.transform(row)
+            sv = _shap_private['explainer'].shap_values(transformed)
+            if sv is not None and len(sv) > 0:
+                shap_contributions = _group_shap_values(
+                    sv[0], _shap_private['feature_names'], _shap_private['categorical_cols']
+                )
+    except Exception as _se:
+        print(f"[predict] SHAP Private inference skipped: {_se}")
+
     spread = float(np.std([np.exp(v) for v in preds_log]))
     cv = spread / max(estimated_value, 1)
     confidence = round(max(68.0, min(93.0, 90.0 - cv * 200)), 1)
@@ -698,7 +807,7 @@ def _predict_private_ml(features):
     if pol_dir < 0: annual_rate -= 0.004
     price_forecast = _build_forecast(estimated_value, annual_rate)
 
-    return {
+    _private_result = {
         "estimated_value": estimated_value,
         "min_value":  int(estimated_value * 0.91),
         "max_value":  int(estimated_value * 1.09),
@@ -730,6 +839,9 @@ def _predict_private_ml(features):
              "desc": "Strong MRT network coverage across Singapore supports private property values."},
         ],
     }
+    if shap_contributions:
+        _private_result["shap_contributions"] = shap_contributions
+    return _private_result
 
 
 # ─── Public entry point ───────────────────────────────────────────────────────

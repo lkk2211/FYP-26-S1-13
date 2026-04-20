@@ -32,7 +32,7 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install psycopg2-binary pandas numpy scikit-learn joblib xgboost lightgbm catboost requests
+        run: pip install psycopg2-binary pandas numpy scikit-learn joblib xgboost lightgbm catboost requests shap
 
       # ── HDB model ────────────────────────────────────────────────────────────
       - name: Train HDB model
@@ -47,7 +47,7 @@ jobs:
           RENDER_URL: ${{ secrets.RENDER_URL }}
           MODEL_UPLOAD_SECRET: ${{ secrets.MODEL_UPLOAD_SECRET }}
         run: |
-          for fname in xgb_pipeline.joblib lgbm_pipeline.joblib cat_pipeline.joblib meta.joblib; do
+          for fname in xgb_pipeline.joblib lgbm_pipeline.joblib cat_pipeline.joblib meta.joblib shap_hdb.joblib; do
             echo "Uploading $fname ..."
             curl -sf -X POST "$RENDER_URL/api/admin/upload-model" \
               -H "X-Upload-Secret: $MODEL_UPLOAD_SECRET" \
@@ -69,7 +69,7 @@ jobs:
           RENDER_URL: ${{ secrets.RENDER_URL }}
           MODEL_UPLOAD_SECRET: ${{ secrets.MODEL_UPLOAD_SECRET }}
         run: |
-          for fname in xgb_private_pipeline.joblib lgbm_private_pipeline.joblib cat_private_pipeline.joblib meta_private.joblib; do
+          for fname in xgb_private_pipeline.joblib lgbm_private_pipeline.joblib cat_private_pipeline.joblib meta_private.joblib shap_private.joblib; do
             echo "Uploading $fname ..."
             curl -sf -X POST "$RENDER_URL/api/admin/upload-model" \
               -H "X-Upload-Secret: $MODEL_UPLOAD_SECRET" \

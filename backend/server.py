@@ -2106,6 +2106,100 @@ def delete_account(user_id):
     return jsonify({"success": True})
 
 
+@app.route('/api/agent/mop-leads', methods=['GET'])
+def mop_leads():
+    """
+    Return HDB units likely approaching or past MOP (5 years from lease_commence_date).
+    Agent-only endpoint: lists towns with high recent transaction velocity that have
+    units whose MOP window falls within the next 0–24 months.
+    Query param: ?town=HOUGANG  (optional; omit for all towns)
+    """
+    token = request.headers.get('Authorization', '').replace('Bearer ', '').strip()
+    user_id = _verify_temp_token(token) if token else None
+    # Also support simple token lookup (same as other protected endpoints)
+    conn = get_db()
+    cur  = _cursor(conn)
+    if not user_id and token:
+        cur.execute(_q("SELECT id, account_type FROM users WHERE token = ?"), (token,))
+        u = _row(cur)
+        if u:
+            user_id = u['id']
+    if not user_id:
+        conn.close()
+        return jsonify({"error": "Unauthorised"}), 401
+
+    cur.execute(_q("SELECT account_type FROM users WHERE id = ?"), (user_id,))
+    u = _row(cur)
+    if not u or u['account_type'] != 'agent':
+        conn.close()
+        return jsonify({"error": "Agent account required"}), 403
+
+    town_filter = request.args.get('town', '').strip().upper()
+
+    try:
+        import datetime as _dt
+        today = _dt.date.today()
+        mop_start = today.year - 5          # units that passed MOP in last 12 months
+        mop_end   = today.year - 4          # units that will pass MOP in next 12 months
+
+        # We look for leases that commenced between (today - 6 years) and (today - 4 years)
+        # so MOP date falls within a ±1 year window around now
+        lease_min = today.year - 6
+        lease_max = today.year - 4
+
+        where_town = ""
+        params = [lease_min, lease_max]
+        if town_filter:
+            where_town = f" AND UPPER(town) = {_q('?')}"
+            params.append(town_filter)
+
+        cur.execute(_q(
+            f"""
+            SELECT
+                town,
+                block,
+                street_name,
+                flat_type,
+                storey_range,
+                lease_commence_date,
+                (lease_commence_date + 5) AS mop_year,
+                COUNT(*) AS unit_count
+            FROM resale_flat_prices
+            WHERE lease_commence_date >= ? AND lease_commence_date <= ?
+            {where_town}
+            GROUP BY town, block, street_name, flat_type, storey_range, lease_commence_date
+            ORDER BY mop_year ASC, town ASC
+            LIMIT 100
+            """
+        ), params)
+        rows = _rows(cur)
+        conn.close()
+
+        leads = []
+        for r in rows:
+            mop_yr = int(r.get('mop_year') or 0)
+            lc     = int(r.get('lease_commence_date') or 0)
+            status = 'eligible' if mop_yr <= today.year else 'upcoming'
+            months_to_mop = max(0, (mop_yr - today.year) * 12 + (7 - today.month))  # rough
+            leads.append({
+                "town":          r.get('town', ''),
+                "block":         r.get('block', ''),
+                "street_name":   r.get('street_name', ''),
+                "flat_type":     r.get('flat_type', ''),
+                "storey_range":  r.get('storey_range', ''),
+                "lease_commence": lc,
+                "mop_year":      mop_yr,
+                "status":        status,
+                "months_to_mop": months_to_mop if status == 'upcoming' else 0,
+                "unit_count":    int(r.get('unit_count') or 1),
+            })
+        return jsonify({"leads": leads, "total": len(leads)})
+    except Exception as e:
+        try: conn.close()
+        except Exception: pass
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/agents', methods=['GET'])
 def get_agents():
     """Return all users registered as property agents."""

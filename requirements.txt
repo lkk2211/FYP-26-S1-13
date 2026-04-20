@@ -13,3 +13,4 @@ gunicorn
 reportlab
 openpyxl
 pyotp
+shap

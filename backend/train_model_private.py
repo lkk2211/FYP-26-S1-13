@@ -506,6 +506,27 @@ def train(df_raw: pd.DataFrame):
     joblib.dump(meta, os.path.join(MODELS_DIR, 'meta_private.joblib'))
     print('\nAll private property models saved to', MODELS_DIR)
 
+    # ── Phase 4: SHAP TreeExplainer for XAI ──────────────────────────────────
+    print("Computing SHAP explainer (private XGB)...")
+    try:
+        import shap
+        xgb_pipe = trained['xgb']
+        preprocessor_fitted = xgb_pipe.named_steps['preprocessor']
+        xgb_model           = xgb_pipe.named_steps['model']
+        feature_names_out   = preprocessor_fitted.get_feature_names_out().tolist()
+        explainer = shap.TreeExplainer(xgb_model)
+        shap_data = {
+            'explainer':       explainer,
+            'feature_names':   feature_names_out,
+            'categorical_cols': CATEGORICAL_COLS,
+            'numerical_cols':  NUMERICAL_COLS,
+            'base_value':      float(explainer.expected_value),
+        }
+        joblib.dump(shap_data, os.path.join(MODELS_DIR, 'shap_private.joblib'))
+        print("  shap_private.joblib saved.")
+    except Exception as e:
+        print(f"  SHAP skipped: {e}")
+
     if os.path.exists(TEMP_PATH):
         os.remove(TEMP_PATH)
 
