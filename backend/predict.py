@@ -66,7 +66,7 @@ POSTAL_CONFIG = {
 }
 
 DEFAULT_CONFIG = {
-    "district": "D15", "location": "East Region", "property_type": "HDB",
+    "district": "–", "location": "Singapore", "property_type": "HDB",
     "base_psf": 490, "mrt_score": 72, "market_state": "Active",
     "trend": "+1.5%", "trend_dir": "up",
     "insight": (
@@ -78,6 +78,22 @@ DEFAULT_CONFIG = {
         "or target resale units with remaining lease above 70 years for better financing options."
     )
 }
+
+
+def _build_forecast(base_price: int, annual_rate: float, months: int = 12):
+    """Generate monthly price forecast list."""
+    from datetime import date
+    today = date.today()
+    monthly_rate = annual_rate / 12
+    prices = []
+    p = base_price
+    for i in range(1, months + 1):
+        p = p * (1 + monthly_rate)
+        mo = today.month + i
+        yr = today.year + (mo - 1) // 12
+        mo = ((mo - 1) % 12) + 1
+        prices.append({"month": date(yr, mo, 1).strftime("%b '%y"), "price": int(p)})
+    return prices
 
 
 # ─── Planning area → HDB town normalisation ───────────────────────────────────
@@ -432,27 +448,52 @@ def _predict_ml(features):
 
     ppsf = round(estimated_value / area_sqft) if area_sqft > 0 else 0
 
+    # ── Contextual insights ───────────────────────────────────────────────────
+    sora_label = "elevated" if sora > 3.5 else ("easing" if sora < 2.8 else "moderate")
+    pol_dir    = float(pol.get('direction', 0))
+    lease_label = "strong" if remaining_lease_years > 75 else ("adequate" if remaining_lease_years > 60 else "watch closely")
+    floor_label = "high-floor" if floor >= 20 else ("mid-floor" if floor >= 10 else "lower-floor")
+    area_label  = "spacious" if area_sqm >= 90 else ("standard" if area_sqm >= 65 else "compact")
+
+    insight = (
+        f"{location_display} · {flat_type.title()} · {floor_label} (Lvl {floor}) · {area_sqm:.0f} sqm\n"
+        f"ML ensemble estimates S${estimated_value:,} (confidence: {confidence:.0f}%). "
+        f"Remaining lease of ~{int(remaining_lease_years)} yrs is {lease_label}. "
+        f"SORA at {sora:.2f}% is {sora_label} — {'factor in higher mortgage costs' if sora > 3.5 else 'financing conditions are relatively favourable'}. "
+        f"{'Government cooling policy currently in effect.' if pol_dir < 0 else ('Policy environment is supportive.' if pol_dir > 0 else 'Policy environment is neutral.')}"
+    )
+    recommendation = (
+        f"For a {flat_type.title()} at Level {floor} in {location_display} ({area_label}, {area_sqm:.0f} sqm): "
+        f"expect S${min_value:,}–S${max_value:,}. "
+        f"{'Compare CPF usage vs cash outlay carefully under current rates.' if sora > 3.5 else 'Relatively good time to lock in a fixed-rate package.'} "
+        f"Check HDB Resale Portal for recent {location_display} transactions to validate this estimate."
+    )
+
+    # ── 12-month price forecast ───────────────────────────────────────────────
+    # Base annual appreciation 2%, adjusted for SORA & policy
+    annual_rate = 0.021
+    if sora > 3.5: annual_rate -= 0.005
+    if pol_dir < 0: annual_rate -= 0.004
+    if pol_dir > 0: annual_rate += 0.003
+    price_forecast = _build_forecast(estimated_value, annual_rate)
+
     return {
         "estimated_value": estimated_value,
         "min_value":        min_value,
         "max_value":        max_value,
         "confidence":       confidence,
         "ppsf":             ppsf,
-        "market_trend":     "+2.1%",
-        "trend_direction":  "up",
+        "market_trend":     f"+{annual_rate*100:.1f}%",
+        "trend_direction":  "up" if annual_rate >= 0 else "down",
         "market_state":     "Active",
         "location":         location_display,
         "property_type":    "HDB",
-        "district":         f"HDB {location_display}",
-        "insight": (
-            f"{location_display} is a well-established HDB town with consistent resale demand. "
-            "This estimate is based on an ensemble ML model trained on Singapore HDB resale transactions."
-        ),
-        "recommendation": (
-            f"Predicted price is S${estimated_value:,} for a {flat_type.title()} at level {floor}. "
-            "Compare against recent transacted prices on HDB Resale Portal before making an offer."
-        ),
-        "factors": factors,
+        "district":         f"HDB – {location_display}",
+        "insight":          insight,
+        "recommendation":   recommendation,
+        "factors":          factors,
+        "price_forecast":   price_forecast,
+        "remaining_lease_years": int(remaining_lease_years),
     }
 
 
@@ -468,16 +509,20 @@ def _predict_fallback(features):
     provided_town = str(features.get('town', '')).strip().upper()
     config = POSTAL_CONFIG.get(postal)
     if config is None:
+        # Derive district from postal sector, not D15 default
+        derived_district = _SECTOR_TO_DISTRICT.get(postal[:2], '')
+        if not derived_district and postal[:2].isdigit():
+            derived_district = f'D{int(postal[:2]):02d}'
         if provided_town:
             location_display = _TOWN_DISPLAY.get(provided_town, provided_town.title())
             config = {
                 **DEFAULT_CONFIG,
                 "location": location_display,
-                "district": f"HDB {location_display}",
+                "district": derived_district or f"HDB {location_display}",
                 "property_type": "HDB",
             }
         else:
-            config = DEFAULT_CONFIG
+            config = {**DEFAULT_CONFIG, "district": derived_district or DEFAULT_CONFIG["district"]}
     area_sqft = area * 10.764   # area is in sqm
     psf = config["base_psf"]
     floor_pct = 0.009 if config["property_type"] == "Condominium" else 0.006
@@ -628,27 +673,46 @@ def _predict_private_ml(features):
     floor_score = min(int(35 + floor * 1.5), 98)
     area_score  = min(int(45 + (area_sqft - 700) * 0.05), 98)
 
+    sora_label = "elevated" if sora > 3.5 else ("easing" if sora < 2.8 else "moderate")
+    pol_dir = float(pol.get('direction', 0))
+    floor_label = "high-floor" if floor >= 20 else ("mid-floor" if floor >= 10 else "lower-floor")
+    size_label  = "large" if area_sqft >= 1400 else ("standard" if area_sqft >= 900 else "compact")
+
+    insight = (
+        f"{location_display} · {district} · {floor_label} (Lvl {floor}) · {area_sqft:.0f} sqft\n"
+        f"ML ensemble estimates S${estimated_value:,} at S${ppsf:,} PSF (confidence: {confidence:.0f}%). "
+        f"SORA at {sora:.2f}% is {sora_label}. "
+        f"{'Cooling measures are dampening speculative activity.' if pol_dir < 0 else ('Policy conditions are supportive.' if pol_dir > 0 else 'Policy environment is neutral.')}"
+    )
+    recommendation = (
+        f"{size_label.capitalize()} {segment} unit at Level {floor}, {district}: "
+        f"expect S${int(estimated_value*0.91):,}–S${int(estimated_value*1.09):,}. "
+        f"Check URA caveat lodgements for {district} before offering. "
+        f"{'Consider negotiating on price given elevated SORA.' if sora > 3.5 else 'Financing conditions are relatively supportive at current SORA.'}"
+    )
+
+    # 12-month forecast (private: slightly higher baseline growth, CCR premium)
+    annual_rate = 0.023
+    if segment == 'CCR': annual_rate += 0.004
+    if sora > 3.5: annual_rate -= 0.005
+    if pol_dir < 0: annual_rate -= 0.004
+    price_forecast = _build_forecast(estimated_value, annual_rate)
+
     return {
         "estimated_value": estimated_value,
         "min_value":  int(estimated_value * 0.91),
         "max_value":  int(estimated_value * 1.09),
         "confidence": confidence,
         "ppsf":       ppsf,
-        "market_trend":    "+2.3%",
+        "market_trend":    f"+{annual_rate*100:.1f}%",
         "trend_direction": "up",
         "market_state":    "Active",
         "location":        location_display,
         "property_type":   "Condominium",
         "district":        district,
-        "insight": (
-            f"This {segment} condominium in {district} ({location_display}) is estimated at "
-            f"S${psf:,.0f} PSF based on recent private residential transaction data. "
-            "Predicted using an ensemble ML model trained on URA private property transactions."
-        ),
-        "recommendation": (
-            f"Estimated value S${estimated_value:,} — compare against URA caveat lodgements for "
-            f"{district} before making an offer. {segment} condos have shown steady demand."
-        ),
+        "insight":         insight,
+        "recommendation":  recommendation,
+        "price_forecast":  price_forecast,
         "factors": [
             {"name": "Market Demand",       "score": 78, "label": "High",
              "desc": f"Consistent buyer interest in {location_display} private residential."},

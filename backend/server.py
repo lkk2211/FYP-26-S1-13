@@ -75,6 +75,21 @@ def _verify_temp_token(token: str):
     except Exception:
         return None
 
+
+def _validate_password_strength(password: str):
+    """Return error string if password too weak, else None."""
+    if len(password) < 8:
+        return "Password must be at least 8 characters."
+    if not re.search(r'[A-Z]', password):
+        return "Password must contain at least one uppercase letter."
+    if not re.search(r'[a-z]', password):
+        return "Password must contain at least one lowercase letter."
+    if not re.search(r'\d', password):
+        return "Password must contain at least one number."
+    if not re.search(r'[!@#$%^&*()_+\-=\[\]{};\':"\\|,.<>/?]', password):
+        return "Password must contain at least one special character (!@#$%^&* etc.)."
+    return None
+
 # ─── Live retraining state ────────────────────────────────────────────────────
 
 _BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -952,14 +967,25 @@ def fetch_overpass_amenities(lat, lng):
 
     cats = {'school': [], 'park': [], 'health': [], 'hawker': [], 'community': [], '_bus': [], '_mrt': []}
     mrt_seen = {}
+    _OVERPASS_MIRRORS = [
+        'https://overpass-api.de/api/interpreter',
+        'https://overpass.kumi.systems/api/interpreter',
+        'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+    ]
+    data = None
+    for mirror in _OVERPASS_MIRRORS:
+        try:
+            req = urllib.request.Request(mirror, data=query.encode(), method='POST')
+            req.add_header('User-Agent', 'PropAI-SG/1.0')
+            with urllib.request.urlopen(req, timeout=25) as r:
+                data = json.loads(r.read())
+            break
+        except Exception as _e:
+            print(f"[amenities] Overpass mirror {mirror} failed: {_e}")
+            continue
     try:
-        req = urllib.request.Request(
-            'https://overpass-api.de/api/interpreter',
-            data=query.encode(),
-            method='POST'
-        )
-        with urllib.request.urlopen(req, timeout=35) as r:
-            data = json.loads(r.read())
+        if data is None:
+            raise RuntimeError("All Overpass mirrors failed")
 
         for el in data.get('elements', []):
             elat = el.get('lat') or (el.get('center') or {}).get('lat')
@@ -1537,52 +1563,86 @@ def stats():
 
 @app.route('/api/trend', methods=['GET'])
 def trend():
-    import statistics, random
-    from datetime import date, timedelta
-    postal = request.args.get('postal')
-    POSTAL_META = {
-        "238801": {"property_type": "Condominium", "location": "Marina Bay"},
-        "560123": {"property_type": "HDB",         "location": "Hougang"},
-        "159088": {"property_type": "HDB",         "location": "Queenstown"},
-        "342005": {"property_type": "HDB",         "location": "Toa Payoh"}
-    }
+    """Return real HDB resale trend data and comparable sales for a town/neighbourhood."""
+    from datetime import date as _date
+    town = (request.args.get('town') or '').strip().upper()
+
     conn = get_db()
     cur  = _cursor(conn)
-    if postal:
-        cur.execute(_q("SELECT * FROM price_records WHERE postal_code=?"), (str(postal).zfill(6),))
-    else:
-        cur.execute("SELECT * FROM price_records")
-    rows = _rows(cur)
+
+    # ── 6-month trend: average resale price per month ─────────────────────────
+    town_filter = _q("AND UPPER(town) = ?") if town else ""
+    town_params = (town,) if town else ()
+
+    try:
+        cur.execute(_q(
+            f"SELECT month, AVG(resale_price) AS avg_price "
+            f"FROM resale_flat_prices "
+            f"WHERE month IS NOT NULL AND resale_price > 0 {town_filter} "
+            f"GROUP BY month ORDER BY month DESC LIMIT 6"
+        ), town_params)
+        raw = _rows(cur)
+    except Exception:
+        raw = []
+
+    trend_data = []
+    for r in reversed(raw):
+        mo_str = str(r.get('month') or '')
+        try:
+            y, m = int(mo_str[:4]), int(mo_str[5:7])
+            label = _date(y, m, 1).strftime("%b '%y")
+        except Exception:
+            label = mo_str
+        trend_data.append({"month": label, "price": int(float(r.get('avg_price') or 0))})
+
+    # ── Comparable recent sales (last 3 months) ───────────────────────────────
+    try:
+        cur.execute(_q(
+            f"SELECT block, street_name, flat_type, storey_range, floor_area_sqm, resale_price, month "
+            f"FROM resale_flat_prices "
+            f"WHERE resale_price > 0 AND month IS NOT NULL {town_filter} "
+            f"ORDER BY month DESC, resale_price DESC LIMIT 10"
+        ), town_params)
+        comp_rows = _rows(cur)
+    except Exception:
+        comp_rows = []
+
+    similar = []
+    for r in comp_rows:
+        mo_str = str(r.get('month') or '')
+        try:
+            y, m = int(mo_str[:4]), int(mo_str[5:7])
+            date_label = _date(y, m, 1).strftime("%b '%y")
+        except Exception:
+            date_label = mo_str
+        blk  = str(r.get('block') or '').strip()
+        road = str(r.get('street_name') or '').strip().title()
+        addr = f"Blk {blk} {road}" if blk else road
+        sqm  = float(r.get('floor_area_sqm') or 0)
+        similar.append({
+            "address": addr,
+            "type": str(r.get('flat_type') or '').title(),
+            "storey": str(r.get('storey_range') or ''),
+            "floor_area": int(sqm * 10.764),
+            "price": int(float(r.get('resale_price') or 0)),
+            "date": date_label,
+        })
+
     conn.close()
 
-    prices = [r["price_sgd"] for r in rows] or [450000]
-    avg    = statistics.mean(prices)
-    rng    = random.Random(int(avg))
-    today  = date.today()
-    def _mo(base_date, months_back):
-        m = base_date.month - months_back
-        y = base_date.year + (m - 1) // 12
-        m = ((m - 1) % 12) + 1
-        return date(y, m, 1).strftime("%b '%y")
-
-    trend_data, p = [], avg * 0.94
-    for i in range(6, 0, -1):
-        mo = _mo(today, i - 1)
-        p  = p * rng.uniform(1.005, 1.025)
-        trend_data.append({"month": mo, "price": int(p)})
-    similar = []
-    for idx, r in enumerate(sorted(rows, key=lambda r: abs(r["price_sgd"] - avg))[:5]):
-        mo   = _mo(today, [1,2,2,3,4][idx])
-        meta = POSTAL_META.get(str(r["postal_code"]), {})
-        pt   = r.get("property_type") or meta.get("property_type", "HDB")
-        beds = r.get("num_bedrooms") or 0
-        similar.append({"address": meta.get("location", r["postal_code"]),
-                         "type": f"{beds} Room" if pt == "HDB" else f"{beds} Bed",
-                         "floor_area": int(r.get("floor_area_sqft") or 0),
-                         "price": int(r["price_sgd"]), "date": mo})
-    return jsonify({"trend_data": trend_data, "similar_transactions": similar,
-                    "summary": {"avg_price": int(avg), "min_price": int(min(prices)),
-                                "max_price": int(max(prices)), "total_transactions": len(rows)}})
+    prices = [s['price'] for s in similar] or [450000]
+    import statistics as _stats
+    avg = int(_stats.mean(prices))
+    return jsonify({
+        "trend_data":           trend_data,
+        "similar_transactions": similar,
+        "summary": {
+            "avg_price":        avg,
+            "min_price":        int(min(prices)),
+            "max_price":        int(max(prices)),
+            "total_transactions": len(similar),
+        },
+    })
 
 
 @app.route('/api/register', methods=['POST'])
@@ -1597,6 +1657,13 @@ def register():
 
     if not full_name or not email or not password:
         return jsonify({"error": "All fields are required"}), 400
+
+    if not re.match(r'^[^\s@]+@[^\s@]+\.[^\s@]{2,}$', email):
+        return jsonify({"error": "Please enter a valid email address."}), 400
+
+    pw_err = _validate_password_strength(password)
+    if pw_err:
+        return jsonify({"error": pw_err}), 400
 
     conn = get_db()
     cur  = _cursor(conn)
@@ -1948,9 +2015,13 @@ def update_profile(user_id):
     bio          = data.get('bio', '').strip()
     new_password = data.get('new_password', '').strip()
     cur_password = data.get('current_password', '').strip()
+    totp_code    = str(data.get('totp_code', '')).strip()
 
     if not full_name or not email:
         return jsonify({"error": "Full name and email are required"}), 400
+
+    if not re.match(r'^[^\s@]+@[^\s@]+\.[^\s@]{2,}$', email):
+        return jsonify({"error": "Please enter a valid email address."}), 400
 
     conn = get_db()
     cur  = _cursor(conn)
@@ -1962,11 +2033,29 @@ def update_profile(user_id):
 
     # Password change
     if new_password:
-        cur.execute(_q("SELECT password_hash FROM users WHERE id = ?"), (user_id,))
+        pw_err = _validate_password_strength(new_password)
+        if pw_err:
+            conn.close()
+            return jsonify({"error": pw_err}), 400
+
+        cur.execute(_q("SELECT password_hash, totp_secret, totp_enabled FROM users WHERE id = ?"), (user_id,))
         row = _row(cur)
         if not row or row['password_hash'] != hashlib.sha256(cur_password.encode()).hexdigest():
             conn.close()
             return jsonify({"error": "Current password is incorrect"}), 400
+
+        # 2FA check if enabled
+        if row.get('totp_enabled') and row.get('totp_secret'):
+            try:
+                import pyotp
+                raw_secret = _decrypt_secret(row['totp_secret'])
+                totp = pyotp.TOTP(raw_secret)
+                if not totp_code or not totp.verify(totp_code, valid_window=1):
+                    conn.close()
+                    return jsonify({"error": "Invalid 2FA code — enter the code from your authenticator app.", "requires_totp": True}), 400
+            except ImportError:
+                pass  # pyotp not installed, skip 2FA check
+
         new_hash = hashlib.sha256(new_password.encode()).hexdigest()
         cur.execute(_q("UPDATE users SET password_hash = ? WHERE id = ?"), (new_hash, user_id))
 
@@ -2127,9 +2216,14 @@ def property_lookup():
                 ), (blk_no.upper(),))
                 db_is_hdb = _dbc_cur.fetchone() is not None
             if not db_is_hdb and building not in ('NIL', ''):
+                # Exclude landed types so detached/terrace houses don't trigger db_is_condo
+                _LANDED = ('Detached House', 'Semi-Detached House', 'Terrace House',
+                           'Strata Detached', 'Strata Semi-Detached', 'Strata Terrace')
+                _ph = ','.join(['?' for _ in _LANDED])
                 _dbc_cur.execute(_q(
-                    "SELECT 1 FROM ura_transactions WHERE UPPER(project) = ? LIMIT 1"
-                ), (building.upper(),))
+                    f"SELECT 1 FROM ura_transactions WHERE UPPER(project) = ? "
+                    f"AND (property_type IS NULL OR property_type NOT IN ({_ph})) LIMIT 1"
+                ), (building.upper(), *_LANDED))
                 db_is_condo = _dbc_cur.fetchone() is not None
             _dbc.close()
         except Exception:

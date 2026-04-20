@@ -490,6 +490,11 @@ async function handlePredict() {
                 : (data.remaining_lease_years || 70));
         renderLeaseDecayChart(data.estimated_value, remLease, propType);
 
+        // 12-month price forecast chart
+        if (data.price_forecast && data.price_forecast.length) {
+            renderForecastChart(data.estimated_value, data.price_forecast);
+        }
+
         // Save to recent searches
         const addrEl = document.getElementById('display-address');
         saveRecentSearch({
@@ -1486,7 +1491,20 @@ async function initTrendChart(range = currentRange) {
 
     try {
         if (range === '6m') {
-            const res = await fetch(`/api/trend`);
+            // Map neighbourhood display name → HDB town name for API
+            const townMap = {
+                'Ang Mo Kio':'ANG MO KIO','Bedok':'BEDOK','Bishan':'BISHAN','Bukit Batok':'BUKIT BATOK',
+                'Bukit Merah':'BUKIT MERAH','Bukit Panjang':'BUKIT PANJANG','Bukit Timah':'BUKIT TIMAH',
+                'Central Area':'CENTRAL AREA','Choa Chu Kang':'CHOA CHU KANG','Clementi':'CLEMENTI',
+                'Geylang':'GEYLANG','Hougang':'HOUGANG','Jurong East':'JURONG EAST','Jurong West':'JURONG WEST',
+                'Kallang/Whampoa':'KALLANG/WHAMPOA','Marine Parade':'MARINE PARADE','Pasir Ris':'PASIR RIS',
+                'Punggol':'PUNGGOL','Queenstown':'QUEENSTOWN','Sembawang':'SEMBAWANG','Sengkang':'SENGKANG',
+                'Serangoon':'SERANGOON','Tampines':'TAMPINES','Toa Payoh':'TOA PAYOH',
+                'Woodlands':'WOODLANDS','Yishun':'YISHUN'
+            };
+            const apiTown = townMap[currentNeighbourhood] || '';
+            const trendUrl = apiTown ? `/api/trend?town=${encodeURIComponent(apiTown)}` : '/api/trend';
+            const res = await fetch(trendUrl);
             if (!res.ok) throw new Error();
             const data = await res.json();
             if (data.trend_data && data.trend_data.length) {
@@ -1701,16 +1719,18 @@ function loadComparableTable(data) {
         const row = document.createElement('tr');
         row.className = "hover:bg-slate-50/50 transition-colors group";
 
+        const ppsf = item.floor_area > 0 ? Math.round(item.price / item.floor_area) : null;
         row.innerHTML = `
             <td class="py-8 pl-4">
                 <p class="font-bold text-slate-900">${item.address}</p>
-                <p class="text-xs text-slate-400">-</p>
+                <p class="text-xs text-slate-400">${item.storey || '–'}</p>
             </td>
             <td class="py-8 text-sm font-medium text-slate-600">${item.type}</td>
             <td class="py-8">
                 <span class="font-bold text-slate-900">S$${item.price.toLocaleString()}</span>
+                ${ppsf ? `<p class="text-[10px] text-slate-400">S$${ppsf.toLocaleString()} psf</p>` : ''}
             </td>
-            <td class="py-8 text-sm text-slate-500">-</td>
+            <td class="py-8 text-sm text-slate-500">${item.floor_area ? item.floor_area.toLocaleString() + ' sqft' : '–'}</td>
             <td class="py-8 pr-4 text-right">
                 <span class="px-3 py-1 bg-slate-100 rounded-lg text-[10px] font-bold">${item.date}</span>
             </td>
@@ -2654,8 +2674,14 @@ async function handleRegister(e) {
         errEl.classList.remove('hidden');
         return;
     }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
         errEl.textContent = 'Please enter a valid email address.';
+        errEl.classList.remove('hidden');
+        return;
+    }
+    const pwErr = _validatePassword(password);
+    if (pwErr) {
+        errEl.textContent = pwErr;
         errEl.classList.remove('hidden');
         return;
     }
@@ -2692,6 +2718,13 @@ async function handleRegister(e) {
     updateAuthUI();
     loadProfileForm();
     showView('home');
+
+    // Prompt new users to set up 2FA
+    const prompt = document.getElementById('register-2fa-prompt');
+    if (prompt) {
+        prompt.classList.remove('hidden');
+        prompt.classList.add('flex');
+    }
 }
 
 async function handleForgotPassword() {
@@ -2868,13 +2901,29 @@ async function saveProfile() {
     const bio          = (document.getElementById('profile-bio')?.value         || '').trim();
 
     if (new_password && !cur_password) {
-        showToast('Enter your current password to set a new one', true);
+        showToast('Enter your current password to set a new one.', true);
         return;
+    }
+    if (new_password) {
+        const pwErr = _validatePassword(new_password);
+        if (pwErr) { showToast(pwErr, true); return; }
     }
 
     const full_name = `${firstName} ${lastName}`.trim();
     const payload   = { full_name, email, phone, cea_number, whatsapp, bio };
-    if (new_password) { payload.current_password = cur_password; payload.new_password = new_password; }
+    if (new_password) {
+        payload.current_password = cur_password;
+        payload.new_password = new_password;
+        // If user has 2FA enabled, collect TOTP code
+        if (currentUser?.totp_enabled) {
+            const code = prompt('Enter your 6-digit authenticator code to confirm the password change:');
+            if (!code || code.trim().length !== 6) {
+                showToast('Password change cancelled — 2FA code required.', true);
+                return;
+            }
+            payload.totp_code = code.trim();
+        }
+    }
 
     const res  = await fetch(`/api/profile/${currentUser.id}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -3685,6 +3734,78 @@ async function submitFeedback() {
     }
 }
 
+
+// ── 12-Month Price Forecast Chart ────────────────────────────────────────────
+let _forecastChart = null;
+function renderForecastChart(currentPrice, forecast) {
+    const section = document.getElementById('forecast-section');
+    const canvas  = document.getElementById('forecast-chart');
+    if (!section || !canvas) return;
+
+    section.classList.remove('hidden');
+    const ctx = canvas.getContext('2d');
+    if (_forecastChart) { _forecastChart.destroy(); _forecastChart = null; }
+
+    const labels = [new Date().toLocaleDateString('en-SG', { month: 'short', year: '2-digit' }),
+                    ...forecast.map(f => f.month)];
+    const prices = [currentPrice, ...forecast.map(f => f.price)];
+    const isDark = document.documentElement.classList.contains('dark');
+
+    const grad = ctx.createLinearGradient(0, 0, 0, 220);
+    grad.addColorStop(0, 'rgba(16,185,129,0.25)');
+    grad.addColorStop(1, 'rgba(16,185,129,0.00)');
+
+    _forecastChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [{
+                label: 'Projected Price',
+                data: prices,
+                borderColor: '#10b981',
+                backgroundColor: grad,
+                borderWidth: 2.5,
+                pointBackgroundColor: '#10b981',
+                pointRadius: (ctx) => ctx.dataIndex === 0 ? 6 : 3,
+                pointHoverRadius: 6,
+                fill: true,
+                tension: 0.35,
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: (ctx) => `  S$${ctx.parsed.y.toLocaleString()}`,
+                        title: (items) => items[0].dataIndex === 0 ? 'Today (Estimate)' : items[0].label,
+                    },
+                    backgroundColor: '#0f172a', padding: 12, cornerRadius: 10,
+                    titleFont: { size: 11 }, bodyFont: { size: 13, weight: 'bold' },
+                }
+            },
+            scales: {
+                x: { grid: { display: false }, ticks: { font: { size: 10 }, color: isDark ? '#94a3b8' : '#64748b' } },
+                y: {
+                    grid: { color: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', drawBorder: false },
+                    ticks: { callback: v => `S$${(v/1000).toFixed(0)}k`, font: { size: 10 }, color: isDark ? '#94a3b8' : '#64748b' },
+                }
+            }
+        }
+    });
+}
+
+// ── Password strength validator ───────────────────────────────────────────────
+function _validatePassword(pw) {
+    if (!pw || pw.length < 8)          return 'Password must be at least 8 characters.';
+    if (!/[A-Z]/.test(pw))             return 'Password must contain at least one uppercase letter.';
+    if (!/[a-z]/.test(pw))             return 'Password must contain at least one lowercase letter.';
+    if (!/\d/.test(pw))                return 'Password must contain at least one number.';
+    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>/?]/.test(pw))
+        return 'Password must include a special character (!@#$%^&* etc.).';
+    return null;
+}
 
 // ── 2FA: post-login verification modal ───────────────────────────────────────
 
