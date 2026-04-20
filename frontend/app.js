@@ -27,7 +27,7 @@ function showView(viewId) {
     if (activeLink) activeLink.classList.add('active');
 
     if (viewId === 'trend') {
-        setTimeout(() => { loadMarketWatch(); initTrendChart(); renderTrendNews(currentNeighbourhood); runABSDSimulation(); loadMopLeads(); }, 100);
+        setTimeout(() => { loadMarketWatch(); initTrendChart(); renderTrendNews(currentNeighbourhood); loadMopLeads(); }, 100);
     }
     if (viewId === 'map') {
         if (lastMapPostal) {
@@ -609,6 +609,8 @@ function showAdminTab(tabId) {
         loadAdminUsers();
     } else if (tabId === 'data') {
         loadDataTabStats();
+    } else if (tabId === 'auditlog') {
+        loadAuditLog();
     }
 
     lucide.createIcons();
@@ -1690,7 +1692,6 @@ async function renderPredictNews(postal) {
 document.addEventListener('DOMContentLoaded', () => {
     initTrendChart();
     renderTrendNews(currentNeighbourhood);
-    runABSDSimulation();
     renderHomeNews();
     loadMarketWatch();
 });
@@ -1780,6 +1781,62 @@ async function initAdminTypeChart() {
         document.getElementById('admin-predictions').innerText = stats.total_predictions || 0;
         document.getElementById('admin-db').innerText = stats.db_size || '-';
 
+        // HDB vs Private comparison
+        const rp = stats.recent_predictions || [];
+        const hdbTypes = new Set(['1 ROOM','2 ROOM','3 ROOM','4 ROOM','5 ROOM','EXECUTIVE','MULTI-GENERATION']);
+        const hdbPreds = rp.filter(r => hdbTypes.has((r.flat_type||'').toUpperCase()) || (r.flat_type||'').toUpperCase().includes('ROOM'));
+        const privPreds = rp.filter(r => !hdbTypes.has((r.flat_type||'').toUpperCase()) && !(r.flat_type||'').toUpperCase().includes('ROOM'));
+        const avg = arr => arr.length ? Math.round(arr.reduce((s,r) => s + (r.estimated_value||0), 0) / arr.length) : 0;
+        const avgConf = arr => arr.length ? (arr.reduce((s,r) => s + (r.confidence||0), 0) / arr.length).toFixed(1) : '—';
+        const hdbAvg = avg(hdbPreds), privAvg = avg(privPreds);
+        const fmt = v => v ? `S$${v.toLocaleString()}` : '—';
+        const setEl = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+        setEl('admin-hdb-avg-val', fmt(hdbAvg));
+        setEl('admin-hdb-count', (stats.predictions_by_type?.hdb || 0).toLocaleString());
+        setEl('admin-hdb-conf', hdbPreds.length ? avgConf(hdbPreds) + '%' : '—');
+        setEl('admin-priv-avg-val', fmt(privAvg));
+        setEl('admin-priv-count', (stats.predictions_by_type?.private || 0).toLocaleString());
+        setEl('admin-priv-conf', privPreds.length ? avgConf(privPreds) + '%' : '—');
+
+        // Top towns
+        const townsEl = document.getElementById('admin-top-towns');
+        if (townsEl && stats.predictions_by_town?.length) {
+            townsEl.innerHTML = stats.predictions_by_town.slice(0,8).map((t,i) => `
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <span class="w-5 h-5 rounded-full bg-slate-100 text-slate-500 text-xs font-black flex items-center justify-center">${i+1}</span>
+                        <span class="text-sm font-medium text-slate-700">${t.town||'Unknown'}</span>
+                    </div>
+                    <span class="text-sm font-bold text-slate-900">${(t.count||0).toLocaleString()}</span>
+                </div>`).join('');
+        }
+
+        // Compare chart
+        const compareCanvas = document.getElementById('adminCompareChart');
+        if (compareCanvas && (hdbAvg || privAvg)) {
+            if (window._adminCompareChart) window._adminCompareChart.destroy();
+            window._adminCompareChart = new Chart(compareCanvas.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: ['HDB Resale', 'Private / Condo'],
+                    datasets: [{
+                        label: 'Avg Estimated Value (S$)',
+                        data: [hdbAvg, privAvg],
+                        backgroundColor: ['rgba(59,130,246,0.85)', 'rgba(139,92,246,0.85)'],
+                        borderRadius: 8, barThickness: 40,
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => `  S$${ctx.parsed.y.toLocaleString()}` } } },
+                    scales: {
+                        y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.03)' }, ticks: { callback: v => `S$${(v/1000).toFixed(0)}k`, font: { size: 10 }, color: '#94a3b8' } },
+                        x: { grid: { display: false }, ticks: { font: { weight: 'bold', size: 11 }, color: '#334155' } }
+                    }
+                }
+            });
+        }
+
     } catch (err) {
         console.error('Admin stats failed:', err);
         labels = ['No Data'];
@@ -1822,6 +1879,64 @@ async function initAdminTypeChart() {
             }
         }
     });
+}
+
+async function loadAuditLog() {
+    const tbody = document.getElementById('audit-log-body');
+    const monthSel = document.getElementById('audit-month-filter');
+    if (!tbody) return;
+
+    const month = monthSel ? monthSel.value : '';
+    const params = month ? `?month=${encodeURIComponent(month)}` : '';
+
+    tbody.innerHTML = '<tr><td colspan="4" class="py-8 text-center text-slate-400 text-sm animate-pulse">Loading…</td></tr>';
+
+    try {
+        const res = await fetch(`/api/admin/audit-log${params}`);
+        const data = await res.json();
+        const logs = data.logs || [];
+
+        // Populate month filter options
+        if (monthSel && data.months?.length) {
+            const cur = monthSel.value;
+            monthSel.innerHTML = '<option value="">All Time</option>' +
+                data.months.map(m => `<option value="${m}" ${m===cur?'selected':''}>${m}</option>`).join('');
+        }
+
+        if (!logs.length) {
+            tbody.innerHTML = '<tr><td colspan="4" class="py-8 text-center text-slate-400 text-sm">No audit events found.</td></tr>';
+            return;
+        }
+
+        const eventColors = {
+            'register': 'bg-emerald-100 text-emerald-700',
+            'login': 'bg-blue-100 text-blue-700',
+            'admin_action': 'bg-amber-100 text-amber-700',
+            'upload': 'bg-violet-100 text-violet-700',
+            'delete': 'bg-rose-100 text-rose-700',
+            'model_upload': 'bg-sky-100 text-sky-700',
+            'retrain': 'bg-orange-100 text-orange-700',
+        };
+
+        tbody.innerHTML = logs.map(l => {
+            const dt = new Date(l.logged_at || '');
+            const timeStr = isNaN(dt) ? (l.logged_at||'').slice(0,16) :
+                dt.toLocaleDateString('en-SG',{day:'numeric',month:'short',year:'numeric'}) + ' ' +
+                dt.toLocaleTimeString('en-SG',{hour:'2-digit',minute:'2-digit'});
+            const badge = eventColors[l.event_type] || 'bg-slate-100 text-slate-600';
+            return `
+            <tr class="hover:bg-slate-50 transition-colors">
+                <td class="py-3 pl-4 text-xs text-slate-500 whitespace-nowrap">${timeStr}</td>
+                <td class="py-3 text-sm font-medium text-slate-700">${l.user_name || 'System'}</td>
+                <td class="py-3">
+                    <span class="text-xs px-2 py-1 rounded-full font-semibold ${badge}">${(l.event_type||'').replace(/_/g,' ')}</span>
+                </td>
+                <td class="py-3 pr-4 text-sm text-slate-500 max-w-xs truncate">${l.action || ''}</td>
+            </tr>`;
+        }).join('');
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="4" class="py-8 text-center text-rose-400 text-sm">Failed to load: ${e.message}</td></tr>`;
+    }
 }
 
 let allUsers = [];
@@ -3355,7 +3470,7 @@ function appendChatMessage(role, text, id) {
 
 // ── Guides — Tab Switching & News ────────────────────────────
 function switchGuideTab(tab) {
-    ['hdb','condo','financing','policy'].forEach(t => {
+    ['hdb','condo','financing','policy','simulator'].forEach(t => {
         const content = document.getElementById(`guide-content-${t}`);
         const btn     = document.getElementById(`guide-tab-${t}`);
         if (content) content.classList.toggle('hidden', t !== tab);
@@ -3366,6 +3481,7 @@ function switchGuideTab(tab) {
         }
     });
     if (tab === 'policy') loadGuidesNews('policy');
+    if (tab === 'simulator') runABSDSimulation();
 }
 
 async function loadGuidesNews(topic = 'policy') {

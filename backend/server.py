@@ -90,6 +90,20 @@ def _validate_password_strength(password: str):
         return "Password must contain at least one special character (!@#$%^&* etc.)."
     return None
 
+def _log_audit(conn, user_id, action: str, event_type: str, details: str = ''):
+    """Write an entry to audit_log. Silently ignores errors."""
+    try:
+        cur = _cursor(conn)
+        cur.execute(_q(
+            "INSERT INTO audit_log (user_id, action, event_type, details, logged_at) "
+            "VALUES (?, ?, ?, ?, ?)"
+        ), (user_id, action, event_type, details or '',
+            datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S')))
+        conn.commit()
+    except Exception as _e:
+        print(f"[audit] log failed: {_e}")
+
+
 # ─── Live retraining state ────────────────────────────────────────────────────
 
 _BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1685,6 +1699,8 @@ def register():
         user_id = cur.lastrowid
 
     conn.commit()
+
+    _log_audit(conn, user_id, f"New registration: {email}", 'register', f"name={full_name}, type={account_type}")
 
     cur.execute(_q("SELECT id, full_name, email, phone, role, account_type, cea_number, whatsapp, bio FROM users WHERE id = ?"), (user_id,))
     user = _row(cur)
@@ -3531,6 +3547,41 @@ def export_report():
     cur.execute("SELECT p.id, p.town, p.flat_type, p.floor_area_sqm, p.estimated_value, p.confidence, p.predicted_at, u.full_name FROM predictions p LEFT JOIN users u ON p.user_id=u.id ORDER BY p.predicted_at DESC LIMIT 50")
     recent_preds = _rows(cur)
 
+    # HDB vs Private avg estimated values
+    hdb_avg_val = 0
+    priv_avg_val = 0
+    try:
+        cur.execute("SELECT AVG(estimated_value) AS v FROM predictions WHERE flat_type IN ('1 ROOM','2 ROOM','3 ROOM','4 ROOM','5 ROOM','EXECUTIVE')")
+        r = _row(cur)
+        hdb_avg_val = int(r['v'] or 0) if r and r.get('v') else 0
+    except Exception:
+        pass
+    try:
+        cur.execute("SELECT AVG(estimated_value) AS v FROM predictions WHERE flat_type NOT IN ('1 ROOM','2 ROOM','3 ROOM','4 ROOM','5 ROOM','EXECUTIVE') AND flat_type IS NOT NULL")
+        r = _row(cur)
+        priv_avg_val = int(r['v'] or 0) if r and r.get('v') else 0
+    except Exception:
+        pass
+
+    # Recent registrations
+    recent_regs = []
+    try:
+        cur.execute(_q("SELECT full_name, email, account_type, created_at FROM users ORDER BY id DESC LIMIT 20"))
+        recent_regs = _rows(cur)
+    except Exception:
+        pass
+
+    # Recent audit log entries
+    recent_audit = []
+    try:
+        cur.execute(_q(
+            "SELECT al.action, al.event_type, al.logged_at, u.full_name AS user_name "
+            "FROM audit_log al LEFT JOIN users u ON al.user_id = u.id "
+            "ORDER BY al.logged_at DESC LIMIT 50"))
+        recent_audit = _rows(cur)
+    except Exception:
+        pass
+
     if USE_POSTGRES:
         db_size = "Supabase PostgreSQL"
     else:
@@ -3580,10 +3631,26 @@ def export_report():
 
     now_str = datetime.datetime.now().strftime('%d %B %Y, %H:%M')
     story = []
+    W = doc.width
 
-    # ── Cover / Header ────────────────────────────────────────────────────
-    story.append(Paragraph('PropAI.sg', ParagraphStyle('BIG', parent=SS['Title'], fontSize=32, textColor=NAVY, spaceAfter=2)))
-    story.append(Paragraph('Admin Report', ParagraphStyle('SUB', parent=SS['Normal'], fontSize=16, textColor=BLUE, spaceAfter=6)))
+    # ── Cover / Header (blue bar) ─────────────────────────────────────────
+    BLUE_BG = HexColor('#1E40AF')
+    WHITE   = HexColor('#FFFFFF')
+    header_data = [[Paragraph(
+        '<font color="#FFFFFF" size="20"><b>PropAI.sg  Platform Report</b></font>',
+        ParagraphStyle('HDR', parent=SS['Normal'], fontSize=20, textColor=WHITE, spaceAfter=0)
+    )]]
+    header_tbl = Table(header_data, colWidths=[W])
+    header_tbl.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), BLUE_BG),
+        ('TOPPADDING',    (0,0), (-1,-1), 16),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 16),
+        ('LEFTPADDING',   (0,0), (-1,-1), 16),
+        ('RIGHTPADDING',  (0,0), (-1,-1), 16),
+        ('ROUNDEDCORNERS', [8]),
+    ]))
+    story.append(header_tbl)
+    story.append(Spacer(1, 0.3*cm))
     story.append(Paragraph(f'Generated: {now_str}', SMALL))
     story.append(hr())
     story.append(Spacer(1, 0.3*cm))
@@ -3592,23 +3659,39 @@ def export_report():
     story.append(Paragraph('1. Platform Overview', H1))
     ov_data = [
         ['Metric', 'Value'],
-        ['Total Registered Users',    str(total_users)],
-        ['  — Admin Users',           str(admin_count)],
-        ['  — Regular Users',         str(total_users - admin_count)],
-        ['Total Predictions Made',    str(total_preds)],
-        ['  — HDB Predictions',       str(hdb_c)],
-        ['  — Private Property',      str(priv_c)],
-        ['Price Records in DB',       str(total_recs)],
-        ['HDB Transaction Records',   str(hdb_txs)],
+        ['Total Registered Users',      str(total_users)],
+        ['  — Admin Users',             str(admin_count)],
+        ['  — Regular Users',           str(total_users - admin_count)],
+        ['Total Predictions Made',      str(total_preds)],
+        ['  — HDB Predictions',         str(hdb_c)],
+        ['  — Private Property',        str(priv_c)],
+        ['Price Records in DB',         str(total_recs)],
+        ['HDB Transaction Records',     str(hdb_txs)],
         ['Private Transaction Records', str(priv_txs)],
-        ['Database Size',             db_size],
+        ['Database Size',               db_size],
     ]
-    W = doc.width
     story.append(tbl(ov_data, [W*0.6, W*0.4]))
     story.append(Spacer(1, 0.5*cm))
 
-    # ── 2. User Statistics ───────────────────────────────────────────────
-    story.append(Paragraph('2. User Statistics', H1))
+    # ── 2. HDB vs Private Property Comparison ───────────────────────────
+    story.append(Paragraph('2. HDB vs Private Property Comparison', H1))
+    t_sum = hdb_c + priv_c or 1
+    cmp_data = [
+        ['Category', 'Prediction Count', 'Share', 'Avg Estimated Value'],
+        ['HDB Resale',
+         str(hdb_c),
+         f"{hdb_c/t_sum*100:.1f}%",
+         f"S${hdb_avg_val:,}" if hdb_avg_val else '—'],
+        ['Private / Condo',
+         str(priv_c),
+         f"{priv_c/t_sum*100:.1f}%",
+         f"S${priv_avg_val:,}" if priv_avg_val else '—'],
+    ]
+    story.append(tbl(cmp_data, [W*0.30, W*0.20, W*0.15, W*0.35]))
+    story.append(Spacer(1, 0.5*cm))
+
+    # ── 3. User Statistics ───────────────────────────────────────────────
+    story.append(Paragraph('3. User Statistics', H1))
 
     if daily_regs:
         story.append(Paragraph('Daily New Registrations (last 14 days)', H2))
@@ -3626,17 +3709,8 @@ def export_report():
         story.append(tbl(dp_data, [W*0.5, W*0.5]))
         story.append(Spacer(1, 0.3*cm))
 
-    # ── 3. Prediction Analytics ──────────────────────────────────────────
-    story.append(Paragraph('3. Prediction Analytics', H1))
-
-    # Breakdown by type
-    story.append(Paragraph('Property Type Breakdown', H2))
-    pt_data = [['Property Category', 'Predictions', 'Share']]
-    t_sum = hdb_c + priv_c or 1
-    pt_data.append(['HDB Resale',       str(hdb_c),  f"{hdb_c/t_sum*100:.1f}%"])
-    pt_data.append(['Private Property', str(priv_c), f"{priv_c/t_sum*100:.1f}%"])
-    story.append(tbl(pt_data, [W*0.5, W*0.25, W*0.25]))
-    story.append(Spacer(1, 0.3*cm))
+    # ── 4. Prediction Analytics ──────────────────────────────────────────
+    story.append(Paragraph('4. Prediction Analytics', H1))
 
     # Top towns
     if top_towns:
@@ -3665,15 +3739,15 @@ def export_report():
     story.append(tbl(pred_data, [W*0.05, W*0.16, W*0.18, W*0.14, W*0.16, W*0.10, W*0.11], header=True))
     story.append(Spacer(1, 0.5*cm))
 
-    # ── 4. Database & System ─────────────────────────────────────────────
-    story.append(Paragraph('4. Database & System Statistics', H1))
+    # ── 5. Database Statistics ───────────────────────────────────────────
+    story.append(Paragraph('5. Database Statistics', H1))
     db_data = [
         ['Table', 'Record Count'],
         ['users',               str(total_users)],
         ['predictions',         str(total_preds)],
         ['price_records',       str(total_recs)],
-        ['resale_flat_prices', str(hdb_txs)],
-        ['ura_transactions', str(priv_txs)],
+        ['resale_flat_prices',  str(hdb_txs)],
+        ['ura_transactions',    str(priv_txs)],
     ]
     story.append(tbl(db_data, [W*0.6, W*0.4]))
     story.append(Spacer(1, 0.3*cm))
@@ -3686,6 +3760,40 @@ def export_report():
     ]
     story.append(tbl(sys_data, [W*0.6, W*0.4]))
     story.append(Spacer(1, 0.5*cm))
+
+    # ── 6. Recent Registrations ──────────────────────────────────────────
+    if recent_regs:
+        story.append(Paragraph('6. Recent Registrations (last 20)', H1))
+        rr_data = [['Name', 'Email', 'Type', 'Registered At']]
+        for r in recent_regs:
+            dt_raw = str(r.get('created_at') or '')
+            dt = dt_raw[:10] if dt_raw else ''
+            rr_data.append([
+                str(r.get('full_name') or '')[:22],
+                str(r.get('email') or '')[:28],
+                str(r.get('account_type') or ''),
+                dt,
+            ])
+        story.append(tbl(rr_data, [W*0.25, W*0.35, W*0.15, W*0.25]))
+        story.append(Spacer(1, 0.5*cm))
+
+    # ── 7. Recent Audit Log ──────────────────────────────────────────────
+    if recent_audit:
+        story.append(Paragraph('7. Recent Audit Log (last 50 entries)', H1))
+        al_data = [['Time', 'User', 'Event', 'Action']]
+        for r in recent_audit:
+            dt_raw = str(r.get('logged_at') or '')
+            dt = dt_raw[:16] if dt_raw else ''
+            al_data.append([
+                dt,
+                str(r.get('user_name') or 'System')[:18],
+                str(r.get('event_type') or ''),
+                str(r.get('action') or '')[:40],
+            ])
+        story.append(tbl(al_data, [W*0.18, W*0.18, W*0.14, W*0.50]))
+        story.append(Spacer(1, 0.3*cm))
+
+    story.append(hr())
     story.append(Paragraph('End of Report — PropAI.sg Admin Portal', SMALL))
 
     doc.build(story)
@@ -3694,6 +3802,64 @@ def export_report():
     from flask import send_file
     fname = f"propai_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
     return send_file(buf, as_attachment=True, download_name=fname, mimetype='application/pdf')
+
+
+@app.route('/api/admin/audit-log', methods=['GET'])
+def admin_audit_log():
+    """Return audit log entries, optionally filtered by month (YYYY-MM format)."""
+    # Auth check (admin only)
+    token = request.headers.get('Authorization', '').replace('Bearer ', '').strip()
+    if not token:
+        token = request.args.get('token', '')
+    conn = get_db()
+    cur = _cursor(conn)
+    cur.execute(_q("SELECT id, role FROM users WHERE token = ?"), (token,))
+    u = _row(cur)
+    if not u or u.get('role') != 'admin':
+        conn.close()
+        return jsonify({"error": "Admin access required"}), 403
+
+    month_filter = request.args.get('month', '').strip()  # e.g. '2026-04'
+
+    try:
+        if month_filter:
+            if USE_POSTGRES:
+                cur.execute(
+                    "SELECT al.id, al.action, al.event_type, al.details, al.logged_at, u.full_name AS user_name "
+                    "FROM audit_log al LEFT JOIN users u ON al.user_id = u.id "
+                    "WHERE TO_CHAR(al.logged_at::timestamp, 'YYYY-MM') = %s "
+                    "ORDER BY al.logged_at DESC LIMIT 200", (month_filter,))
+            else:
+                cur.execute(
+                    "SELECT al.id, al.action, al.event_type, al.details, al.logged_at, u.full_name AS user_name "
+                    "FROM audit_log al LEFT JOIN users u ON al.user_id = u.id "
+                    "WHERE strftime('%Y-%m', al.logged_at) = ? "
+                    "ORDER BY al.logged_at DESC LIMIT 200", (month_filter,))
+        else:
+            cur.execute(
+                _q("SELECT al.id, al.action, al.event_type, al.details, al.logged_at, u.full_name AS user_name "
+                   "FROM audit_log al LEFT JOIN users u ON al.user_id = u.id "
+                   "ORDER BY al.logged_at DESC LIMIT 500"))
+
+        logs = _rows(cur)
+        for l in logs:
+            for k in list(l.keys()):
+                if hasattr(l[k], 'isoformat'):
+                    l[k] = l[k].isoformat()
+
+        # Get distinct months for filter dropdown
+        if USE_POSTGRES:
+            cur.execute("SELECT DISTINCT TO_CHAR(logged_at::timestamp, 'YYYY-MM') AS m FROM audit_log ORDER BY m DESC LIMIT 24")
+        else:
+            cur.execute("SELECT DISTINCT strftime('%Y-%m', logged_at) AS m FROM audit_log ORDER BY m DESC LIMIT 24")
+        months = [r['m'] for r in _rows(cur) if r.get('m')]
+
+        conn.close()
+        return jsonify({"logs": logs, "months": months})
+    except Exception as e:
+        try: conn.close()
+        except: pass
+        return jsonify({"error": str(e)}), 500
 
 
 init_db()
