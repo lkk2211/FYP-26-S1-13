@@ -510,22 +510,36 @@ def train(df_raw: pd.DataFrame):
     print("Computing SHAP explainer (private XGB)...")
     try:
         import shap
-        xgb_pipe = trained['xgb']
+        xgb_pipe            = trained['xgb']
         preprocessor_fitted = xgb_pipe.named_steps['preprocessor']
         xgb_model           = xgb_pipe.named_steps['model']
         feature_names_out   = preprocessor_fitted.get_feature_names_out().tolist()
+
+        # Transform a small sample to verify the explainer works before saving
+        X_sample = preprocessor_fitted.transform(X_test.iloc[:200])
         explainer = shap.TreeExplainer(xgb_model)
+        # Run on sample to catch errors early (result unused — just validates the explainer)
+        explainer.shap_values(X_sample)
+
+        base_val = explainer.expected_value
+        if hasattr(base_val, '__len__'):
+            base_val = float(base_val[0])
+        else:
+            base_val = float(base_val)
+
         shap_data = {
-            'explainer':       explainer,
-            'feature_names':   feature_names_out,
+            'explainer':        explainer,
+            'feature_names':    feature_names_out,
             'categorical_cols': CATEGORICAL_COLS,
-            'numerical_cols':  NUMERICAL_COLS,
-            'base_value':      float(explainer.expected_value),
+            'numerical_cols':   NUMERICAL_COLS,
+            'base_value':       base_val,
         }
         joblib.dump(shap_data, os.path.join(MODELS_DIR, 'shap_private.joblib'))
-        print("  shap_private.joblib saved.")
+        print(f"  shap_private.joblib saved  (base_value={base_val:.4f}, features={len(feature_names_out)})")
     except Exception as e:
+        import traceback
         print(f"  SHAP skipped: {e}")
+        traceback.print_exc()
 
     if os.path.exists(TEMP_PATH):
         os.remove(TEMP_PATH)

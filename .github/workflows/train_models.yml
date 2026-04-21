@@ -48,6 +48,10 @@ jobs:
           MODEL_UPLOAD_SECRET: ${{ secrets.MODEL_UPLOAD_SECRET }}
         run: |
           for fname in xgb_pipeline.joblib lgbm_pipeline.joblib cat_pipeline.joblib meta.joblib shap_hdb.joblib; do
+            if [ ! -f "backend/models/$fname" ]; then
+              echo "  Skipping $fname (not found — SHAP may have been skipped)"
+              continue
+            fi
             echo "Uploading $fname ..."
             curl -sf -X POST "$RENDER_URL/api/admin/upload-model" \
               -H "X-Upload-Secret: $MODEL_UPLOAD_SECRET" \
@@ -70,6 +74,10 @@ jobs:
           MODEL_UPLOAD_SECRET: ${{ secrets.MODEL_UPLOAD_SECRET }}
         run: |
           for fname in xgb_private_pipeline.joblib lgbm_private_pipeline.joblib cat_private_pipeline.joblib meta_private.joblib shap_private.joblib; do
+            if [ ! -f "backend/models/$fname" ]; then
+              echo "  Skipping $fname (not found — SHAP may have been skipped)"
+              continue
+            fi
             echo "Uploading $fname ..."
             curl -sf -X POST "$RENDER_URL/api/admin/upload-model" \
               -H "X-Upload-Secret: $MODEL_UPLOAD_SECRET" \
