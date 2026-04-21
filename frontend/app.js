@@ -3986,6 +3986,39 @@ const _URA_ZONES = [
     { name: 'Mount Pleasant New Town',       type: 'New Town',              opens: 2030, lat: 1.3260, lon: 103.8390, uplift: 8,  radius: 2.0, desc: 'Former Police Academy site — 5,000 homes in a heritage-rich greenery corridor near Novena' },
 ];
 
+// Upcoming amenities: malls, community hubs, lifestyle centres, schools, healthcare
+// Sources: URA, HDB, MOE, MOH, SportsSG planning documents 2024-2025
+const _UPCOMING_AMENITIES = [
+    // ── Malls & Retail ────────────────────────────────────────────────────────
+    { name: 'Tengah Town Centre',           type: 'Mall',             opens: 2027, lat: 1.3530, lon: 103.7430, uplift: 4, radius: 2.0, desc: 'Integrated retail and wet market hub anchoring the car-free Tengah Town Centre — serves 42,000 new residents' },
+    { name: 'JLD Mixed-Use Retail Podium',  type: 'Mall',             opens: 2029, lat: 1.3334, lon: 103.7402, uplift: 5, radius: 2.5, desc: "Mega lifestyle and retail podium at Singapore's second CBD — anchor tenants, entertainment, F&B on Jurong Lake" },
+    { name: 'Woodlands Civic Mall',         type: 'Mall',             opens: 2030, lat: 1.4370, lon: 103.7870, uplift: 3, radius: 2.0, desc: 'Expanded retail and dining zone at Woodlands Regional Centre, co-located with RTS Link terminus' },
+    { name: 'Punggol Coast Mall',           type: 'Mall',             opens: 2026, lat: 1.4120, lon: 103.9100, uplift: 3, radius: 1.5, desc: 'New neighbourhood mall serving Punggol Coast BTO and Digital District workers — F&B, supermarket, childcare' },
+    { name: 'Pasir Ris Mall Phase 2',       type: 'Mall',             opens: 2026, lat: 1.3720, lon: 103.9500, uplift: 3, radius: 1.5, desc: 'Extension of White Sands / Pasir Ris retail precinct to serve new CRL corridor demand' },
+    // ── Lifestyle & Community Hubs ────────────────────────────────────────────
+    { name: 'Science Centre @ Jurong Lake', type: 'Lifestyle Centre', opens: 2027, lat: 1.3320, lon: 103.7380, uplift: 5, radius: 2.5, desc: 'Relocated and expanded Science Centre — Singapore\'s new STEM landmark within JLD waterfront precinct' },
+    { name: 'Tengah Community Club',        type: 'Community Hub',    opens: 2027, lat: 1.3508, lon: 103.7419, uplift: 3, radius: 1.5, desc: 'Integrated CC with ActiveSG gym, 50m pool and sports hall — first CC for the 42,000-home Tengah estate' },
+    { name: 'Bidadari Community Hub',       type: 'Community Hub',    opens: 2026, lat: 1.3392, lon: 103.8700, uplift: 3, radius: 1.5, desc: 'New CC and library for Bidadari heritage estate — childcare, eldercare, F&B and event spaces' },
+    { name: 'Mount Pleasant CC',            type: 'Community Hub',    opens: 2030, lat: 1.3260, lon: 103.8390, uplift: 3, radius: 1.5, desc: 'New community club serving 5,000 Mount Pleasant homes — library node, childcare and sports facilities' },
+    { name: 'Tampines North CC',            type: 'Community Hub',    opens: 2027, lat: 1.3750, lon: 103.9260, uplift: 3, radius: 1.5, desc: 'New CC for Tampines North HDB residents alongside the upcoming CRL Tampines North station' },
+    // ── Sports & Recreation ───────────────────────────────────────────────────
+    { name: 'Kallang Sports Hub Redevelopment', type: 'Sports Hub',   opens: 2027, lat: 1.3097, lon: 103.8698, uplift: 4, radius: 2.5, desc: 'New indoor stadium, aquatics centre and waterway park along Kallang River — Kallang Alive Masterplan centrepiece' },
+    { name: 'Tengah ActiveSG Facility',     type: 'Sports Hub',       opens: 2027, lat: 1.3500, lon: 103.7450, uplift: 3, radius: 1.5, desc: 'National-grade ActiveSG swimming complex and indoor courts embedded in Tengah Town Centre' },
+    { name: 'JLD Lakeside Leisure Park',    type: 'Park & Nature',    opens: 2028, lat: 1.3330, lon: 103.7350, uplift: 4, radius: 2.5, desc: 'Expanded Jurong Lake Gardens — new waterfront promenade, eco boardwalk and event lawn at JLD' },
+    { name: 'Tengah Forest Corridor',       type: 'Park & Nature',    opens: 2027, lat: 1.3530, lon: 103.7350, uplift: 4, radius: 2.0, desc: '100ha central nature park linking Tengah homes to Bukit Timah forest reserve — car-free greenway' },
+    { name: 'Paya Lebar Green Corridor',    type: 'Park & Nature',    opens: 2031, lat: 1.3601, lon: 103.9025, uplift: 4, radius: 2.5, desc: 'New 150ha park and green corridor on former Paya Lebar Airbase — cycling paths, wetlands and event grounds' },
+    // ── Education ─────────────────────────────────────────────────────────────
+    { name: 'SIT Punggol Campus',           type: 'University',       opens: 2026, lat: 1.4050, lon: 103.9050, uplift: 4, radius: 2.0, desc: 'Singapore Institute of Technology flagship campus — 12,000 students; drives rental demand and F&B near Punggol' },
+    { name: 'Tengah Primary School',        type: 'School',           opens: 2026, lat: 1.3490, lon: 103.7440, uplift: 3, radius: 1.5, desc: 'First primary school in Tengah estate — key family-buyer demand driver for nearby HDB units' },
+    { name: 'Tampines North Primary School',type: 'School',           opens: 2027, lat: 1.3750, lon: 103.9260, uplift: 3, radius: 1.5, desc: 'New primary school serving Tampines North BTO residents — family demand signal for the corridor' },
+    { name: 'Mount Pleasant Secondary Sch', type: 'School',           opens: 2030, lat: 1.3260, lon: 103.8390, uplift: 3, radius: 1.5, desc: 'New secondary school planned for Mount Pleasant New Town — supports 5,000-home family community' },
+    // ── Healthcare ─────────────────────────────────────────────────────────────
+    { name: 'Woodlands Health Campus Ph.2', type: 'Healthcare',       opens: 2026, lat: 1.4350, lon: 103.7860, uplift: 4, radius: 3.0, desc: 'Phase 2 expansion — community hospital, specialist outpatient clinics and integrated eldercare centre' },
+    { name: 'Tengah Polyclinic',            type: 'Healthcare',       opens: 2027, lat: 1.3510, lon: 103.7425, uplift: 3, radius: 2.0, desc: 'New NHG polyclinic serving Tengah and western estates — GP, specialist and maternal health services' },
+    { name: 'Kallang Polyclinic',           type: 'Healthcare',       opens: 2027, lat: 1.3097, lon: 103.8680, uplift: 3, radius: 2.0, desc: 'New NHGP polyclinic within the Kallang Alive development — accessible healthcare for Kallang–Bendemeer residents' },
+    { name: 'Eastern Integrated Health Hub',type: 'Healthcare',       opens: 2028, lat: 1.3600, lon: 103.9500, uplift: 3, radius: 3.0, desc: 'Expanded Changi General Hospital cluster with step-down care — serves growing east-coast and Tampines population' },
+];
+
 function _haversineKm(lat1, lon1, lat2, lon2) {
     const R    = 6371;
     const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -4000,135 +4033,188 @@ function renderAmenityFuture(lat, lon, estimatedValue) {
     const section = document.getElementById('amenity-future-section');
     const body    = document.getElementById('amenity-future-body');
     if (!section || !body) return;
-
     if (!lat || !lon) { section.classList.add('hidden'); return; }
 
-    // MRT stations within 2 km
+    // ── Gather nearby items from all three datasets ─────────────────────────
     const nearbyMrt = _UPCOMING_MRT
         .map(s => ({ ...s, dist: _haversineKm(lat, lon, s.lat, s.lon), kind: 'mrt' }))
-        .filter(s => s.dist <= 2.0)
-        .sort((a, b) => a.dist - b.dist);
+        .filter(s => s.dist <= 2.0).sort((a, b) => a.dist - b.dist);
 
-    // URA transformation zones within each zone's own radius
     const nearbyUra = _URA_ZONES
         .map(z => ({ ...z, dist: _haversineKm(lat, lon, z.lat, z.lon), kind: 'ura' }))
-        .filter(z => z.dist <= z.radius)
-        .sort((a, b) => a.dist - b.dist);
+        .filter(z => z.dist <= z.radius).sort((a, b) => a.dist - b.dist);
 
-    const allCatalysts = [...nearbyMrt, ...nearbyUra];
-    if (!allCatalysts.length) { section.classList.add('hidden'); return; }
+    const nearbyAmenities = _UPCOMING_AMENITIES
+        .map(a => ({ ...a, dist: _haversineKm(lat, lon, a.lat, a.lon), kind: 'amenity' }))
+        .filter(a => a.dist <= a.radius).sort((a, b) => a.dist - b.dist);
+
+    // Major catalysts = MRT + URA (drive price uplift); amenities add quality-of-life signal
+    const majorCatalysts = [...nearbyMrt, ...nearbyUra];
+    const allItems = [...majorCatalysts, ...nearbyAmenities];
+    if (!allItems.length) { section.classList.add('hidden'); return; }
     section.classList.remove('hidden');
 
-    // Compound uplift: lead catalyst + 35% credit for each additional
-    const sorted = [...allCatalysts].sort((a, b) => b.uplift - a.uplift);
-    const baseUplift = sorted[0].uplift;
-    const compoundUplift = Math.min(
-        25,
-        Math.round(baseUplift + sorted.slice(1).reduce((acc, c) => acc + c.uplift * 0.35, 0))
-    );
-    const targetYear = Math.max(...allCatalysts.map(c => c.opens));
+    // ── Compound uplift (major catalysts only; amenities contribute 20% each) ─
+    const byUplift = [...majorCatalysts].sort((a, b) => b.uplift - a.uplift);
+    const baseUplift = byUplift[0]?.uplift || 0;
+    const majorCompound = byUplift.slice(1).reduce((acc, c) => acc + c.uplift * 0.35, 0);
+    const amenityBoost  = nearbyAmenities.reduce((acc, a) => acc + (a.uplift || 3) * 0.20, 0);
+    const compoundUplift = Math.min(25, Math.round(baseUplift + majorCompound + amenityBoost));
+    const targetYear = allItems.length ? Math.max(...allItems.map(c => c.opens)) : 2030;
+    const firstMajorYear = majorCatalysts.length ? Math.min(...majorCatalysts.map(c => c.opens)) : targetYear;
     const dollarGain = estimatedValue ? Math.round(estimatedValue * compoundUplift / 100) : null;
 
-    // XAI headline
-    const catCount = allCatalysts.length;
+    // ── XAI headline ─────────────────────────────────────────────────────────
+    const majorCount   = majorCatalysts.length;
+    const amenityCount = nearbyAmenities.length;
+    const totalCount   = allItems.length;
+
     let headline, subline;
     if (compoundUplift >= 12) {
-        headline = `Strong growth signal — predicted +${compoundUplift}% property value uplift by ${targetYear}`;
-        subline  = `${catCount} nearby infrastructure ${catCount === 1 ? 'catalyst' : 'catalysts'} identified from LTA and URA Master Plan data.`;
-    } else if (compoundUplift >= 7) {
-        headline = `Predicted +${compoundUplift}% value growth by ${targetYear} from nearby infrastructure`;
-        subline  = `${catCount} upcoming ${catCount === 1 ? 'development' : 'developments'} within proximity will drive demand in this corridor.`;
+        headline = `Strong growth signal — predicted +${compoundUplift}% value uplift by ${firstMajorYear}`;
+        subline  = `${majorCount} major infrastructure catalyst${majorCount !== 1 ? 's' : ''} and ${amenityCount} lifestyle development${amenityCount !== 1 ? 's' : ''} identified nearby.`;
+    } else if (compoundUplift >= 6) {
+        headline = `Predicted +${compoundUplift}% value growth by ${firstMajorYear} from nearby developments`;
+        subline  = `${totalCount} upcoming development${totalCount !== 1 ? 's' : ''} within proximity will strengthen demand in this corridor.`;
     } else {
-        headline = `Moderate uplift potential — projected +${compoundUplift}% by ${targetYear}`;
-        subline  = `Nearby infrastructure improvements support long-term value retention.`;
+        headline = `Moderate uplift potential — +${compoundUplift}% projected by ${firstMajorYear}`;
+        subline  = `Nearby amenity and community improvements support long-term liveability and value retention.`;
     }
     const dollarHtml = dollarGain
-        ? `<span class="ml-2 text-emerald-600 dark:text-emerald-400 font-bold">≈ +S$${dollarGain.toLocaleString()} on current valuation</span>`
+        ? `<span class="font-bold text-emerald-600 dark:text-emerald-400"> ≈ +S$${dollarGain.toLocaleString()}</span>`
         : '';
 
-    // MRT card renderer
+    // ── Scorecard chips ───────────────────────────────────────────────────────
+    const chips = [
+        nearbyMrt.length      ? { label: `${nearbyMrt.length} MRT`,       color: 'bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300' } : null,
+        nearbyUra.length      ? { label: `${nearbyUra.length} Masterplan`, color: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300' } : null,
+        nearbyAmenities.filter(a => a.type === 'Mall' || a.type === 'Lifestyle Centre').length
+            ? { label: `${nearbyAmenities.filter(a => a.type === 'Mall' || a.type === 'Lifestyle Centre').length} Retail/Lifestyle`, color: 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300' } : null,
+        nearbyAmenities.filter(a => a.type === 'Community Hub' || a.type === 'Sports Hub' || a.type === 'Park & Nature').length
+            ? { label: `${nearbyAmenities.filter(a => a.type === 'Community Hub' || a.type === 'Sports Hub' || a.type === 'Park & Nature').length} Community/Sports`, color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' } : null,
+        nearbyAmenities.filter(a => a.type === 'School' || a.type === 'University').length
+            ? { label: `${nearbyAmenities.filter(a => a.type === 'School' || a.type === 'University').length} Education`, color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' } : null,
+        nearbyAmenities.filter(a => a.type === 'Healthcare').length
+            ? { label: `${nearbyAmenities.filter(a => a.type === 'Healthcare').length} Healthcare`, color: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300' } : null,
+    ].filter(Boolean);
+
+    const chipsHtml = chips.map(c =>
+        `<span class="text-[10px] font-semibold px-2 py-0.5 rounded-full ${c.color}">${c.label}</span>`
+    ).join('');
+
+    // ── Shared helpers ────────────────────────────────────────────────────────
+    const _badge = yr => yr <= 2027
+        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400'
+        : yr <= 2030 ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400'
+        : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400';
+    const _dist = d => d < 0.1 ? '<100m' : d < 1 ? `${(d*1000).toFixed(0)}m` : `${d.toFixed(1)}km`;
+
+    // ── MRT cards ─────────────────────────────────────────────────────────────
     const mrtCards = nearbyMrt.map(s => {
-        const distStr   = s.dist < 0.1 ? '<100m' : `${(s.dist * 1000).toFixed(0)}m`;
-        const walkMin   = Math.round((s.dist * 1000) / 80); // ~80m/min walking
-        const lineColor = s.line.includes('CRL') ? 'text-teal-600 bg-teal-50 dark:bg-teal-900/30 border-teal-200 dark:border-teal-700'
-                        : s.line.includes('JRL') ? 'text-violet-600 bg-violet-50 dark:bg-violet-900/30 border-violet-200 dark:border-violet-700'
-                        : 'text-blue-600 bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700';
-        const badge     = s.opens <= 2027 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400'
-                        : s.opens <= 2030 ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400'
-                        : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400';
-        return `
-        <div class="flex items-start gap-4 p-4 rounded-2xl border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/40">
-            <div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${lineColor} border">
-                <i data-lucide="train-front" class="w-5 h-5"></i>
+        const lineColor = s.line.startsWith('CRL') ? 'text-teal-600 bg-teal-50 dark:bg-teal-900/30 border-teal-200'
+                        : s.line.startsWith('JRL') ? 'text-violet-600 bg-violet-50 dark:bg-violet-900/30 border-violet-200'
+                        : s.line.startsWith('TEL') ? 'text-red-600 bg-red-50 dark:bg-red-900/30 border-red-200'
+                        : 'text-blue-600 bg-blue-50 dark:bg-blue-900/30 border-blue-200';
+        const walkMin = Math.round((s.dist * 1000) / 80);
+        return `<div class="flex items-start gap-3 p-4 rounded-2xl border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/40">
+            <div class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${lineColor} border text-sm font-black">
+                <i data-lucide="train-front" class="w-4 h-4"></i>
             </div>
             <div class="flex-1 min-w-0">
-                <div class="flex flex-wrap items-center gap-2 mb-1">
-                    <span class="font-semibold text-slate-800 dark:text-slate-100">${s.name} MRT</span>
-                    <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${badge}">Opens ${s.opens}</span>
-                    <span class="text-[10px] text-slate-400">${distStr} · ~${walkMin} min walk</span>
+                <div class="flex flex-wrap items-center gap-1.5 mb-0.5">
+                    <span class="font-semibold text-sm text-slate-800 dark:text-slate-100">${s.name} MRT</span>
+                    <span class="text-[10px] font-bold px-1.5 py-0.5 rounded-full ${_badge(s.opens)}">Est. ${s.opens}</span>
+                    <span class="text-[10px] text-slate-400">${_dist(s.dist)} · ~${walkMin} min walk</span>
                 </div>
-                <p class="text-xs text-slate-500 dark:text-slate-400 mb-1">${s.line}</p>
-                <p class="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
-                    +${s.uplift}% projected uplift by ${s.opens}
-                    <span class="font-normal text-slate-400"> · based on comparable MRT opening impact studies</span>
-                </p>
+                <p class="text-[11px] text-slate-400 mb-1">${s.line}</p>
+                <p class="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">+${s.uplift}% projected uplift <span class="font-normal text-slate-400">· MRT opening impact studies</span></p>
             </div>
         </div>`;
     }).join('');
 
-    // URA zone card renderer
-    const typeIcon  = { 'Regional CBD': 'building-2', 'Urban Transformation': 'construction', 'Waterfront District': 'waves', 'New Town': 'home', 'Tech Cluster': 'cpu', 'Research & Biomedical': 'flask-conical', 'Regional Hub': 'landmark', 'Mega Infrastructure': 'plane', 'New Urban District': 'building', 'Lifestyle & Retail Hub': 'shopping-bag', 'Live-Work-Play District': 'layers', 'Sports & Lifestyle Hub': 'dumbbell' };
-    const typeColor = { 'Regional CBD': 'text-indigo-600 bg-indigo-50 dark:bg-indigo-900/30 border-indigo-200', 'Urban Transformation': 'text-orange-600 bg-orange-50 dark:bg-orange-900/30 border-orange-200', 'Waterfront District': 'text-sky-600 bg-sky-50 dark:bg-sky-900/30 border-sky-200', 'New Town': 'text-green-600 bg-green-50 dark:bg-green-900/30 border-green-200', 'Tech Cluster': 'text-violet-600 bg-violet-50 dark:bg-violet-900/30 border-violet-200', 'Research & Biomedical': 'text-pink-600 bg-pink-50 dark:bg-pink-900/30 border-pink-200', 'Regional Hub': 'text-blue-600 bg-blue-50 dark:bg-blue-900/30 border-blue-200', 'Mega Infrastructure': 'text-slate-600 bg-slate-100 dark:bg-slate-700 border-slate-200', 'New Urban District': 'text-blue-600 bg-blue-50 dark:bg-blue-900/30 border-blue-200', 'Lifestyle & Retail Hub': 'text-rose-600 bg-rose-50 dark:bg-rose-900/30 border-rose-200', 'Live-Work-Play District': 'text-amber-600 bg-amber-50 dark:bg-amber-900/30 border-amber-200', 'Sports & Lifestyle Hub': 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 border-emerald-200' };
-    const uraCards = nearbyUra.map(z => {
-        const distStr = z.dist < 0.5 ? `${(z.dist * 1000).toFixed(0)}m` : `${z.dist.toFixed(1)}km`;
-        const icon    = typeIcon[z.type] || 'map-pin';
-        const color   = typeColor[z.type] || 'text-slate-600 bg-slate-100 border-slate-200';
-        const badge   = z.opens <= 2027 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400'
-                      : z.opens <= 2030 ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400'
-                      : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400';
-        return `
-        <div class="flex items-start gap-4 p-4 rounded-2xl border border-slate-100 dark:border-slate-700 bg-white dark:bg-slate-800/60">
-            <div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${color} border">
-                <i data-lucide="${icon}" class="w-5 h-5"></i>
+    // ── URA zone cards ────────────────────────────────────────────────────────
+    const _uraIcon  = { 'Regional CBD':'building-2','Urban Transformation':'construction','Waterfront District':'waves','New Town':'home','Tech Cluster':'cpu','Research & Biomedical':'flask-conical','Regional Hub':'landmark','Mega Infrastructure':'plane','New Urban District':'building','Lifestyle & Retail Hub':'shopping-bag','Live-Work-Play District':'layers','Sports & Lifestyle Hub':'dumbbell' };
+    const _uraColor = { 'Regional CBD':'text-indigo-600 bg-indigo-50 dark:bg-indigo-900/30 border-indigo-200','Urban Transformation':'text-orange-600 bg-orange-50 dark:bg-orange-900/30 border-orange-200','Waterfront District':'text-sky-600 bg-sky-50 dark:bg-sky-900/30 border-sky-200','New Town':'text-green-600 bg-green-50 dark:bg-green-900/30 border-green-200','Tech Cluster':'text-violet-600 bg-violet-50 dark:bg-violet-900/30 border-violet-200','Research & Biomedical':'text-pink-600 bg-pink-50 dark:bg-pink-900/30 border-pink-200','Regional Hub':'text-blue-600 bg-blue-50 dark:bg-blue-900/30 border-blue-200','Mega Infrastructure':'text-slate-600 bg-slate-100 dark:bg-slate-700 border-slate-200','New Urban District':'text-blue-600 bg-blue-50 dark:bg-blue-900/30 border-blue-200','Lifestyle & Retail Hub':'text-rose-600 bg-rose-50 dark:bg-rose-900/30 border-rose-200','Live-Work-Play District':'text-amber-600 bg-amber-50 dark:bg-amber-900/30 border-amber-200','Sports & Lifestyle Hub':'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 border-emerald-200' };
+    const uraCards = nearbyUra.map(z => `
+        <div class="flex items-start gap-3 p-4 rounded-2xl border border-slate-100 dark:border-slate-700 bg-white dark:bg-slate-800/60">
+            <div class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${_uraColor[z.type]||'text-slate-600 bg-slate-100 border-slate-200'} border">
+                <i data-lucide="${_uraIcon[z.type]||'map-pin'}" class="w-4 h-4"></i>
             </div>
             <div class="flex-1 min-w-0">
-                <div class="flex flex-wrap items-center gap-2 mb-1">
-                    <span class="font-semibold text-slate-800 dark:text-slate-100">${z.name}</span>
-                    <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${badge}">Est. ${z.opens}</span>
-                    <span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400">${z.type}</span>
-                    <span class="text-[10px] text-slate-400">${distStr} away</span>
+                <div class="flex flex-wrap items-center gap-1.5 mb-0.5">
+                    <span class="font-semibold text-sm text-slate-800 dark:text-slate-100">${z.name}</span>
+                    <span class="text-[10px] font-bold px-1.5 py-0.5 rounded-full ${_badge(z.opens)}">Est. ${z.opens}</span>
+                    <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-500">${z.type}</span>
+                    <span class="text-[10px] text-slate-400">${_dist(z.dist)}</span>
                 </div>
-                <p class="text-xs text-slate-500 dark:text-slate-400 mb-1">${z.desc}</p>
-                <p class="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
-                    +${z.uplift}% projected area uplift by ${z.opens}
-                    <span class="font-normal text-slate-400"> · URA Master Plan 2025</span>
-                </p>
+                <p class="text-[11px] text-slate-500 dark:text-slate-400 mb-1">${z.desc}</p>
+                <p class="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">+${z.uplift}% projected uplift <span class="font-normal text-slate-400">· URA Master Plan 2025</span></p>
             </div>
-        </div>`;
-    }).join('');
+        </div>`).join('');
 
+    // ── Amenity cards (compact 2-col grid) ────────────────────────────────────
+    const _amIcon  = { 'Mall':'shopping-bag','Lifestyle Centre':'sparkles','Community Hub':'users','Sports Hub':'dumbbell','Park & Nature':'tree-pine','School':'graduation-cap','University':'book-open','Healthcare':'heart-pulse' };
+    const _amColor = { 'Mall':'text-rose-600 bg-rose-50 dark:bg-rose-900/30 border-rose-200','Lifestyle Centre':'text-violet-600 bg-violet-50 dark:bg-violet-900/30 border-violet-200','Community Hub':'text-blue-600 bg-blue-50 dark:bg-blue-900/30 border-blue-200','Sports Hub':'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 border-emerald-200','Park & Nature':'text-green-600 bg-green-50 dark:bg-green-900/30 border-green-200','School':'text-amber-600 bg-amber-50 dark:bg-amber-900/30 border-amber-200','University':'text-amber-700 bg-amber-50 dark:bg-amber-900/30 border-amber-200','Healthcare':'text-red-600 bg-red-50 dark:bg-red-900/30 border-red-200' };
+    // Group amenities by category for display
+    const amenityGroups = {};
+    nearbyAmenities.forEach(a => {
+        const grp = (a.type === 'School' || a.type === 'University') ? 'Education'
+                  : (a.type === 'Mall' || a.type === 'Lifestyle Centre') ? 'Retail & Lifestyle'
+                  : (a.type === 'Community Hub') ? 'Community'
+                  : (a.type === 'Sports Hub' || a.type === 'Park & Nature') ? 'Sports & Recreation'
+                  : a.type === 'Healthcare' ? 'Healthcare'
+                  : 'Other';
+        if (!amenityGroups[grp]) amenityGroups[grp] = [];
+        amenityGroups[grp].push(a);
+    });
+
+    const amenityGroupsHtml = Object.entries(amenityGroups).map(([grpName, items]) => `
+        <div class="mb-4">
+            <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">${grpName}</p>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                ${items.map(a => `
+                <div class="flex items-start gap-2.5 p-3 rounded-xl border border-slate-100 dark:border-slate-700 bg-white dark:bg-slate-800/60">
+                    <div class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${_amColor[a.type]||'text-slate-600 bg-slate-100 border-slate-200'} border">
+                        <i data-lucide="${_amIcon[a.type]||'map-pin'}" class="w-3.5 h-3.5"></i>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-1 flex-wrap mb-0.5">
+                            <span class="text-xs font-semibold text-slate-800 dark:text-slate-100 leading-tight">${a.name}</span>
+                            <span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full ${_badge(a.opens)} shrink-0">${a.opens}</span>
+                        </div>
+                        <p class="text-[10px] text-slate-500 dark:text-slate-400 leading-snug mb-0.5">${a.desc}</p>
+                        <p class="text-[10px] text-slate-400">${_dist(a.dist)} away</p>
+                    </div>
+                </div>`).join('')}
+            </div>
+        </div>`).join('');
+
+    // ── Assemble sections ─────────────────────────────────────────────────────
     const mrtSection = nearbyMrt.length ? `
-        <p class="text-[11px] font-semibold uppercase tracking-widest text-slate-400 mb-2">Upcoming MRT Stations</p>
-        <div class="space-y-3 mb-5">${mrtCards}</div>` : '';
+        <p class="text-[11px] font-bold uppercase tracking-widest text-slate-400 mb-2">Upcoming MRT Stations</p>
+        <div class="space-y-2 mb-5">${mrtCards}</div>` : '';
     const uraSection = nearbyUra.length ? `
-        <p class="text-[11px] font-semibold uppercase tracking-widest text-slate-400 mb-2">URA Master Plan Transformations</p>
-        <div class="space-y-3">${uraCards}</div>` : '';
+        <p class="text-[11px] font-bold uppercase tracking-widest text-slate-400 mb-2">URA Master Plan Zones</p>
+        <div class="space-y-2 mb-5">${uraCards}</div>` : '';
+    const amenitySection = nearbyAmenities.length ? `
+        <p class="text-[11px] font-bold uppercase tracking-widest text-slate-400 mb-3">Upcoming Amenities</p>
+        ${amenityGroupsHtml}` : '';
 
     body.innerHTML = `
-        <!-- XAI summary banner -->
-        <div class="rounded-2xl bg-gradient-to-r from-emerald-50 to-teal-50 dark:from-emerald-900/20 dark:to-teal-900/20 border border-emerald-200 dark:border-emerald-700 p-5 mb-5">
+        <div class="rounded-2xl bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-900/20 dark:to-teal-900/20 border border-emerald-200 dark:border-emerald-700 p-5 mb-5">
             <div class="flex items-start gap-3">
-                <div class="w-9 h-9 rounded-xl bg-emerald-500 flex items-center justify-center flex-shrink-0">
+                <div class="w-9 h-9 rounded-xl bg-emerald-500 flex items-center justify-center flex-shrink-0 shrink-0">
                     <i data-lucide="trending-up" class="w-5 h-5 text-white"></i>
                 </div>
-                <div>
-                    <p class="font-bold text-emerald-900 dark:text-emerald-200 text-sm leading-snug">${headline}</p>
-                    <p class="text-xs text-emerald-700 dark:text-emerald-400 mt-1">${subline}${dollarHtml}</p>
-                    <p class="text-[10px] text-slate-400 mt-2">Compound uplift reflects ${catCount} catalyst${catCount > 1 ? 's' : ''} — each additional catalyst discounted at 35%. Cap: 25%. For illustration only.</p>
+                <div class="flex-1">
+                    <p class="font-bold text-emerald-900 dark:text-emerald-200 text-sm leading-snug">${headline}${dollarHtml}</p>
+                    <p class="text-xs text-emerald-700 dark:text-emerald-400 mt-1">${subline}</p>
+                    <div class="flex flex-wrap gap-1.5 mt-2">${chipsHtml}</div>
+                    <p class="text-[10px] text-slate-400 mt-2">Compound uplift: lead catalyst + 35% per major, +20% per amenity. Capped at 25%. Illustrative only.</p>
                 </div>
             </div>
         </div>
-        ${mrtSection}${uraSection}`;
+        ${mrtSection}${uraSection}${amenitySection}`;
     lucide.createIcons();
 }
 
