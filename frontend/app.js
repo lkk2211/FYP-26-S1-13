@@ -994,34 +994,66 @@ async function reverseGeocodeAndShow(lat, lng) {
 function showPinResultBar(postal, address, lat, lng, propInfo) {
     if (!_draggablePin) return;
 
-    const isLanded    = propInfo?.is_landed === true;
-    // Only offer prediction when confirmed in our DB and not landed (URA also stores landed sales)
-    const dbConfirmed = propInfo?.db_is_hdb === true || propInfo?.db_is_condo === true;
-    const canPredict  = postal && dbConfirmed && !isLanded;
-    const propType    = propInfo?.property_type || '';
+    const isHdb     = propInfo?.db_is_hdb   === true;
+    const isCondo   = propInfo?.db_is_condo  === true;
+    const isLanded  = propInfo?.is_landed    === true;
+    const canPredict = postal && (isHdb || isCondo);
 
-    // Prediction availability badge
-    const predBadge = canPredict
-        ? `<div style="background:linear-gradient(135deg,#dcfce7,#bbf7d0);border:1px solid #86efac;border-radius:10px;padding:5px 10px;margin-bottom:8px;display:flex;align-items:center;gap:5px">
+    // Building name (show project name for condos if available)
+    const buildingName = (propInfo?.building_name && propInfo.building_name !== 'NIL')
+        ? propInfo.building_name : '';
+
+    // Badge — four distinct states
+    let predBadge;
+    if (isHdb) {
+        predBadge = `
+        <div style="background:linear-gradient(135deg,#dcfce7,#bbf7d0);border:1px solid #86efac;border-radius:10px;padding:5px 10px;margin-bottom:8px;display:flex;align-items:center;gap:6px">
             <span style="width:7px;height:7px;border-radius:50%;background:#16a34a;flex-shrink:0"></span>
-            <span style="font-size:10px;font-weight:700;color:#15803d">Price prediction available for this ${propType}!</span>
-           </div>`
-        : `<div style="background:#fefce8;border:1px solid #fde047;border-radius:10px;padding:5px 10px;margin-bottom:8px">
-            <span style="font-size:10px;font-weight:700;color:#a16207">${isLanded ? 'Landed property' : 'Property not in our database'} — explore only</span>
-           </div>`;
+            <span style="font-size:10px;font-weight:700;color:#15803d">🏢 HDB Resale — prediction available</span>
+        </div>`;
+    } else if (isCondo) {
+        predBadge = `
+        <div style="background:linear-gradient(135deg,#dbeafe,#bfdbfe);border:1px solid #93c5fd;border-radius:10px;padding:5px 10px;margin-bottom:8px;display:flex;align-items:center;gap:6px">
+            <span style="width:7px;height:7px;border-radius:50%;background:#2563eb;flex-shrink:0"></span>
+            <span style="font-size:10px;font-weight:700;color:#1d4ed8">🏙️ Condominium — prediction available</span>
+        </div>`;
+    } else if (isLanded) {
+        predBadge = `
+        <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:5px 10px;margin-bottom:8px;display:flex;align-items:center;gap:6px">
+            <span style="width:7px;height:7px;border-radius:50%;background:#ea580c;flex-shrink:0"></span>
+            <span style="font-size:10px;font-weight:700;color:#c2410c">🏡 Landed property — explore only</span>
+        </div>`;
+    } else {
+        predBadge = `
+        <div style="background:#fefce8;border:1px solid #fde047;border-radius:10px;padding:5px 10px;margin-bottom:8px;display:flex;align-items:center;gap:6px">
+            <span style="width:7px;height:7px;border-radius:50%;background:#ca8a04;flex-shrink:0"></span>
+            <span style="font-size:10px;font-weight:700;color:#a16207">🏗️ Non-residential / unknown — explore only</span>
+        </div>`;
+    }
+
+    const predictBtnStyle = isHdb
+        ? 'background:linear-gradient(135deg,#16a34a,#15803d);color:white;border:none;padding:6px 14px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer'
+        : 'background:linear-gradient(135deg,#2563eb,#7c3aed);color:white;border:none;padding:6px 14px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer';
 
     const predictBtn = canPredict
-        ? `<button onclick="usePostalFromMap('${postal}')" style="background:linear-gradient(135deg,#2563eb,#7c3aed);color:white;border:none;padding:6px 14px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;margin-right:6px">Predict</button>`
+        ? `<button onclick="usePostalFromMap('${postal}')" style="${predictBtnStyle}">Predict</button>`
+        : '';
+
+    const exploreBtn = `<button onclick="(function(){document.querySelector('.leaflet-popup-close-button')&&document.querySelector('.leaflet-popup-close-button').click();loadAmenities(${lat},${lng},'${postal||''}');})()" style="background:none;border:1.5px solid #f97316;color:#f97316;padding:6px 14px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer">Explore</button>`;
+
+    const nameHtml = buildingName
+        ? `<p style="font-weight:700;font-size:12px;color:#0f172a;margin:0 0 1px;max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${buildingName}</p>`
         : '';
 
     const popupHtml = `
         <div style="min-width:210px;font-family:inherit">
             ${predBadge}
-            <p style="font-weight:700;font-size:13px;color:#0f172a;margin:0 0 3px">${postal ? '📮 ' + postal : '📍 Location'}</p>
+            <p style="font-weight:700;font-size:13px;color:#0f172a;margin:0 0 2px">${postal ? '📮 ' + postal : '📍 Location'}</p>
+            ${nameHtml}
             <p style="font-size:11px;color:#64748b;margin:0 0 10px;max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${address}">${address}</p>
-            <div style="display:flex;gap:6px">
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
                 ${predictBtn}
-                <button onclick="(function(){document.querySelector('.leaflet-popup-close-button')&&document.querySelector('.leaflet-popup-close-button').click();loadAmenities(${lat},${lng},'${postal||''}');})()" style="background:none;border:1.5px solid #f97316;color:#f97316;padding:6px 14px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer">Explore</button>
+                ${exploreBtn}
             </div>
         </div>`;
     _draggablePin.bindPopup(popupHtml, { offset: [0, -30], closeButton: true, maxWidth: 270 }).openPopup();
