@@ -14,8 +14,12 @@ function showView(viewId) {
     }
 
     if (viewId === 'setting' && !currentUser) {
-        alert('Please sign in first.');
-        showView('signin');
+        showAuthWall('setting');
+        return;
+    }
+
+    if ((viewId === 'predict' || viewId === 'trend') && !currentUser) {
+        showAuthWall(viewId);
         return;
     }
 
@@ -63,6 +67,38 @@ function showView(viewId) {
     window.scrollTo({ top: 0, behavior: 'smooth' });
     lucide.createIcons();
     updateDarkModeNavIcon();
+}
+
+// ── Auth wall — shown when a guest tries to access a gated view ───────────────
+function showAuthWall(intendedView) {
+    const modal = document.getElementById('auth-wall-modal');
+    if (!modal) { showView('signin'); return; }
+    const labels = {
+        predict: { icon: 'brain-circuit', title: 'AI Valuation is members-only', desc: 'Get instant property valuations, XAI explanations, and Price Intelligence scenarios.' },
+        trend:   { icon: 'trending-up',   title: 'Market Insights is members-only', desc: 'Access live PSF trends, neighbourhood analytics, and MOP opportunity leads.' },
+        setting: { icon: 'settings',      title: 'Sign in to manage your account', desc: 'Update your profile, notifications, and security preferences.' },
+    };
+    const cfg = labels[intendedView] || { icon: 'lock', title: 'Sign in to continue', desc: '' };
+    const iconEl  = modal.querySelector('#aw-icon');
+    const titleEl = modal.querySelector('#aw-title');
+    const descEl  = modal.querySelector('#aw-desc');
+    if (iconEl)  iconEl.setAttribute('data-lucide', cfg.icon);
+    if (titleEl) titleEl.textContent = cfg.title;
+    if (descEl)  descEl.textContent  = cfg.desc;
+    modal.dataset.intendedView = intendedView;
+    modal.classList.remove('hidden');
+    lucide.createIcons();
+}
+function closeAuthWall() {
+    document.getElementById('auth-wall-modal')?.classList.add('hidden');
+}
+function authWallSignIn() {
+    closeAuthWall();
+    showView('signin');
+}
+function authWallRegister() {
+    closeAuthWall();
+    showView('register');
 }
 
 // Predict Logic
@@ -3962,8 +3998,24 @@ const _UPCOMING_MRT = [
     // Thomson-East Coast Line Stage 5 (est. 2026)
     { name: 'Bayshore',          line: 'TEL Stage 5', opens: 2026, lat: 1.3149, lon: 103.9302, uplift: 8 },
     { name: 'Bedok South',       line: 'TEL Stage 5', opens: 2026, lat: 1.3204, lon: 103.9422, uplift: 7 },
-    // CRL Phase 2 (est. 2032)
+    // CRL Phase 1 — western leg (est. 2030)
+    { name: 'Maju',                     line: 'CRL Phase 1', opens: 2030, lat: 1.3280, lon: 103.7740, uplift: 7 },
+    { name: 'Clementi Cross',           line: 'CRL Phase 1', opens: 2030, lat: 1.3150, lon: 103.7650, uplift: 7 },
+    { name: 'West Coast',               line: 'CRL Phase 1', opens: 2030, lat: 1.3048, lon: 103.7640, uplift: 7 },
+    { name: 'Turf City',                line: 'CRL Phase 1', opens: 2030, lat: 1.3205, lon: 103.8040, uplift: 6 },
+    // JRL Phase 2 (est. 2028) — Jurong Industrial / Lakeside corridor
+    { name: 'Pandan Reservoir',         line: 'JRL Phase 2', opens: 2028, lat: 1.3140, lon: 103.7240, uplift: 5 },
+    { name: 'Jurong Pier',              line: 'JRL Phase 2', opens: 2028, lat: 1.3090, lon: 103.7060, uplift: 5 },
+    { name: 'Jurong Town Hall',         line: 'JRL Phase 2', opens: 2028, lat: 1.3330, lon: 103.7480, uplift: 6 },
+    { name: 'Bahar Junction',           line: 'JRL Phase 2', opens: 2028, lat: 1.3470, lon: 103.7220, uplift: 5 },
+    // JRL Phase 3 (est. 2029) — Choa Chu Kang connector
+    { name: 'Choa Chu Kang West',       line: 'JRL Phase 3', opens: 2029, lat: 1.3890, lon: 103.7430, uplift: 6 },
+    { name: 'Tengah Plantation',        line: 'JRL Phase 3', opens: 2029, lat: 1.3720, lon: 103.7360, uplift: 6 },
+    // CRL Phase 2 (est. 2032) — JLD to Tuas
     { name: 'Jurong Lake District Stn', line: 'CRL Phase 2', opens: 2032, lat: 1.3334, lon: 103.7402, uplift: 9 },
+    { name: 'Tuas Link',                line: 'CRL Phase 2', opens: 2034, lat: 1.3420, lon: 103.6380, uplift: 5 },
+    // RTS Link — Woodlands North to JB Sentral (est. 2026)
+    { name: 'Woodlands North (RTS)',    line: 'RTS Link',    opens: 2026, lat: 1.4472, lon: 103.7860, uplift: 9 },
 ];
 
 // URA Master Plan long-term transformation zones (search radius in km)
@@ -4200,6 +4252,30 @@ function renderAmenityFuture(lat, lon, estimatedValue) {
         <p class="text-[11px] font-bold uppercase tracking-widest text-slate-400 mb-3">Upcoming Amenities</p>
         ${amenityGroupsHtml}` : '';
 
+    // ── Predictive growth trajectory ─────────────────────────────────────────
+    // Build year-by-year value milestones using proportional catalyst contributions
+    const NOW = new Date().getFullYear();
+    const endYear = Math.max(targetYear, NOW + 4);
+    const rawUpliftSum = allItems.reduce((s, c) => s + (c.uplift || 3), 0) || 1;
+    // Map each catalyst's fractional contribution to the capped compound uplift
+    const yearsRange = Array.from({ length: endYear - NOW + 1 }, (_, i) => NOW + i);
+    const trajValues = yearsRange.map(yr => {
+        // Sum contributions from all catalysts that have already opened by this year
+        const cumulativePct = allItems
+            .filter(c => c.opens <= yr)
+            .reduce((acc, c) => acc + (c.uplift || 3) / rawUpliftSum * compoundUplift, 0);
+        const cappedPct = Math.min(cumulativePct, compoundUplift);
+        return estimatedValue ? Math.round(estimatedValue * (1 + cappedPct / 100)) : null;
+    });
+    const trajHtml = estimatedValue ? `
+        <div class="mb-5">
+            <p class="text-[11px] font-bold uppercase tracking-widest text-slate-400 mb-3">Value Trajectory</p>
+            <div class="bg-white dark:bg-slate-800/60 rounded-2xl border border-slate-100 dark:border-slate-700 p-4">
+                <canvas id="amenity-traj-chart" height="140"></canvas>
+                <p class="text-[10px] text-slate-400 mt-2 text-center">Modelled value S$${estimatedValue.toLocaleString()} → S$${(estimatedValue*(1+compoundUplift/100)).toLocaleString()} by ${endYear} · Illustrative projection only</p>
+            </div>
+        </div>` : '';
+
     body.innerHTML = `
         <div class="rounded-2xl bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-900/20 dark:to-teal-900/20 border border-emerald-200 dark:border-emerald-700 p-5 mb-5">
             <div class="flex items-start gap-3">
@@ -4214,8 +4290,72 @@ function renderAmenityFuture(lat, lon, estimatedValue) {
                 </div>
             </div>
         </div>
+        ${trajHtml}
         ${mrtSection}${uraSection}${amenitySection}`;
     lucide.createIcons();
+
+    // Draw trajectory chart (needs DOM to exist first)
+    if (estimatedValue) {
+        const canvas = document.getElementById('amenity-traj-chart');
+        if (canvas && typeof Chart !== 'undefined') {
+            // Destroy previous instance if any
+            const prev = Chart.getChart(canvas);
+            if (prev) prev.destroy();
+
+            // Collect annotation points for catalyst opens years
+            const milestoneYears = [...new Set(allItems.map(c => c.opens))].filter(y => y >= NOW && y <= endYear);
+            const isDark = document.documentElement.classList.contains('dark');
+            const gridCol = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)';
+            const textCol = isDark ? '#94a3b8' : '#64748b';
+
+            new Chart(canvas, {
+                type: 'line',
+                data: {
+                    labels: yearsRange,
+                    datasets: [{
+                        label: 'Est. Value',
+                        data: trajValues,
+                        borderColor: '#10b981',
+                        backgroundColor: 'rgba(16,185,129,0.10)',
+                        fill: true,
+                        tension: 0.42,
+                        pointRadius: yearsRange.map(y => milestoneYears.includes(y) ? 5 : 2),
+                        pointBackgroundColor: yearsRange.map(y =>
+                            milestoneYears.includes(y) ? '#f59e0b' : '#10b981'),
+                        pointBorderWidth: 0,
+                        borderWidth: 2,
+                    }],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => `S$${ctx.parsed.y.toLocaleString()}`,
+                                afterLabel: ctx => {
+                                    const yr = ctx.label;
+                                    const opens = allItems.filter(c => c.opens == yr).map(c => c.name);
+                                    return opens.length ? `Opens: ${opens.join(', ')}` : '';
+                                },
+                            },
+                        },
+                    },
+                    scales: {
+                        x: { ticks: { color: textCol, font: { size: 10 } }, grid: { color: gridCol } },
+                        y: {
+                            ticks: {
+                                color: textCol, font: { size: 10 },
+                                callback: v => `S$${(v/1000).toFixed(0)}k`,
+                            },
+                            grid: { color: gridCol },
+                        },
+                    },
+                },
+            });
+        }
+    }
 }
 
 // ── Gap Analysis (Agent Tool) ────────────────────────────────

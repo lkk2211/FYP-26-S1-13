@@ -1750,6 +1750,22 @@
             </main>
         </section>
 
+        <!-- Auth Wall Modal (shown when guest navigates to gated view) -->
+        <div id="auth-wall-modal" class="fixed inset-0 z-[9999] hidden flex items-center justify-center p-6 bg-black/70 backdrop-blur-sm" onclick="if(event.target===this)closeAuthWall()">
+            <div class="bg-white dark:bg-slate-900 rounded-[32px] max-w-sm w-full p-10 shadow-2xl text-center">
+                <div class="w-16 h-16 rounded-2xl bg-blue-100 dark:bg-blue-900/40 flex items-center justify-center mx-auto mb-5">
+                    <i id="aw-icon" data-lucide="lock" class="w-8 h-8 text-blue-600 dark:text-blue-400"></i>
+                </div>
+                <h2 id="aw-title" class="text-xl font-bold text-slate-900 dark:text-white mb-2">Sign in to continue</h2>
+                <p id="aw-desc" class="text-sm text-slate-500 dark:text-slate-400 mb-8 leading-relaxed"></p>
+                <div class="flex flex-col gap-3">
+                    <button onclick="authWallSignIn()" class="w-full py-3 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm transition-colors">Sign In</button>
+                    <button onclick="authWallRegister()" class="w-full py-3 rounded-2xl border-2 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-sm hover:border-blue-400 transition-colors">Create Free Account</button>
+                    <button onclick="closeAuthWall()" class="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 mt-1 transition-colors">Maybe later</button>
+                </div>
+            </div>
+        </div>
+
         <!-- 2FA Verification Modal (shown post-login when requires_2fa) -->
         <div id="twofa-verify-modal" class="fixed inset-0 z-[9999] hidden items-center justify-center p-6 bg-black/70 backdrop-blur-sm">
             <div class="bg-white dark:bg-slate-900 rounded-[32px] max-w-md w-full p-10 shadow-2xl">

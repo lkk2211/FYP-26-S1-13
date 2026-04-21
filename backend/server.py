@@ -1817,30 +1817,34 @@ def twofa_setup():
     except ImportError:
         return jsonify({"error": "2FA library not installed on server"}), 500
 
-    data    = request.json or {}
-    user_id = data.get('user_id')
-    if not user_id:
-        return jsonify({"error": "user_id required"}), 400
+    try:
+        data    = request.json or {}
+        user_id = data.get('user_id')
+        if not user_id:
+            return jsonify({"error": "user_id required"}), 400
 
-    conn = get_db()
-    cur  = _cursor(conn)
-    cur.execute(_q("SELECT id, email, totp_enabled FROM users WHERE id = ?"), (user_id,))
-    user = _row(cur)
-    if not user:
+        conn = get_db()
+        cur  = _cursor(conn)
+        cur.execute(_q("SELECT id, email, totp_enabled FROM users WHERE id = ?"), (user_id,))
+        user = _row(cur)
+        if not user:
+            conn.close()
+            return jsonify({"error": "User not found"}), 404
+
+        # Generate new secret — use parameterised False to handle both BOOLEAN (PG) and INTEGER (SQLite)
+        raw_secret = pyotp.random_base32()
+        encrypted  = _encrypt_secret(raw_secret)
+        cur.execute(_q("UPDATE users SET totp_secret = ?, totp_enabled = ? WHERE id = ?"),
+                    (encrypted, False, user_id))
+        conn.commit()
         conn.close()
-        return jsonify({"error": "User not found"}), 404
 
-    # Generate new secret (not yet enabled)
-    raw_secret = pyotp.random_base32()
-    encrypted  = _encrypt_secret(raw_secret)
-    cur.execute(_q("UPDATE users SET totp_secret = ?, totp_enabled = FALSE WHERE id = ?"),
-                (encrypted, user_id))
-    conn.commit()
-    conn.close()
-
-    totp = pyotp.TOTP(raw_secret)
-    uri  = totp.provisioning_uri(name=user['email'], issuer_name='PropAI.sg')
-    return jsonify({"secret": raw_secret, "uri": uri})
+        totp = pyotp.TOTP(raw_secret)
+        uri  = totp.provisioning_uri(name=user['email'], issuer_name='PropAI.sg')
+        return jsonify({"secret": raw_secret, "uri": uri})
+    except Exception as exc:
+        print(f"[2fa/setup] error: {exc}")
+        return jsonify({"error": f"Setup failed: {exc}"}), 500
 
 
 @app.route('/api/2fa/enable', methods=['POST'])
