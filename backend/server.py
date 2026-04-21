@@ -2216,6 +2216,131 @@ def mop_leads():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/agent/gap-analysis', methods=['GET'])
+def gap_analysis():
+    """
+    HDB resale vs private new-launch price gap by HDB town / market segment.
+    Agent-only. Returns towns where the upgrade premium deviates from the
+    historical average (~45%), flagging potential under/over-valued clusters.
+    """
+    token = request.headers.get('Authorization', '').replace('Bearer ', '').strip()
+    user_id = _verify_temp_token(token) if token else None
+    conn = get_db()
+    cur  = _cursor(conn)
+    if not user_id and token:
+        cur.execute(_q("SELECT id, account_type FROM users WHERE token = ?"), (token,))
+        u = _row(cur)
+        if u:
+            user_id = u['id']
+    if not user_id:
+        conn.close()
+        return jsonify({"error": "Unauthorised"}), 401
+    cur.execute(_q("SELECT account_type FROM users WHERE id = ?"), (user_id,))
+    u = _row(cur)
+    if not u or u['account_type'] != 'agent':
+        conn.close()
+        return jsonify({"error": "Agent account required"}), 403
+
+    try:
+        # HDB towns → market segment (OCR/RCR/CCR)
+        _TOWN_SEGMENT = {
+            'CENTRAL AREA': 'CCR', 'BUKIT TIMAH': 'CCR',
+            'QUEENSTOWN': 'RCR', 'BUKIT MERAH': 'RCR', 'BISHAN': 'RCR',
+            'TOA PAYOH': 'RCR', 'GEYLANG': 'RCR', 'KALLANG/WHAMPOA': 'RCR',
+            'MARINE PARADE': 'RCR', 'SERANGOON': 'RCR',
+            'ANG MO KIO': 'OCR', 'BEDOK': 'OCR', 'BUKIT BATOK': 'OCR',
+            'BUKIT PANJANG': 'OCR', 'CHOA CHU KANG': 'OCR', 'CLEMENTI': 'OCR',
+            'HOUGANG': 'OCR', 'JURONG EAST': 'OCR', 'JURONG WEST': 'OCR',
+            'PASIR RIS': 'OCR', 'PUNGGOL': 'OCR', 'SEMBAWANG': 'OCR',
+            'SENGKANG': 'OCR', 'TAMPINES': 'OCR', 'WOODLANDS': 'OCR',
+            'YISHUN': 'OCR',
+        }
+
+        # HDB avg resale price and avg sqm (last 24 months of data)
+        cur.execute(_q(
+            """
+            SELECT town,
+                   AVG(CAST(resale_price AS REAL)) AS avg_price,
+                   AVG(CAST(floor_area_sqm AS REAL)) AS avg_sqm,
+                   COUNT(*) AS tx_count
+            FROM resale_flat_prices
+            WHERE CAST(REPLACE(SUBSTR(month,1,7),'-','') AS INTEGER) >=
+                  CAST(REPLACE(date('now','-24 months','start of month'),'-','') AS INTEGER)
+               OR month >= '2024-01'
+            GROUP BY town
+            HAVING COUNT(*) >= 20
+            """
+        ), [])
+        hdb_rows = _rows(cur)
+
+        # Private new-launch avg PSF per market segment (last 24 months)
+        cur.execute(_q(
+            """
+            SELECT market_segment,
+                   AVG(unit_price_psf) AS avg_psf,
+                   COUNT(*) AS tx_count
+            FROM ura_transactions
+            WHERE type_of_sale IN ('New Sale','Sub Sale')
+              AND unit_price_psf > 0
+              AND (sale_date >= '2024' OR sale_date >= date('now','-24 months'))
+            GROUP BY market_segment
+            HAVING COUNT(*) >= 5
+            """
+        ), [])
+        priv_rows  = _rows(cur)
+        conn.close()
+
+        # Build segment PSF lookup
+        seg_psf = {}
+        for r in priv_rows:
+            s = str(r.get('market_segment') or '').strip().upper()
+            if s:
+                seg_psf[s] = float(r.get('avg_psf') or 0)
+
+        # Default benchmark PSFs if DB is sparse (2026 estimates)
+        BENCH = {'CCR': 2800, 'RCR': 1900, 'OCR': 1350}
+        for k, v in BENCH.items():
+            if k not in seg_psf or seg_psf[k] < 500:
+                seg_psf[k] = v
+
+        HIST_GAP = 0.45   # historical HDB-to-new-launch premium ~45%
+
+        results = []
+        for r in hdb_rows:
+            town     = str(r.get('town') or '').strip().upper()
+            avg_p    = float(r.get('avg_price') or 0)
+            avg_sqm  = float(r.get('avg_sqm')  or 90)
+            tx_count = int(r.get('tx_count')   or 0)
+            if avg_p <= 0 or avg_sqm <= 0:
+                continue
+            segment  = _TOWN_SEGMENT.get(town, 'OCR')
+            nl_psf   = seg_psf.get(segment, BENCH.get(segment, 1350))
+            avg_sqft = avg_sqm * 10.764
+            nl_total = nl_psf * avg_sqft
+            gap_pct  = (nl_total - avg_p) / avg_p if avg_p > 0 else 0
+            deviation = gap_pct - HIST_GAP           # +ve → gap wider than historical
+
+            results.append({
+                "town":        town,
+                "segment":     segment,
+                "hdb_avg":     round(avg_p),
+                "nl_psf":      round(nl_psf),
+                "nl_total":    round(nl_total),
+                "gap_pct":     round(gap_pct * 100, 1),
+                "hist_gap":    round(HIST_GAP * 100, 1),
+                "deviation":   round(deviation * 100, 1),
+                "tx_count":    tx_count,
+            })
+
+        # Sort: widest deviation first (best leads)
+        results.sort(key=lambda x: x['deviation'], reverse=True)
+        return jsonify({"gaps": results[:25], "seg_psf": seg_psf})
+    except Exception as e:
+        try: conn.close()
+        except Exception: pass
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/agents', methods=['GET'])
 def get_agents():
     """Return all users registered as property agents."""
@@ -2514,6 +2639,7 @@ def property_lookup():
             'remaining_lease_years': remaining_lease_years,
             'db_is_hdb': db_is_hdb,
             'db_is_condo': db_is_condo,
+            'lat': lat, 'lon': lon,
         }
         if max_floor is not None:
             resp['max_floor'] = int(max_floor)

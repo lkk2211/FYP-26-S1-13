@@ -690,12 +690,72 @@
                             <i data-lucide="trending-down" class="w-5 h-5 text-amber-600"></i>
                         </div>
                         <div>
-                            <h2 class="text-lg font-bold dark:text-white">Lease Decay Projection</h2>
-                            <p class="text-xs text-slate-400">Estimated value over time as remaining lease decreases</p>
+                            <h2 class="text-lg font-bold dark:text-white">Lease Decay Projection <span class="ml-2 text-xs bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 px-2 py-0.5 rounded-full font-semibold">Bala's Curve</span></h2>
+                            <p class="text-xs text-slate-400">Non-linear depreciation model used by Singapore valuers (SISV standard)</p>
                         </div>
                     </div>
                     <canvas id="lease-decay-chart" height="120"></canvas>
-                    <p class="text-xs text-slate-400 mt-4">⚠ Projection is indicative only. Actual value depends on market conditions, policy changes, and property upgrades.</p>
+                    <!-- Legend for threshold annotations -->
+                    <div class="flex flex-wrap gap-4 mt-3 text-xs text-slate-500">
+                        <span class="flex items-center gap-1.5"><span class="inline-block w-5 h-0.5 bg-blue-400 border-dashed border-t-2 border-blue-400"></span>CPF restriction (60yr)</span>
+                        <span class="flex items-center gap-1.5"><span class="inline-block w-5 h-0.5 bg-rose-400 border-dashed border-t-2 border-rose-400"></span>Bank loan limit (30yr)</span>
+                    </div>
+                    <!-- Dynamic XAI insight -->
+                    <div id="lease-decay-xai" class="mt-5 p-4 rounded-2xl bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-800/40 text-sm text-slate-700 dark:text-slate-300 space-y-1 hidden">
+                        <p id="lease-decay-xai-headline" class="font-semibold text-amber-700 dark:text-amber-400"></p>
+                        <p id="lease-decay-xai-body" class="leading-relaxed"></p>
+                    </div>
+                    <p class="text-xs text-slate-400 mt-3">⚠ Projection is indicative only. Actual value depends on market conditions, policy changes, and property upgrades.</p>
+                </div>
+
+                <!-- Safe-Buy Buffer Predictor -->
+                <div id="safe-buy-section" class="hidden bg-white dark:bg-slate-800/80 p-8 rounded-[32px] border border-slate-100 dark:border-slate-700 card-shadow">
+                    <div class="flex items-center gap-3 mb-6">
+                        <div class="w-9 h-9 bg-emerald-50 dark:bg-emerald-900/30 rounded-xl flex items-center justify-center">
+                            <i data-lucide="shield-check" class="w-5 h-5 text-emerald-600"></i>
+                        </div>
+                        <div>
+                            <h2 class="text-lg font-bold dark:text-white">Safe-Buy Buffer Predictor</h2>
+                            <p class="text-xs text-slate-400">Bear-market stress test &amp; TDSR income check at 4.5% stress rate</p>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
+                        <div class="bg-emerald-50 dark:bg-emerald-900/20 rounded-2xl p-4 text-center border border-emerald-100 dark:border-emerald-800/40">
+                            <p class="text-xs text-slate-500 dark:text-slate-400 mb-1">Bear Market Floor</p>
+                            <p id="sb-floor" class="text-xl font-bold text-emerald-700 dark:text-emerald-400">—</p>
+                            <p class="text-[10px] text-slate-400 mt-0.5">−13% correction</p>
+                        </div>
+                        <div class="bg-slate-50 dark:bg-slate-700/50 rounded-2xl p-4 text-center border border-slate-100 dark:border-slate-700">
+                            <p class="text-xs text-slate-500 dark:text-slate-400 mb-1">Safety Buffer</p>
+                            <p id="sb-buffer" class="text-xl font-bold text-slate-700 dark:text-slate-200">—</p>
+                            <p class="text-[10px] text-slate-400 mt-0.5">downside headroom</p>
+                        </div>
+                        <div class="bg-sky-50 dark:bg-sky-900/20 rounded-2xl p-4 text-center border border-sky-100 dark:border-sky-800/40">
+                            <p class="text-xs text-slate-500 dark:text-slate-400 mb-1">Monthly Payment</p>
+                            <p id="sb-monthly" class="text-xl font-bold text-sky-700 dark:text-sky-400">—</p>
+                            <p class="text-[10px] text-slate-400 mt-0.5">at 4.5% stress rate</p>
+                        </div>
+                        <div class="bg-violet-50 dark:bg-violet-900/20 rounded-2xl p-4 text-center border border-violet-100 dark:border-violet-800/40">
+                            <p class="text-xs text-slate-500 dark:text-slate-400 mb-1">Safe Income Needed</p>
+                            <p id="sb-income" class="text-xl font-bold text-violet-700 dark:text-violet-400">—</p>
+                            <p class="text-[10px] text-slate-400 mt-0.5">monthly (TDSR 55%)</p>
+                        </div>
+                    </div>
+                    <div id="sb-xai" class="text-sm text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-700/40 rounded-xl p-4 leading-relaxed"></div>
+                </div>
+
+                <!-- Amenity Future-Proofing -->
+                <div id="amenity-future-section" class="hidden bg-white dark:bg-slate-800/80 p-8 rounded-[32px] border border-slate-100 dark:border-slate-700 card-shadow">
+                    <div class="flex items-center gap-3 mb-5">
+                        <div class="w-9 h-9 bg-teal-50 dark:bg-teal-900/30 rounded-xl flex items-center justify-center">
+                            <i data-lucide="train-front" class="w-5 h-5 text-teal-600"></i>
+                        </div>
+                        <div>
+                            <h2 class="text-lg font-bold dark:text-white">Amenity Future-Proofing</h2>
+                            <p class="text-xs text-slate-400">Upcoming MRT stations within 1 km — projected value uplift</p>
+                        </div>
+                    </div>
+                    <div id="amenity-future-body"></div>
                 </div>
 
                 <!-- Recently Searched -->
@@ -1340,6 +1400,31 @@
                     </div>
                     <div id="mop-leads-body" class="overflow-x-auto">
                         <p class="text-slate-400 text-sm">Select a neighbourhood above to load MOP leads.</p>
+                    </div>
+                </div>
+
+                <!-- Gap Analysis (agent-only) -->
+                <div id="gap-analysis-section" class="hidden bg-white dark:bg-slate-800/80 p-8 rounded-[32px] border border-violet-100 dark:border-violet-900/40 card-shadow">
+                    <div class="flex items-center justify-between mb-6">
+                        <div class="flex items-center gap-3">
+                            <div class="w-9 h-9 bg-violet-50 dark:bg-violet-900/30 rounded-xl flex items-center justify-center">
+                                <i data-lucide="bar-chart-2" class="w-5 h-5 text-violet-600"></i>
+                            </div>
+                            <div>
+                                <h2 class="text-xl font-bold dark:text-white">Gap Analysis <span class="ml-2 text-xs bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 px-2 py-0.5 rounded-full font-semibold">Agent Tool</span></h2>
+                                <p class="text-xs text-slate-400">HDB resale vs new-launch premium — identify undervalued clusters for seller pitches</p>
+                            </div>
+                        </div>
+                        <button onclick="loadGapAnalysis()" class="text-xs bg-violet-600 text-white px-4 py-2 rounded-xl hover:bg-violet-700 transition-colors font-semibold">Refresh</button>
+                    </div>
+                    <!-- Context banner -->
+                    <div class="mb-4 text-xs text-slate-500 dark:text-slate-400 bg-violet-50 dark:bg-violet-900/20 rounded-xl p-3">
+                        <span class="font-semibold text-violet-700 dark:text-violet-300">How to use:</span>
+                        Towns where the gap exceeds the 45% historical average mean sellers have outsized leverage.
+                        A <span class="font-semibold text-violet-600">wider gap</span> = the HDB is priced low relative to nearby new launches — use this to convince sellers their asset is undervalued.
+                    </div>
+                    <div id="gap-analysis-body" class="overflow-x-auto">
+                        <p class="text-slate-400 text-sm">Click Refresh to load gap data.</p>
                     </div>
                 </div>
 

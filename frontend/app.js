@@ -27,7 +27,7 @@ function showView(viewId) {
     if (activeLink) activeLink.classList.add('active');
 
     if (viewId === 'trend') {
-        setTimeout(() => { loadMarketWatch(); initTrendChart(); renderTrendNews(currentNeighbourhood); loadMopLeads(); }, 100);
+        setTimeout(() => { loadMarketWatch(); initTrendChart(); renderTrendNews(currentNeighbourhood); loadMopLeads(); loadGapAnalysis(); }, 100);
     }
     if (viewId === 'map') {
         if (lastMapPostal) {
@@ -355,6 +355,9 @@ async function handlePostalSearch() {
                 _predictBlock   = info.block        || '';
                 _predictRoad    = info.road_name    || '';
                 _predictProject = info.project_name || '';
+                // Cache lat/lon for amenity future-proofing
+                window._predictLat = info.lat || null;
+                window._predictLon = info.lon || null;
                 // Cache remaining lease years from DB for use in the chart
                 if (info.remaining_lease_years != null) {
                     window._cachedRemainingLease = info.remaining_lease_years;
@@ -392,12 +395,13 @@ async function handlePredict() {
     lucide.createIcons();
 
     // Reset dynamic sections so stale charts from prior search never linger
-    ['forecast-section','shap-section','whatif-section'].forEach(id => {
+    ['forecast-section','shap-section','whatif-section','safe-buy-section','amenity-future-section'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.classList.add('hidden');
     });
     if (_forecastChart) { _forecastChart.destroy(); _forecastChart = null; }
     if (_shapChart)     { _shapChart.destroy();     _shapChart     = null; }
+    if (_leaseDecayChart) { _leaseDecayChart.destroy(); _leaseDecayChart = null; }
     
     const postal   = document.getElementById('input-postal').value;
     lastMapPostal  = postal;
@@ -497,6 +501,16 @@ async function handlePredict() {
             : (window._cachedRemainingLease != null ? window._cachedRemainingLease
                 : (data.remaining_lease_years || 70));
         renderLeaseDecayChart(data.estimated_value, remLease, propType);
+
+        // Safe-Buy Buffer Predictor
+        const segment = data.location
+            ? (data.location.includes('Core Central') ? 'CCR'
+               : data.location.includes('Rest of Central') ? 'RCR' : 'OCR')
+            : 'OCR';
+        renderSafeBuyPanel(data.estimated_value, area, propType, segment, isFreehold);
+
+        // Amenity Future-Proofing
+        renderAmenityFuture(window._predictLat, window._predictLon);
 
         // 12-month price forecast chart
         if (data.price_forecast && data.price_forecast.length) {
@@ -3697,63 +3711,112 @@ function restoreRecentSearch(postal) {
     }
 }
 
-// ── Lease Decay Chart ─────────────────────────────────────────
+// ── Lease Decay Chart (Bala's Curve) ──────────────────────────
 let _leaseDecayChart = null;
+
+// SISV Bala's Table: [remaining_lease, value_fraction_of_99yr]
+const _BALA = [
+    [99,1.000],[90,0.927],[80,0.843],[70,0.746],
+    [60,0.637],[50,0.513],[40,0.379],[30,0.233],
+    [20,0.110],[10,0.029],[0,0.000]
+];
+
+function _balaFraction(lr) {
+    // Linear interpolation of Bala's Table
+    if (lr >= 99) return 1.000;
+    if (lr <= 0)  return 0.000;
+    for (let i = 0; i < _BALA.length - 1; i++) {
+        const [h, fh] = _BALA[i];
+        const [l, fl] = _BALA[i + 1];
+        if (lr <= h && lr >= l) {
+            return fl + (fl - fh) / (l - h) * (h - lr);
+        }
+    }
+    return 0;
+}
 
 function renderLeaseDecayChart(estimatedValue, remainingLease, propertyType) {
     const section = document.getElementById('lease-decay-section');
     const canvas  = document.getElementById('lease-decay-chart');
     if (!section || !canvas) return;
 
-    // Only show for leasehold (HDB or 99-yr condo)
     if (!remainingLease || remainingLease <= 0 || propertyType === 'Freehold') {
         section.classList.add('hidden');
         return;
     }
     section.classList.remove('hidden');
 
-    // Build projection: every 5 years, estimate value decay
-    const years   = [];
-    const values  = [];
-    const maxYrs  = Math.min(remainingLease, 60);
+    const baseRatio = _balaFraction(remainingLease);
+    const years = [], values = [];
+    const maxYrs = Math.min(remainingLease - 1, 60);
+    const step   = remainingLease > 50 ? 5 : (remainingLease > 20 ? 3 : 2);
 
-    for (let t = 0; t <= maxYrs; t += 5) {
-        years.push(`${new Date().getFullYear() + t}`);
-        const lr = remainingLease - t;
-        // Lease decay model: minimal decay above 60yr, accelerating below
-        let factor;
-        if (lr >= 60)      factor = 1 - (remainingLease - lr) * 0.002;
-        else if (lr >= 30) factor = (0.88 - (60 - lr) * 0.008);
-        else               factor = Math.max(0.1, 0.64 - (30 - lr) * 0.018);
-        values.push(Math.round(estimatedValue * factor));
+    for (let t = 0; t <= maxYrs; t += step) {
+        years.push(String(new Date().getFullYear() + t));
+        const lr    = Math.max(0, remainingLease - t);
+        const ratio = baseRatio > 0 ? _balaFraction(lr) / baseRatio : 0;
+        values.push(Math.round(estimatedValue * ratio));
     }
 
+    // CPF & bank threshold annotation datasets (vertical dashed lines)
+    const cpfYear  = remainingLease > 60 ? new Date().getFullYear() + (remainingLease - 60) : null;
+    const bankYear = remainingLease > 30 ? new Date().getFullYear() + (remainingLease - 30) : null;
+
+    const isDark = document.documentElement.classList.contains('dark');
     if (_leaseDecayChart) _leaseDecayChart.destroy();
     const ctx = canvas.getContext('2d');
-    const isDark = document.documentElement.classList.contains('dark');
+
     _leaseDecayChart = new Chart(ctx, {
         type: 'line',
         data: {
             labels: years,
-            datasets: [{
-                label: 'Estimated Value (S$)',
-                data: values,
-                borderColor: '#f59e0b',
-                backgroundColor: 'rgba(245,158,11,0.1)',
-                borderWidth: 2.5,
-                pointBackgroundColor: '#f59e0b',
-                pointRadius: 4,
-                fill: true,
-                tension: 0.4
-            }]
+            datasets: [
+                {
+                    label: 'Projected Value (S$)',
+                    data: values,
+                    borderColor: '#f59e0b',
+                    backgroundColor: 'rgba(245,158,11,0.1)',
+                    borderWidth: 2.5,
+                    pointBackgroundColor: '#f59e0b',
+                    pointRadius: 4,
+                    fill: true,
+                    tension: 0.35,
+                    order: 1,
+                },
+                ...(cpfYear ? [{
+                    label: 'CPF Restriction (60yr)',
+                    data: years.map(y => y === String(cpfYear) ? Math.max(...values) * 1.1 : null),
+                    borderColor: 'rgba(96,165,250,0.8)',
+                    borderWidth: 1.5,
+                    borderDash: [5, 4],
+                    pointRadius: 0,
+                    fill: false,
+                    tension: 0,
+                    spanGaps: false,
+                    order: 2,
+                }] : []),
+                ...(bankYear ? [{
+                    label: 'Bank Loan Limit (30yr)',
+                    data: years.map(y => y === String(bankYear) ? Math.max(...values) * 1.1 : null),
+                    borderColor: 'rgba(251,113,133,0.8)',
+                    borderWidth: 1.5,
+                    borderDash: [5, 4],
+                    pointRadius: 0,
+                    fill: false,
+                    tension: 0,
+                    spanGaps: false,
+                    order: 3,
+                }] : []),
+            ]
         },
         options: {
             responsive: true,
             plugins: {
                 legend: { display: false },
                 tooltip: {
+                    filter: item => item.datasetIndex === 0,
                     callbacks: {
-                        label: ctx => ' S$' + ctx.parsed.y.toLocaleString()
+                        label: c => ' S$' + c.parsed.y.toLocaleString()
                     }
                 }
             },
@@ -3762,10 +3825,244 @@ function renderLeaseDecayChart(estimatedValue, remainingLease, propertyType) {
                      ticks: { color: isDark ? '#94a3b8' : '#64748b', font: { size: 11 } } },
                 y: { grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' },
                      ticks: { color: isDark ? '#94a3b8' : '#64748b', font: { size: 11 },
-                              callback: v => 'S$' + (v/1000).toFixed(0) + 'k' } }
+                              callback: v => 'S$' + (v >= 1000000 ? (v/1000000).toFixed(2)+'M' : (v/1000).toFixed(0)+'k') } }
             }
         }
     });
+
+    // ── Dynamic XAI insight ──────────────────────────────────────
+    const xaiBox      = document.getElementById('lease-decay-xai');
+    const xaiHeadline = document.getElementById('lease-decay-xai-headline');
+    const xaiBody     = document.getElementById('lease-decay-xai-body');
+    if (!xaiBox) return;
+
+    xaiBox.classList.remove('hidden');
+    const yr5  = Math.max(0, remainingLease - 5);
+    const val5 = Math.round(estimatedValue * (_balaFraction(yr5) / baseRatio));
+    const drop5Pct = (((estimatedValue - val5) / estimatedValue) * 100).toFixed(1);
+
+    if (remainingLease >= 75) {
+        xaiHeadline.textContent = 'Strong lease position — maximum buyer appeal';
+        xaiBody.textContent = `With ${remainingLease} years remaining, buyers can access full CPF usage and bank financing. Your asset carries no lease-related discount. Bala's Curve projects less than ${drop5Pct}% value erosion over the next 5 years.`;
+    } else if (remainingLease >= 65) {
+        const yrsToCpf = remainingLease - 60;
+        xaiHeadline.textContent = `CPF Alert: ${yrsToCpf}-year window to sell at full buyer pool`;
+        xaiBody.textContent = `In ${yrsToCpf} years, buyers under 35 cannot use their full CPF for this property — shrinking your buyer pool. Bala's Curve projects a ~${drop5Pct}% dip over 5 years. Selling before the 60-year mark captures maximum equity.`;
+    } else if (remainingLease >= 50) {
+        const pctLoss = (((estimatedValue - Math.round(estimatedValue * (_balaFraction(remainingLease - 10) / baseRatio))) / estimatedValue) * 100).toFixed(0);
+        xaiHeadline.textContent = "Accelerating Bala's decay — act before the curve steepens";
+        xaiBody.textContent = `At ${remainingLease} years, your property is in the "active decay zone" of Bala's Curve. CPF usage is already restricted for younger buyers. Over the next 10 years the model projects a ~${pctLoss}% value reduction. Leasehold depreciation will outpace any market appreciation.`;
+    } else if (remainingLease >= 30) {
+        const yrsToBankLimit = remainingLease - 30;
+        xaiHeadline.textContent = `Financing Warning: bank loan eligibility expires in ~${yrsToBankLimit} years`;
+        xaiBody.textContent = `Most lenders require at least 30 years of remaining lease to grant a mortgage. In ${yrsToBankLimit} years, cash-only buyers will be your only market — severely limiting liquidity and driving prices below Bala's Curve projection. Exit strategy is recommended.`;
+    } else {
+        xaiHeadline.textContent = 'Critical lease zone — cash buyers only';
+        xaiBody.textContent = `With ${remainingLease} years remaining, this property cannot be financed by CPF or bank loans. Buyer pool is limited to all-cash investors. Values in this range typically trade at a steep discount (30–50%) versus comparable leasehold properties with >60 years remaining.`;
+    }
+}
+
+// ── Safe-Buy Buffer Predictor ─────────────────────────────────
+function renderSafeBuyPanel(estimatedValue, areaSqm, propType, segment, isFreehold) {
+    const section = document.getElementById('safe-buy-section');
+    if (!section) return;
+    section.classList.remove('hidden');
+
+    const isHdb = propType === 'HDB';
+    const ltv   = isHdb ? 0.80 : 0.75;   // HDB 80%, private 75%
+    const loan  = estimatedValue * ltv;
+
+    // Monthly payment: annuity formula at 4.5% stress rate, 25-year loan
+    const r = 0.045 / 12;
+    const n = 25 * 12;
+    const monthly = loan * r * Math.pow(1 + r, n) / (Math.pow(1 + r, n) - 1);
+
+    // TDSR: monthly payment should be ≤55% of monthly income
+    const incomeNeeded = monthly / 0.55;
+
+    const bearFloor  = Math.round(estimatedValue * 0.87);
+    const buffer     = estimatedValue - bearFloor;
+    const bufferPct  = ((buffer / estimatedValue) * 100).toFixed(0);
+
+    document.getElementById('sb-floor').textContent   = 'S$' + bearFloor.toLocaleString();
+    document.getElementById('sb-buffer').textContent  = `S$${buffer.toLocaleString()} (${bufferPct}%)`;
+    document.getElementById('sb-monthly').textContent = 'S$' + Math.round(monthly).toLocaleString();
+    document.getElementById('sb-income').textContent  = 'S$' + Math.round(incomeNeeded).toLocaleString();
+
+    // Context text
+    const segLabel = segment === 'CCR' ? 'Core Central Region'
+                   : segment === 'RCR' ? 'Rest of Central Region' : 'Outside Central Region';
+    const benchPsf = { CCR: 2800, RCR: 1900, OCR: 1350 }[segment] || 1350;
+    const estPsf   = areaSqm > 0 ? Math.round(estimatedValue / (areaSqm * 10.764)) : 0;
+    const psfDiff  = estPsf > 0 ? ((estPsf - benchPsf) / benchPsf * 100).toFixed(0) : null;
+    const psfNote  = psfDiff !== null
+        ? (Math.abs(psfDiff) < 5
+            ? `priced at the ${segLabel} district average (S$${benchPsf} PSF benchmark)`
+            : `priced ${Math.abs(psfDiff)}% ${+psfDiff > 0 ? 'above' : 'below'} the ${segLabel} district average (S$${benchPsf} PSF benchmark)`)
+        : '';
+
+    const xai = document.getElementById('sb-xai');
+    if (xai) {
+        const stressScenario = isFreehold
+            ? `For this freehold property, the bear-market floor of <strong>S$${bearFloor.toLocaleString()}</strong> still protects your equity if bought at the current valuation.`
+            : `Bear-market stress test (−13% correction, based on 2008 &amp; 2013 Singapore downturns): floor price is <strong>S$${bearFloor.toLocaleString()}</strong> — a S$${buffer.toLocaleString()} buffer.`;
+        xai.innerHTML = `${stressScenario}${psfNote ? ` This property is ${psfNote}.` : ''} At a 4.5% stress-test rate, the ${isHdb ? '80%' : '75%'} LTV loan requires a gross monthly income of at least <strong>S$${Math.round(incomeNeeded).toLocaleString()}</strong> to stay within TDSR limits.`;
+    }
+}
+
+// ── Amenity Future-Proofing ───────────────────────────────────
+// Upcoming MRT stations with estimated coordinates, line, opening year, uplift %
+// Sources: LTA, URA Master Plan 2025 announcements
+const _UPCOMING_MRT = [
+    // Cross Island Line Phase 1 (est. 2030)
+    { name: 'Aviation Park',     line: 'CRL Phase 1', opens: 2030, lat: 1.3604, lon: 103.9876, uplift: 5 },
+    { name: 'Loyang',            line: 'CRL Phase 1', opens: 2030, lat: 1.3663, lon: 103.9712, uplift: 5 },
+    { name: 'Pasir Ris East',    line: 'CRL Phase 1', opens: 2030, lat: 1.3720, lon: 103.9500, uplift: 6 },
+    { name: 'Tampines North',    line: 'CRL Phase 1', opens: 2030, lat: 1.3750, lon: 103.9259, uplift: 7 },
+    { name: 'Defu',              line: 'CRL Phase 1', opens: 2030, lat: 1.3586, lon: 103.8960, uplift: 6 },
+    { name: 'Hougang Cross',     line: 'CRL Phase 1', opens: 2030, lat: 1.3717, lon: 103.8849, uplift: 5 },
+    { name: 'Serangoon North',   line: 'CRL Phase 1', opens: 2030, lat: 1.3672, lon: 103.8693, uplift: 7 },
+    { name: 'Ang Mo Kio Cross',  line: 'CRL Phase 1', opens: 2030, lat: 1.3700, lon: 103.8493, uplift: 6 },
+    { name: 'Teck Ghee',         line: 'CRL Phase 1', opens: 2030, lat: 1.3600, lon: 103.8375, uplift: 6 },
+    { name: 'Bright Hill',       line: 'CRL Phase 1', opens: 2030, lat: 1.3611, lon: 103.8351, uplift: 8 },
+    { name: 'King Albert Park',  line: 'CRL Phase 1', opens: 2030, lat: 1.3348, lon: 103.7824, uplift: 8 },
+    // Jurong Region Line Phase 1 (est. 2027)
+    { name: 'Enterprise',        line: 'JRL Phase 1', opens: 2027, lat: 1.3318, lon: 103.7095, uplift: 6 },
+    { name: 'Tawas',             line: 'JRL Phase 1', opens: 2027, lat: 1.3298, lon: 103.7014, uplift: 5 },
+    { name: 'Gek Poh',          line: 'JRL Phase 1', opens: 2027, lat: 1.3279, lon: 103.6928, uplift: 5 },
+    { name: 'Teck Whye',        line: 'JRL Phase 1', opens: 2027, lat: 1.3479, lon: 103.7217, uplift: 6 },
+    { name: 'Hong Kah',         line: 'JRL Phase 1', opens: 2027, lat: 1.3479, lon: 103.7160, uplift: 6 },
+    { name: 'Tengah',           line: 'JRL Phase 1', opens: 2027, lat: 1.3508, lon: 103.7419, uplift: 7 },
+    { name: 'Tengah Park',      line: 'JRL Phase 1', opens: 2027, lat: 1.3531, lon: 103.7481, uplift: 7 },
+    { name: 'Bukit Batok West', line: 'JRL Phase 1', opens: 2027, lat: 1.3449, lon: 103.7488, uplift: 6 },
+    // Thomson-East Coast Line Stage 5 (est. 2025-2026)
+    { name: 'Bayshore',         line: 'TEL Stage 5',  opens: 2025, lat: 1.3149, lon: 103.9302, uplift: 8 },
+    { name: 'Bedok South',      line: 'TEL Stage 5',  opens: 2025, lat: 1.3204, lon: 103.9422, uplift: 7 },
+    // CRL Phase 2 (est. 2032)
+    { name: 'Jurong Lake District', line: 'CRL Phase 2', opens: 2032, lat: 1.3334, lon: 103.7402, uplift: 9 },
+];
+
+function _haversineKm(lat1, lon1, lat2, lon2) {
+    const R    = 6371;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a    = Math.sin(dLat / 2) ** 2
+               + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180)
+               * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function renderAmenityFuture(lat, lon) {
+    const section = document.getElementById('amenity-future-section');
+    const body    = document.getElementById('amenity-future-body');
+    if (!section || !body) return;
+
+    if (!lat || !lon) {
+        section.classList.add('hidden');
+        return;
+    }
+
+    // Find upcoming stations within 1.5 km, sort by distance
+    const nearby = _UPCOMING_MRT
+        .map(s => ({ ...s, dist: _haversineKm(lat, lon, s.lat, s.lon) }))
+        .filter(s => s.dist <= 1.5)
+        .sort((a, b) => a.dist - b.dist);
+
+    if (!nearby.length) {
+        section.classList.add('hidden');
+        return;
+    }
+
+    section.classList.remove('hidden');
+    body.innerHTML = nearby.map(s => {
+        const distStr  = s.dist < 0.1 ? '<100m' : `${(s.dist * 1000).toFixed(0)}m`;
+        const lineColor = s.line.includes('CRL') ? 'text-teal-600 bg-teal-50 dark:bg-teal-900/30 border-teal-100'
+                        : s.line.includes('JRL') ? 'text-violet-600 bg-violet-50 dark:bg-violet-900/30 border-violet-100'
+                        : 'text-blue-600 bg-blue-50 dark:bg-blue-900/30 border-blue-100';
+        const urgency  = s.opens <= 2027 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700';
+        return `
+        <div class="flex items-start gap-4 p-4 rounded-2xl border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/40 mb-3">
+            <div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${lineColor} border">
+                <i data-lucide="train-front" class="w-5 h-5"></i>
+            </div>
+            <div class="flex-1 min-w-0">
+                <div class="flex flex-wrap items-center gap-2 mb-1">
+                    <span class="font-semibold text-slate-800 dark:text-slate-100">${s.name}</span>
+                    <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${urgency}">Opens ${s.opens}</span>
+                    <span class="text-[10px] text-slate-400">${distStr} away</span>
+                </div>
+                <p class="text-xs text-slate-500 dark:text-slate-400 mb-1">${s.line}</p>
+                <p class="text-xs text-emerald-700 dark:text-emerald-400 font-semibold">
+                    Projected +${s.uplift}% value uplift by ${s.opens}
+                    <span class="font-normal text-slate-400"> — based on comparable MRT opening impact studies</span>
+                </p>
+            </div>
+        </div>`;
+    }).join('');
+    lucide.createIcons();
+}
+
+// ── Gap Analysis (Agent Tool) ────────────────────────────────
+async function loadGapAnalysis() {
+    const section = document.getElementById('gap-analysis-section');
+    const body    = document.getElementById('gap-analysis-body');
+    if (!section || !body) return;
+    if (!currentUser || currentUser.account_type !== 'agent') return;
+    section.classList.remove('hidden');
+
+    body.innerHTML = '<p class="text-slate-400 text-sm animate-pulse">Loading gap data…</p>';
+    try {
+        const res  = await fetch('/api/agent/gap-analysis', {
+            headers: { Authorization: `Bearer ${currentUser.token}` },
+        });
+        const data = await res.json();
+        const gaps = data.gaps || [];
+
+        if (!gaps.length) {
+            body.innerHTML = '<p class="text-slate-400 text-sm">No gap data available. Upload URA and HDB transaction data first.</p>';
+            return;
+        }
+
+        const HIST = gaps[0]?.hist_gap || 45;
+        body.innerHTML = `
+        <table class="w-full text-sm">
+            <thead>
+                <tr class="text-left text-xs text-slate-400 border-b border-slate-100 dark:border-slate-700">
+                    <th class="pb-3">Town</th>
+                    <th class="pb-3">Segment</th>
+                    <th class="pb-3 text-right">HDB Avg</th>
+                    <th class="pb-3 text-right">NL Equiv</th>
+                    <th class="pb-3 text-right">Gap %</th>
+                    <th class="pb-3 text-right">vs Hist (${HIST}%)</th>
+                    <th class="pb-3 pl-3">Signal</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-50 dark:divide-slate-700/50">
+                ${gaps.map(g => {
+                    const wide    = g.deviation > 10;
+                    const narrow  = g.deviation < -10;
+                    const badge   = wide   ? '<span class="text-xs font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">Seller Leverage ↑</span>'
+                                  : narrow ? '<span class="text-xs font-bold text-rose-600 bg-rose-100 px-2 py-0.5 rounded-full">Gap Tight</span>'
+                                  : '<span class="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">Neutral</span>';
+                    const gapCls  = wide ? 'text-emerald-600 font-bold' : narrow ? 'text-rose-500' : 'text-slate-600 dark:text-slate-300';
+                    const devSign = g.deviation >= 0 ? '+' : '';
+                    return `
+                    <tr class="hover:bg-violet-50/40 dark:hover:bg-violet-900/10 transition-colors">
+                        <td class="py-3 font-semibold text-slate-700 dark:text-slate-200">${g.town.replace(/_/g,' ').split(' ').map(w=>w[0]+w.slice(1).toLowerCase()).join(' ')}</td>
+                        <td class="py-3"><span class="text-xs font-bold px-2 py-0.5 rounded ${g.segment==='CCR'?'bg-rose-100 text-rose-700':g.segment==='RCR'?'bg-amber-100 text-amber-700':'bg-sky-100 text-sky-700'}">${g.segment}</span></td>
+                        <td class="py-3 text-right text-slate-600 dark:text-slate-300">S$${Math.round(g.hdb_avg/1000)}k</td>
+                        <td class="py-3 text-right text-slate-600 dark:text-slate-300">S$${Math.round(g.nl_total/1000)}k</td>
+                        <td class="py-3 text-right ${gapCls}">${g.gap_pct}%</td>
+                        <td class="py-3 text-right text-xs ${g.deviation>=0?'text-emerald-600':'text-rose-500'}">${devSign}${g.deviation}%</td>
+                        <td class="py-3 pl-3">${badge}</td>
+                    </tr>`;
+                }).join('')}
+            </tbody>
+        </table>
+        <p class="text-xs text-slate-400 mt-3">NL Equiv = New Launch PSF × HDB avg floor area. "Seller Leverage" means gap exceeds historical norm — use this to pitch sellers on their asset's relative undervaluation vs comparable new launches.</p>`;
+    } catch (e) {
+        body.innerHTML = `<p class="text-rose-500 text-sm">Failed to load: ${e.message}</p>`;
+    }
 }
 
 loadCurrentUser();
@@ -4115,38 +4412,72 @@ async function loadMopLeads(town) {
             return;
         }
 
+        // Propensity scoring: eligible + more units = higher score
+        const month = new Date().getMonth() + 1;
+        const seasonBonus = (month >= 4 && month <= 9) ? 1 : 0; // Q2–Q3 peak season
+        const scoredLeads = leads.map(l => {
+            let score = 0;
+            if (l.status === 'eligible') score += 3;
+            else if (l.months_to_mop <= 6) score += 2;
+            else score += 1;
+            if (l.unit_count >= 10) score += 2;
+            else if (l.unit_count >= 5) score += 1;
+            score += seasonBonus;
+            return { ...l, propensity: score >= 5 ? 'High' : score >= 3 ? 'Medium' : 'Low' };
+        });
+        scoredLeads.sort((a, b) => (b.propensity === 'High' ? 3 : b.propensity === 'Medium' ? 2 : 1)
+                                 - (a.propensity === 'High' ? 3 : a.propensity === 'Medium' ? 2 : 1));
+
+        const highCount = scoredLeads.filter(l => l.propensity === 'High').length;
+
         body.innerHTML = `
+        ${highCount > 0 ? `<div class="mb-4 text-xs bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800/40 rounded-xl p-3 text-emerald-700 dark:text-emerald-300">
+            <strong>${highCount} High-propensity lead${highCount > 1 ? 's' : ''}</strong> found — eligible now with strong unit count. Prioritise these for HDB-to-Condo upgrader pitches.
+        </div>` : ''}
         <table class="w-full text-left text-sm">
             <thead>
                 <tr class="text-slate-400 text-xs font-bold uppercase tracking-widest border-b border-slate-100 dark:border-slate-700">
                     <th class="pb-3 pl-2">Block / Street</th>
                     <th class="pb-3">Town</th>
                     <th class="pb-3">Flat Type</th>
+                    <th class="pb-3">Units</th>
                     <th class="pb-3">MOP Year</th>
+                    <th class="pb-3">Propensity</th>
                     <th class="pb-3 pr-2 text-right">Status</th>
                 </tr>
             </thead>
             <tbody class="divide-y divide-slate-50 dark:divide-slate-700">
-                ${leads.map(l => `
-                <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
-                    <td class="py-3 pl-2">
-                        <p class="font-semibold dark:text-white">${l.block} ${l.street_name}</p>
-                        <p class="text-xs text-slate-400">${l.storey_range}</p>
-                    </td>
-                    <td class="py-3 text-slate-600 dark:text-slate-300">${l.town}</td>
-                    <td class="py-3 text-slate-600 dark:text-slate-300">${l.flat_type}</td>
-                    <td class="py-3 text-slate-600 dark:text-slate-300">${l.mop_year}</td>
-                    <td class="py-3 pr-2 text-right">
-                        <span class="text-xs px-2 py-1 rounded-full font-semibold ${l.status === 'eligible'
-                            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
-                            : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'}">
-                            ${l.status === 'eligible' ? 'Eligible Now' : `${l.months_to_mop}mo`}
-                        </span>
-                    </td>
-                </tr>`).join('')}
+                ${scoredLeads.map(l => {
+                    const propClass = l.propensity === 'High'
+                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+                        : l.propensity === 'Medium'
+                        ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                        : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400';
+                    return `
+                    <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
+                        <td class="py-3 pl-2">
+                            <p class="font-semibold dark:text-white">${l.block} ${l.street_name}</p>
+                            <p class="text-xs text-slate-400">${l.storey_range}</p>
+                        </td>
+                        <td class="py-3 text-slate-600 dark:text-slate-300 text-xs">${l.town}</td>
+                        <td class="py-3 text-slate-600 dark:text-slate-300">${l.flat_type}</td>
+                        <td class="py-3 text-slate-600 dark:text-slate-300">${l.unit_count}</td>
+                        <td class="py-3 text-slate-600 dark:text-slate-300">${l.mop_year}</td>
+                        <td class="py-3">
+                            <span class="text-xs px-2 py-1 rounded-full font-semibold ${propClass}">${l.propensity}</span>
+                        </td>
+                        <td class="py-3 pr-2 text-right">
+                            <span class="text-xs px-2 py-1 rounded-full font-semibold ${l.status === 'eligible'
+                                ? 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300'
+                                : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400'}">
+                                ${l.status === 'eligible' ? 'Eligible Now' : `${l.months_to_mop}mo left`}
+                            </span>
+                        </td>
+                    </tr>`;
+                }).join('')}
             </tbody>
         </table>
-        <p class="text-xs text-slate-400 mt-4">Showing ${leads.length} units. MOP = 5 years from lease commencement. Contact blocks direct or cross-reference HDB Resale Portal.</p>
+        <p class="text-xs text-slate-400 mt-4">Showing ${leads.length} units. Propensity = eligibility × unit density × selling season. MOP = 5 years from lease commencement.</p>
         `;
     } catch (e) {
         body.innerHTML = `<p class="text-rose-500 text-sm">Failed to load leads: ${e.message}</p>`;
@@ -4366,15 +4697,4 @@ async function confirmDisable2FA() {
     showToast('2FA has been disabled.');
 }
 
-// Helper toast (reuse if already defined, else simple alert fallback)
-function showToast(msg) {
-    const existing = document.getElementById('_toast_notify');
-    if (existing) existing.remove();
-    const t = document.createElement('div');
-    t.id = '_toast_notify';
-    t.className = 'fixed bottom-8 left-1/2 -translate-x-1/2 z-[99999] px-6 py-3 bg-slate-900 text-white text-sm font-bold rounded-2xl shadow-xl transition-all';
-    t.textContent = msg;
-    document.body.appendChild(t);
-    setTimeout(() => t.remove(), 3000);
-}
 
