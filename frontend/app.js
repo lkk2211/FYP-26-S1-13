@@ -1884,15 +1884,18 @@ async function initAdminTypeChart() {
 
         // Top towns
         const townsEl = document.getElementById('admin-top-towns');
-        if (townsEl && stats.predictions_by_town?.length) {
-            townsEl.innerHTML = stats.predictions_by_town.slice(0,8).map((t,i) => `
-                <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-3">
-                        <span class="w-5 h-5 rounded-full bg-slate-100 text-slate-500 text-xs font-black flex items-center justify-center">${i+1}</span>
-                        <span class="text-sm font-medium text-slate-700">${t.town||'Unknown'}</span>
-                    </div>
-                    <span class="text-sm font-bold text-slate-900">${(t.count||0).toLocaleString()}</span>
-                </div>`).join('');
+        if (townsEl) {
+            const towns = stats.predictions_by_town || [];
+            townsEl.innerHTML = towns.length
+                ? towns.slice(0,8).map((t,i) => `
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <span class="w-5 h-5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 text-xs font-black flex items-center justify-center">${i+1}</span>
+                            <span class="text-sm font-medium text-slate-700 dark:text-slate-300">${t.town||'Unknown'}</span>
+                        </div>
+                        <span class="text-sm font-bold text-slate-900 dark:text-white">${(t.count||0).toLocaleString()}</span>
+                    </div>`).join('')
+                : '<p class="text-xs text-slate-400">No prediction data yet.</p>';
         }
 
         // Compare chart
@@ -1971,12 +1974,14 @@ async function loadAuditLog() {
     if (!tbody) return;
 
     const month = monthSel ? monthSel.value : '';
-    const params = month ? `?month=${encodeURIComponent(month)}` : '';
 
     tbody.innerHTML = '<tr><td colspan="4" class="py-8 text-center text-slate-400 text-sm animate-pulse">Loading…</td></tr>';
 
     try {
-        const res = await fetch(`/api/admin/audit-log${params}`);
+        const auditParams = new URLSearchParams();
+        if (month) auditParams.set('month', month);
+        if (currentUser?.id) auditParams.set('user_id', currentUser.id);
+        const res = await fetch(`/api/admin/audit-log?${auditParams.toString()}`);
         const data = await res.json();
         const logs = data.logs || [];
 
@@ -2131,44 +2136,46 @@ async function fetchAdminStats() {
     try {
         const response = await fetch('/api/stats');
         const data = await response.json();
-        document.getElementById('admin-users').innerText = data.total_users.toLocaleString();
-        document.getElementById('admin-predictions').innerText = data.total_predictions.toLocaleString();
-        document.getElementById('admin-db').innerText = data.db_size;
-        const totalRecordsEl = document.getElementById('admin-total-records');
-        if (totalRecordsEl) totalRecordsEl.innerText = (data.total_records || 0).toLocaleString();
+        const _setEl = (id, v) => { const el = document.getElementById(id); if (el) el.innerText = v; };
+        _setEl('admin-users', (data.total_users || 0).toLocaleString());
+        _setEl('admin-predictions', (data.total_predictions || 0).toLocaleString());
+        _setEl('admin-db', data.db_size || '—');
+        _setEl('admin-total-records', (data.total_records || 0).toLocaleString());
 
         const recentUsersList = document.getElementById('admin-recent-users');
-        if (recentUsersList && data.recent_users) {
-            recentUsersList.innerHTML = data.recent_users.map(u => `
-                <div class="flex items-center gap-3">
-                    <div class="w-2 h-2 rounded-full border-2 border-slate-900"></div>
-                    <div>
-                        <p class="text-sm font-bold text-slate-900">${u.full_name}</p>
-                        <p class="text-[10px] text-slate-400">${u.email}</p>
-                    </div>
-                </div>
-            `).join('') || '<p class="text-xs text-slate-400">No users yet</p>';
+        if (recentUsersList) {
+            const users = data.recent_users || [];
+            recentUsersList.innerHTML = users.length
+                ? users.map(u => `
+                    <div class="flex items-center gap-3">
+                        <div class="w-2 h-2 rounded-full bg-blue-500"></div>
+                        <div>
+                            <p class="text-sm font-bold text-slate-900 dark:text-white">${u.full_name || '—'}</p>
+                            <p class="text-[10px] text-slate-400">${u.email || ''}</p>
+                        </div>
+                    </div>`).join('')
+                : '<p class="text-xs text-slate-400">No users registered yet.</p>';
         }
 
         const statsList = document.getElementById('system-stats');
-        const metrics = [
-            { name: 'CPU Utilization', value: 42, color: 'bg-blue-600' },
-            { name: 'Memory Usage', value: 68, color: 'bg-purple-600' },
-            { name: 'API Latency (avg)', value: 12, unit: 'ms', color: 'bg-emerald-600' }
-        ];
-
-        statsList.innerHTML = metrics.map(m => `
-            <div class="space-y-4">
-                <div class="flex justify-between items-center">
-                    <span class="font-bold text-slate-700">${m.name}</span>
-                    <span class="font-mono font-bold text-slate-900">${m.value}${m.unit || '%'}</span>
-                </div>
-                <div class="w-full h-4 bg-slate-50 rounded-full overflow-hidden border border-slate-100">
-                    <div class="h-full ${m.color} rounded-full transition-all duration-1000" style="width: ${m.value}%"></div>
-                </div>
-            </div>
-        `).join('');
-    } catch (e) { console.error(e); }
+        if (statsList) {
+            const metrics = [
+                { name: 'CPU Utilization', value: 42, color: 'bg-blue-600' },
+                { name: 'Memory Usage', value: 68, color: 'bg-purple-600' },
+                { name: 'API Latency (avg)', value: 12, unit: 'ms', color: 'bg-emerald-600' }
+            ];
+            statsList.innerHTML = metrics.map(m => `
+                <div class="space-y-4">
+                    <div class="flex justify-between items-center">
+                        <span class="font-bold text-slate-700 dark:text-slate-300">${m.name}</span>
+                        <span class="font-mono font-bold text-slate-900 dark:text-white">${m.value}${m.unit || '%'}</span>
+                    </div>
+                    <div class="w-full h-4 bg-slate-50 dark:bg-slate-700 rounded-full overflow-hidden border border-slate-100 dark:border-slate-600">
+                        <div class="h-full ${m.color} rounded-full transition-all duration-1000" style="width: ${m.value}%"></div>
+                    </div>
+                </div>`).join('');
+        }
+    } catch (e) { console.error('fetchAdminStats error:', e); }
 }
 
 // ── Admin: Export Report ──────────────────────────────────────
@@ -4129,8 +4136,26 @@ function renderAmenityFuture(lat, lon, estimatedValue) {
     // Major catalysts = MRT + URA (drive price uplift); amenities add quality-of-life signal
     const majorCatalysts = [...nearbyMrt, ...nearbyUra];
     const allItems = [...majorCatalysts, ...nearbyAmenities];
-    if (!allItems.length) { section.classList.add('hidden'); return; }
     section.classList.remove('hidden');
+
+    // No catalysts nearby — show a stable-area message instead of hiding the section
+    if (!allItems.length) {
+        body.innerHTML = `
+            <div class="rounded-2xl bg-slate-50 dark:bg-slate-700/30 border border-slate-200 dark:border-slate-600 p-5">
+                <div class="flex items-start gap-3">
+                    <div class="w-9 h-9 rounded-xl bg-slate-200 dark:bg-slate-600 flex items-center justify-center flex-shrink-0">
+                        <i data-lucide="shield-check" class="w-5 h-5 text-slate-500 dark:text-slate-300"></i>
+                    </div>
+                    <div>
+                        <p class="font-bold text-slate-700 dark:text-slate-200 text-sm">Established neighbourhood — no major upcoming catalysts within search radius</p>
+                        <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">No new MRT stations, URA transformation zones, or major amenities are planned within proximity. This typically indicates a mature, stable precinct with consistent demand. Value growth is expected to track broader market movements rather than infrastructure-led uplift.</p>
+                        <p class="text-[10px] text-slate-400 mt-2">Search radius: 2.0 km for MRT · Up to 3.0 km for URA zones · Per-amenity radius for lifestyle developments.</p>
+                    </div>
+                </div>
+            </div>`;
+        lucide.createIcons();
+        return;
+    }
 
     // ── Compound uplift (major catalysts only; amenities contribute 20% each) ─
     const byUplift = [...majorCatalysts].sort((a, b) => b.uplift - a.uplift);

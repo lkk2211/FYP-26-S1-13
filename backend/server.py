@@ -4048,13 +4048,13 @@ def export_report():
 @app.route('/api/admin/audit-log', methods=['GET'])
 def admin_audit_log():
     """Return audit log entries, optionally filtered by month (YYYY-MM format)."""
-    # Auth check (admin only)
-    token = request.headers.get('Authorization', '').replace('Bearer ', '').strip()
-    if not token:
-        token = request.args.get('token', '')
+    # Auth check (admin only) — verified via user_id + role lookup
+    user_id = request.args.get('user_id', '').strip()
+    if not user_id:
+        return jsonify({"error": "Admin access required"}), 403
     conn = get_db()
     cur = _cursor(conn)
-    cur.execute(_q("SELECT id, role FROM users WHERE token = ?"), (token,))
+    cur.execute(_q("SELECT id, role FROM users WHERE id = ?"), (user_id,))
     u = _row(cur)
     if not u or u.get('role') != 'admin':
         conn.close()

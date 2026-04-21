@@ -309,10 +309,12 @@ body {
     background: white;
     border: 1px solid #E2E8F0;
     border-radius: 16px;
-    padding: 12px 18px;
+    padding: 14px 20px;
     box-shadow: var(--shadow-lg);
     z-index: 10;
-    min-width: 160px;
+    min-width: 230px;
+    width: max-content;
+    max-width: 280px;
 }
 
 .dark .floating-price-badge {
