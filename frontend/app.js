@@ -1545,7 +1545,14 @@ async function initTrendChart(range = currentRange) {
                 'Woodlands':'WOODLANDS','Yishun':'YISHUN'
             };
             const apiTown = townMap[currentNeighbourhood] || '';
-            const trendUrl = apiTown ? `/api/trend?town=${encodeURIComponent(apiTown)}` : '/api/trend';
+            // Map PSF type button to HDB flat_type filter
+            const _PSF_TO_FLAT = {
+                hdb2: '2 ROOM', hdb3: '3 ROOM', hdb4: '4 ROOM',
+                hdb5: '5 ROOM', hdb3gen: 'MULTI-GENERATION',
+            };
+            const apiFlatType = _PSF_TO_FLAT[_currentPsfType] || '';
+            let trendUrl = apiTown ? `/api/trend?town=${encodeURIComponent(apiTown)}` : '/api/trend';
+            if (apiFlatType) trendUrl += `&flat_type=${encodeURIComponent(apiFlatType)}`;
             const res = await fetch(trendUrl);
             if (!res.ok) throw new Error();
             const data = await res.json();
@@ -1754,26 +1761,41 @@ function loadComparableTable(data) {
 
     tableBody.innerHTML = '';
 
-    const list = data.similar_transactions || [];
+    const list   = data.similar_transactions || [];
+    const filter = data.summary?.flat_type_filter;
+    const latest = data.summary?.latest_month || '';
+
+    // Update table caption / subtitle if one exists
+    const caption = document.getElementById('comparable-caption');
+    if (caption) {
+        caption.textContent = filter
+            ? `${filter.replace(/\b\w/g, c => c.toUpperCase())} transactions · last 3 months from ${latest}`
+            : `All flat types · last 3 months from ${latest}`;
+    }
+
+    if (!list.length) {
+        tableBody.innerHTML = `<tr><td colspan="5" class="py-8 text-center text-slate-400 text-sm">No comparable transactions found${filter ? ` for ${filter}` : ''}.</td></tr>`;
+        return;
+    }
 
     list.forEach(item => {
         const row = document.createElement('tr');
-        row.className = "hover:bg-slate-50/50 transition-colors group";
+        row.className = "hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition-colors";
 
         const ppsf = item.floor_area > 0 ? Math.round(item.price / item.floor_area) : null;
         row.innerHTML = `
-            <td class="py-8 pl-4">
-                <p class="font-bold text-slate-900">${item.address}</p>
+            <td class="py-4 pl-4">
+                <p class="font-semibold text-slate-900 dark:text-slate-100">${item.address}</p>
                 <p class="text-xs text-slate-400">${item.storey || '–'}</p>
             </td>
-            <td class="py-8 text-sm font-medium text-slate-600">${item.type}</td>
-            <td class="py-8">
-                <span class="font-bold text-slate-900">S$${item.price.toLocaleString()}</span>
+            <td class="py-4 text-sm font-medium text-slate-600 dark:text-slate-300">${item.type}</td>
+            <td class="py-4">
+                <span class="font-bold text-slate-900 dark:text-slate-100">S$${item.price.toLocaleString()}</span>
                 ${ppsf ? `<p class="text-[10px] text-slate-400">S$${ppsf.toLocaleString()} psf</p>` : ''}
             </td>
-            <td class="py-8 text-sm text-slate-500">${item.floor_area ? item.floor_area.toLocaleString() + ' sqft' : '–'}</td>
-            <td class="py-8 pr-4 text-right">
-                <span class="px-3 py-1 bg-slate-100 rounded-lg text-[10px] font-bold">${item.date}</span>
+            <td class="py-4 text-sm text-slate-500 dark:text-slate-400">${item.floor_area ? item.floor_area.toLocaleString() + ' sqft' : '–'}</td>
+            <td class="py-4 pr-4 text-right">
+                <span class="px-3 py-1 bg-slate-100 dark:bg-slate-700 rounded-lg text-[10px] font-bold text-slate-600 dark:text-slate-300">${item.date}</span>
             </td>
         `;
 

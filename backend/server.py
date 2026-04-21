@@ -1579,22 +1579,31 @@ def stats():
 def trend():
     """Return real HDB resale trend data and comparable sales for a town/neighbourhood."""
     from datetime import date as _date
-    town = (request.args.get('town') or '').strip().upper()
+    town      = (request.args.get('town')      or '').strip().upper()
+    flat_type = (request.args.get('flat_type') or '').strip().upper()
 
     conn = get_db()
     cur  = _cursor(conn)
 
-    # ── 6-month trend: average resale price per month ─────────────────────────
-    town_filter = _q("AND UPPER(town) = ?") if town else ""
-    town_params = (town,) if town else ()
+    # Build WHERE clauses
+    filters, params = [], []
+    filters.append("month IS NOT NULL")
+    filters.append("resale_price > 0")
+    if town:
+        filters.append(_q("UPPER(town) = ?"))
+        params.append(town)
+    if flat_type:
+        filters.append(_q("UPPER(flat_type) = ?"))
+        params.append(flat_type)
+    where = "WHERE " + " AND ".join(filters)
 
+    # ── 6-month trend: average resale price per month ─────────────────────────
     try:
         cur.execute(_q(
             f"SELECT month, AVG(resale_price) AS avg_price "
-            f"FROM resale_flat_prices "
-            f"WHERE month IS NOT NULL AND resale_price > 0 {town_filter} "
+            f"FROM resale_flat_prices {where} "
             f"GROUP BY month ORDER BY month DESC LIMIT 6"
-        ), town_params)
+        ), params)
         raw = _rows(cur)
     except Exception:
         raw = []
@@ -1609,14 +1618,47 @@ def trend():
             label = mo_str
         trend_data.append({"month": label, "price": int(float(r.get('avg_price') or 0))})
 
-    # ── Comparable recent sales (last 3 months) ───────────────────────────────
+    # ── Comparable recent sales ───────────────────────────────────────────────
+    # Step 1: find the latest month in the filtered dataset
     try:
         cur.execute(_q(
-            f"SELECT block, street_name, flat_type, storey_range, floor_area_sqm, resale_price, month "
-            f"FROM resale_flat_prices "
-            f"WHERE resale_price > 0 AND month IS NOT NULL {town_filter} "
-            f"ORDER BY month DESC, resale_price DESC LIMIT 10"
-        ), town_params)
+            f"SELECT MAX(month) AS max_month FROM resale_flat_prices {where}"
+        ), params)
+        max_row   = _row(cur)
+        max_month = str(max_row.get('max_month') or '') if max_row else ''
+    except Exception:
+        max_month = ''
+
+    # Step 2: compute the oldest month to include (3 months back from latest)
+    if max_month and len(max_month) >= 7:
+        try:
+            my, mm = int(max_month[:4]), int(max_month[5:7])
+            mm -= 2          # e.g. latest = 2025-03 → min = 2025-01
+            if mm <= 0:
+                mm += 12; my -= 1
+            min_month = f"{my:04d}-{mm:02d}"
+        except Exception:
+            min_month = ''
+    else:
+        min_month = ''
+
+    # Step 3: query transactions from those 3 months, ordered randomly
+    comp_rows = []
+    try:
+        date_filters = list(params)
+        date_where   = where
+        if min_month:
+            date_where  += _q(" AND month >= ?")
+            date_filters.append(min_month)
+        if max_month:
+            date_where  += _q(" AND month <= ?")
+            date_filters.append(max_month)
+        cur.execute(_q(
+            f"SELECT block, street_name, flat_type, storey_range, "
+            f"floor_area_sqm, resale_price, month "
+            f"FROM resale_flat_prices {date_where} "
+            f"ORDER BY month DESC, RANDOM() LIMIT 12"
+        ), date_filters)
         comp_rows = _rows(cur)
     except Exception:
         comp_rows = []
@@ -1634,12 +1676,12 @@ def trend():
         addr = f"Blk {blk} {road}" if blk else road
         sqm  = float(r.get('floor_area_sqm') or 0)
         similar.append({
-            "address": addr,
-            "type": str(r.get('flat_type') or '').title(),
-            "storey": str(r.get('storey_range') or ''),
+            "address":    addr,
+            "type":       str(r.get('flat_type') or '').title(),
+            "storey":     str(r.get('storey_range') or ''),
             "floor_area": int(sqm * 10.764),
-            "price": int(float(r.get('resale_price') or 0)),
-            "date": date_label,
+            "price":      int(float(r.get('resale_price') or 0)),
+            "date":       date_label,
         })
 
     conn.close()
@@ -1651,10 +1693,12 @@ def trend():
         "trend_data":           trend_data,
         "similar_transactions": similar,
         "summary": {
-            "avg_price":        avg,
-            "min_price":        int(min(prices)),
-            "max_price":        int(max(prices)),
+            "avg_price":          avg,
+            "min_price":          int(min(prices)),
+            "max_price":          int(max(prices)),
             "total_transactions": len(similar),
+            "flat_type_filter":   flat_type or None,
+            "latest_month":       max_month,
         },
     })
 

@@ -1365,22 +1365,26 @@
                 </div>
 
                 <!-- Comparable Sales -->
-                <div class="bg-white p-8 rounded-[32px] border border-slate-100 card-shadow">
-                    <h2 class="text-xl font-bold mb-6">Recent Comparable Sales</h2>
+                <div class="bg-white dark:bg-slate-800/80 p-8 rounded-[32px] border border-slate-100 dark:border-slate-700 card-shadow">
+                    <div class="flex items-start justify-between mb-2">
+                        <h2 class="text-xl font-bold dark:text-white">Recent Comparable Sales</h2>
+                    </div>
+                    <p id="comparable-caption" class="text-xs text-slate-400 mb-5">Loading…</p>
                     <div class="overflow-x-auto">
                         <table class="w-full text-left">
                             <thead>
-                                <tr class="text-slate-400 text-xs font-bold uppercase tracking-widest border-b border-slate-100">
+                                <tr class="text-slate-400 text-xs font-bold uppercase tracking-widest border-b border-slate-100 dark:border-slate-700">
                                     <th class="pb-4 pl-2">Address</th>
                                     <th class="pb-4">Flat Type</th>
                                     <th class="pb-4">Sale Price</th>
-                                    <th class="pb-4">Floor</th>
+                                    <th class="pb-4">Area</th>
                                     <th class="pb-4 pr-2 text-right">Date</th>
                                 </tr>
                             </thead>
-                            <tbody id="comparable-body" class="divide-y divide-slate-50"></tbody>
+                            <tbody id="comparable-body" class="divide-y divide-slate-50 dark:divide-slate-700/50"></tbody>
                         </table>
                     </div>
+                    <p class="text-xs text-slate-400 mt-3">Random sample from the 3 most recent available months. Select a flat type above to filter.</p>
                 </div>
 
                 <!-- MOP Leads (agent-only) -->
