@@ -506,8 +506,10 @@ def train(df_raw: pd.DataFrame):
     joblib.dump(meta, os.path.join(MODELS_DIR, 'meta_private.joblib'))
     print('\nAll private property models saved to', MODELS_DIR)
 
-    # ── Phase 4: SHAP TreeExplainer for XAI ──────────────────────────────────
-    print("Computing SHAP explainer (private XGB)...")
+    # ── Phase 4: SHAP metadata for XAI ───────────────────────────────────────
+    # Save only plain-Python metadata — TreeExplainer is reconstructed at
+    # inference time from the already-loaded xgb_private_pipeline.joblib.
+    print("Computing SHAP metadata (private XGB)...")
     try:
         import shap
         xgb_pipe            = trained['xgb']
@@ -515,11 +517,9 @@ def train(df_raw: pd.DataFrame):
         xgb_model           = xgb_pipe.named_steps['model']
         feature_names_out   = preprocessor_fitted.get_feature_names_out().tolist()
 
-        # Transform a small sample to verify the explainer works before saving
-        X_sample = preprocessor_fitted.transform(X_test.iloc[:200])
+        X_sample  = preprocessor_fitted.transform(X_test.iloc[:100])
         explainer = shap.TreeExplainer(xgb_model)
-        # Run on sample to catch errors early (result unused — just validates the explainer)
-        explainer.shap_values(X_sample)
+        explainer.shap_values(X_sample)   # validates the explainer works
 
         base_val = explainer.expected_value
         if hasattr(base_val, '__len__'):
@@ -527,18 +527,17 @@ def train(df_raw: pd.DataFrame):
         else:
             base_val = float(base_val)
 
-        shap_data = {
-            'explainer':        explainer,
+        shap_meta = {
             'feature_names':    feature_names_out,
             'categorical_cols': CATEGORICAL_COLS,
             'numerical_cols':   NUMERICAL_COLS,
             'base_value':       base_val,
         }
-        joblib.dump(shap_data, os.path.join(MODELS_DIR, 'shap_private.joblib'))
+        joblib.dump(shap_meta, os.path.join(MODELS_DIR, 'shap_private.joblib'))
         print(f"  shap_private.joblib saved  (base_value={base_val:.4f}, features={len(feature_names_out)})")
     except Exception as e:
         import traceback
-        print(f"  SHAP skipped: {e}")
+        print(f"  SHAP metadata skipped: {e}")
         traceback.print_exc()
 
     if os.path.exists(TEMP_PATH):

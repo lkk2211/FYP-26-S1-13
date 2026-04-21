@@ -197,12 +197,28 @@ def reset_model_cache():
 
 
 def _load_shap_hdb():
+    """Load SHAP metadata and build TreeExplainer from the already-loaded XGB pipeline.
+    The metadata file contains only plain Python objects (feature names, base_value).
+    The TreeExplainer is reconstructed here to avoid joblib serialisation issues."""
     global _shap_hdb
     if _shap_hdb is not None:
         return True
     try:
-        _shap_hdb = joblib.load(os.path.join(MODELS_DIR, 'shap_hdb.joblib'))
-        print("[predict] SHAP HDB explainer loaded")
+        meta_path = os.path.join(MODELS_DIR, 'shap_hdb.joblib')
+        if not os.path.exists(meta_path):
+            return False
+        meta = joblib.load(meta_path)
+        # Reconstruct explainer from the already-loaded XGB pipeline
+        import shap as _shap
+        xgb_model = _pipelines[0].named_steps['model']
+        explainer = _shap.TreeExplainer(xgb_model)
+        _shap_hdb = {
+            'explainer':        explainer,
+            'feature_names':    meta['feature_names'],
+            'categorical_cols': meta['categorical_cols'],
+            'base_value':       meta['base_value'],
+        }
+        print("[predict] SHAP HDB explainer ready")
         return True
     except Exception as e:
         print(f"[predict] SHAP HDB not available: {e}")
@@ -210,12 +226,25 @@ def _load_shap_hdb():
 
 
 def _load_shap_private():
+    """Load SHAP metadata and build TreeExplainer from the already-loaded private XGB pipeline."""
     global _shap_private
     if _shap_private is not None:
         return True
     try:
-        _shap_private = joblib.load(os.path.join(MODELS_DIR, 'shap_private.joblib'))
-        print("[predict] SHAP Private explainer loaded")
+        meta_path = os.path.join(MODELS_DIR, 'shap_private.joblib')
+        if not os.path.exists(meta_path):
+            return False
+        meta = joblib.load(meta_path)
+        import shap as _shap
+        xgb_model = _private_pipelines[0].named_steps['model']
+        explainer = _shap.TreeExplainer(xgb_model)
+        _shap_private = {
+            'explainer':        explainer,
+            'feature_names':    meta['feature_names'],
+            'categorical_cols': meta['categorical_cols'],
+            'base_value':       meta['base_value'],
+        }
+        print("[predict] SHAP Private explainer ready")
         return True
     except Exception as e:
         print(f"[predict] SHAP Private not available: {e}")

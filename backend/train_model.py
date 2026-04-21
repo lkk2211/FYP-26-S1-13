@@ -465,8 +465,12 @@ def train(from_db=False):
     joblib.dump(meta, os.path.join(MODELS_DIR, 'meta.joblib'))
     print("All HDB models saved to", MODELS_DIR)
 
-    # ── Phase 4: SHAP TreeExplainer for XAI ──────────────────────────────────
-    print("Computing SHAP explainer (XGB)...")
+    # ── Phase 4: SHAP metadata for XAI ───────────────────────────────────────
+    # We do NOT serialise the TreeExplainer object — it contains C++ state that
+    # is not reliably picklable across XGBoost versions.  Instead we save only
+    # the lightweight metadata (feature names, base_value) and reconstruct the
+    # explainer at inference time from the already-loaded xgb_pipeline.joblib.
+    print("Computing SHAP metadata (XGB)...")
     try:
         import shap
         xgb_pipe            = trained['xgb']
@@ -474,31 +478,29 @@ def train(from_db=False):
         xgb_model           = xgb_pipe.named_steps['model']
         feature_names_out   = preprocessor_fitted.get_feature_names_out().tolist()
 
-        # Transform a small sample to compute base values and verify the explainer works
-        X_sample = preprocessor_fitted.transform(X_test.iloc[:200])
+        # Build explainer and run on a small sample to get base_value + catch errors
+        X_sample  = preprocessor_fitted.transform(X_test.iloc[:100])
         explainer = shap.TreeExplainer(xgb_model)
-        # Run on sample to catch errors early (result unused — just validates the explainer)
-        explainer.shap_values(X_sample)
+        explainer.shap_values(X_sample)   # validates the explainer works
 
-        # expected_value may be a scalar or 1-element array depending on XGB version
         base_val = explainer.expected_value
         if hasattr(base_val, '__len__'):
             base_val = float(base_val[0])
         else:
             base_val = float(base_val)
 
-        shap_data = {
-            'explainer':        explainer,
+        # Save only the plain-Python metadata — no TreeExplainer object
+        shap_meta = {
             'feature_names':    feature_names_out,
             'categorical_cols': CATEGORICAL_COLS,
             'numerical_cols':   actual_num,
             'base_value':       base_val,
         }
-        joblib.dump(shap_data, os.path.join(MODELS_DIR, 'shap_hdb.joblib'))
+        joblib.dump(shap_meta, os.path.join(MODELS_DIR, 'shap_hdb.joblib'))
         print(f"  shap_hdb.joblib saved  (base_value={base_val:.4f}, features={len(feature_names_out)})")
     except Exception as e:
         import traceback
-        print(f"  SHAP skipped: {e}")
+        print(f"  SHAP metadata skipped: {e}")
         traceback.print_exc()
 
     # Clean up temp checkpoint on success
