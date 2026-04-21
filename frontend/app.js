@@ -740,12 +740,9 @@ async function initMapFromResult(result, postalHint) {
     addrBar.classList.remove('hidden');
     addrBar.classList.add('flex');
 
+    // Map tab is explore-only — prediction is done from the Predict tab
     const predictBtn = document.getElementById('map-predict-btn');
-    if (predictBtn && postal) {
-        predictBtn.classList.remove('hidden');
-        predictBtn.classList.add('flex');
-        predictBtn._postal = postal;
-    }
+    if (predictBtn) predictBtn.classList.add('hidden');
 
     placeholder.classList.add('hidden');
     mapDiv.classList.remove('hidden');
@@ -994,72 +991,43 @@ async function reverseGeocodeAndShow(lat, lng) {
 function showPinResultBar(postal, address, lat, lng, propInfo) {
     if (!_draggablePin) return;
 
-    const isHdb     = propInfo?.db_is_hdb   === true;
-    const isCondo   = propInfo?.db_is_condo  === true;
-    const isLanded  = propInfo?.is_landed    === true;
-    const canPredict = postal && (isHdb || isCondo);
+    const isHdb    = propInfo?.db_is_hdb  === true;
+    const isCondo  = propInfo?.db_is_condo === true;
+    const isLanded = propInfo?.is_landed   === true;
 
-    // Building name (show project name for condos if available)
+    // Building name for condos/named developments
     const buildingName = (propInfo?.building_name && propInfo.building_name !== 'NIL')
         ? propInfo.building_name : '';
 
-    // Badge — four distinct states
-    let predBadge;
+    // Simple property-type chip — informational only, no prediction language
+    let typeChip;
     if (isHdb) {
-        predBadge = `
-        <div style="background:linear-gradient(135deg,#dcfce7,#bbf7d0);border:1px solid #86efac;border-radius:10px;padding:5px 10px;margin-bottom:8px;display:flex;align-items:center;gap:6px">
-            <span style="width:7px;height:7px;border-radius:50%;background:#16a34a;flex-shrink:0"></span>
-            <span style="font-size:10px;font-weight:700;color:#15803d">🏢 HDB Resale — prediction available</span>
-        </div>`;
+        typeChip = `<span style="display:inline-flex;align-items:center;gap:5px;background:#dcfce7;border:1px solid #86efac;border-radius:8px;padding:3px 9px;font-size:10px;font-weight:700;color:#15803d">🏢 HDB</span>`;
     } else if (isCondo) {
-        predBadge = `
-        <div style="background:linear-gradient(135deg,#dbeafe,#bfdbfe);border:1px solid #93c5fd;border-radius:10px;padding:5px 10px;margin-bottom:8px;display:flex;align-items:center;gap:6px">
-            <span style="width:7px;height:7px;border-radius:50%;background:#2563eb;flex-shrink:0"></span>
-            <span style="font-size:10px;font-weight:700;color:#1d4ed8">🏙️ Condominium — prediction available</span>
-        </div>`;
+        typeChip = `<span style="display:inline-flex;align-items:center;gap:5px;background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;padding:3px 9px;font-size:10px;font-weight:700;color:#1d4ed8">🏙️ Condo / EC</span>`;
     } else if (isLanded) {
-        predBadge = `
-        <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:5px 10px;margin-bottom:8px;display:flex;align-items:center;gap:6px">
-            <span style="width:7px;height:7px;border-radius:50%;background:#ea580c;flex-shrink:0"></span>
-            <span style="font-size:10px;font-weight:700;color:#c2410c">🏡 Landed property — explore only</span>
-        </div>`;
+        typeChip = `<span style="display:inline-flex;align-items:center;gap:5px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:3px 9px;font-size:10px;font-weight:700;color:#c2410c">🏡 Landed</span>`;
     } else {
-        predBadge = `
-        <div style="background:#fefce8;border:1px solid #fde047;border-radius:10px;padding:5px 10px;margin-bottom:8px;display:flex;align-items:center;gap:6px">
-            <span style="width:7px;height:7px;border-radius:50%;background:#ca8a04;flex-shrink:0"></span>
-            <span style="font-size:10px;font-weight:700;color:#a16207">🏗️ Non-residential / unknown — explore only</span>
-        </div>`;
+        typeChip = `<span style="display:inline-flex;align-items:center;gap:5px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:8px;padding:3px 9px;font-size:10px;font-weight:700;color:#64748b">📍 Location</span>`;
     }
 
-    const predictBtnStyle = isHdb
-        ? 'background:linear-gradient(135deg,#16a34a,#15803d);color:white;border:none;padding:6px 14px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer'
-        : 'background:linear-gradient(135deg,#2563eb,#7c3aed);color:white;border:none;padding:6px 14px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer';
-
-    const predictBtn = canPredict
-        ? `<button onclick="usePostalFromMap('${postal}')" style="${predictBtnStyle}">Predict</button>`
-        : '';
-
-    const exploreBtn = `<button onclick="(function(){document.querySelector('.leaflet-popup-close-button')&&document.querySelector('.leaflet-popup-close-button').click();loadAmenities(${lat},${lng},'${postal||''}');})()" style="background:none;border:1.5px solid #f97316;color:#f97316;padding:6px 14px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer">Explore</button>`;
-
     const nameHtml = buildingName
-        ? `<p style="font-weight:700;font-size:12px;color:#0f172a;margin:0 0 1px;max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${buildingName}</p>`
+        ? `<p style="font-weight:700;font-size:12px;color:#0f172a;margin:2px 0 1px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${buildingName}</p>`
         : '';
+
+    const exploreBtn = `<button onclick="(function(){document.querySelector('.leaflet-popup-close-button')&&document.querySelector('.leaflet-popup-close-button').click();loadAmenities(${lat},${lng},'${postal||''}');})()" style="background:linear-gradient(135deg,#f97316,#ea580c);color:white;border:none;padding:7px 18px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;width:100%">🔍 Explore Amenities</button>`;
 
     const popupHtml = `
-        <div style="min-width:210px;font-family:inherit">
-            ${predBadge}
-            <p style="font-weight:700;font-size:13px;color:#0f172a;margin:0 0 2px">${postal ? '📮 ' + postal : '📍 Location'}</p>
+        <div style="min-width:200px;font-family:inherit">
+            <div style="margin-bottom:8px">${typeChip}</div>
+            <p style="font-weight:700;font-size:13px;color:#0f172a;margin:0 0 1px">${postal ? postal : '—'}</p>
             ${nameHtml}
-            <p style="font-size:11px;color:#64748b;margin:0 0 10px;max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${address}">${address}</p>
-            <div style="display:flex;gap:6px;flex-wrap:wrap">
-                ${predictBtn}
-                ${exploreBtn}
-            </div>
+            <p style="font-size:11px;color:#64748b;margin:0 0 10px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${address}">${address}</p>
+            ${exploreBtn}
         </div>`;
-    _draggablePin.bindPopup(popupHtml, { offset: [0, -30], closeButton: true, maxWidth: 270 }).openPopup();
+    _draggablePin.bindPopup(popupHtml, { offset: [0, -30], closeButton: true, maxWidth: 260 }).openPopup();
     const bar = document.getElementById('pin-result-bar');
     if (bar) bar.classList.add('hidden');
-    lucide.createIcons();
 }
 
 function addDraggablePin(centerLat, centerLng) {
