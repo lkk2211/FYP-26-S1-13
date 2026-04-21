@@ -511,7 +511,7 @@ async function handlePredict() {
         renderSafeBuyPanel(data.estimated_value, area, propType, segment, isFreehold);
 
         // Amenity Future-Proofing
-        renderAmenityFuture(window._predictLat, window._predictLon);
+        renderAmenityFuture(window._predictLat, window._predictLon, data.estimated_value);
 
         // 12-month price forecast chart
         if (data.price_forecast && data.price_forecast.length) {
@@ -3934,8 +3934,7 @@ function renderSafeBuyPanel(estimatedValue, areaSqm, propType, segment, isFreeho
 }
 
 // ── Amenity Future-Proofing ───────────────────────────────────
-// Upcoming MRT stations with estimated coordinates, line, opening year, uplift %
-// Sources: LTA, URA Master Plan 2025 announcements
+// Sources: LTA network expansion, URA Master Plan 2025 Long-Term Plans
 const _UPCOMING_MRT = [
     // Cross Island Line Phase 1 (est. 2030)
     { name: 'Aviation Park',     line: 'CRL Phase 1', opens: 2030, lat: 1.3604, lon: 103.9876, uplift: 5 },
@@ -3952,17 +3951,29 @@ const _UPCOMING_MRT = [
     // Jurong Region Line Phase 1 (est. 2027)
     { name: 'Enterprise',        line: 'JRL Phase 1', opens: 2027, lat: 1.3318, lon: 103.7095, uplift: 6 },
     { name: 'Tawas',             line: 'JRL Phase 1', opens: 2027, lat: 1.3298, lon: 103.7014, uplift: 5 },
-    { name: 'Gek Poh',          line: 'JRL Phase 1', opens: 2027, lat: 1.3279, lon: 103.6928, uplift: 5 },
-    { name: 'Teck Whye',        line: 'JRL Phase 1', opens: 2027, lat: 1.3479, lon: 103.7217, uplift: 6 },
-    { name: 'Hong Kah',         line: 'JRL Phase 1', opens: 2027, lat: 1.3479, lon: 103.7160, uplift: 6 },
-    { name: 'Tengah',           line: 'JRL Phase 1', opens: 2027, lat: 1.3508, lon: 103.7419, uplift: 7 },
-    { name: 'Tengah Park',      line: 'JRL Phase 1', opens: 2027, lat: 1.3531, lon: 103.7481, uplift: 7 },
-    { name: 'Bukit Batok West', line: 'JRL Phase 1', opens: 2027, lat: 1.3449, lon: 103.7488, uplift: 6 },
-    // Thomson-East Coast Line Stage 5 (est. 2025-2026)
-    { name: 'Bayshore',         line: 'TEL Stage 5',  opens: 2025, lat: 1.3149, lon: 103.9302, uplift: 8 },
-    { name: 'Bedok South',      line: 'TEL Stage 5',  opens: 2025, lat: 1.3204, lon: 103.9422, uplift: 7 },
+    { name: 'Gek Poh',           line: 'JRL Phase 1', opens: 2027, lat: 1.3279, lon: 103.6928, uplift: 5 },
+    { name: 'Teck Whye',         line: 'JRL Phase 1', opens: 2027, lat: 1.3479, lon: 103.7217, uplift: 6 },
+    { name: 'Hong Kah',          line: 'JRL Phase 1', opens: 2027, lat: 1.3479, lon: 103.7160, uplift: 6 },
+    { name: 'Tengah',            line: 'JRL Phase 1', opens: 2027, lat: 1.3508, lon: 103.7419, uplift: 7 },
+    { name: 'Tengah Park',       line: 'JRL Phase 1', opens: 2027, lat: 1.3531, lon: 103.7481, uplift: 7 },
+    { name: 'Bukit Batok West',  line: 'JRL Phase 1', opens: 2027, lat: 1.3449, lon: 103.7488, uplift: 6 },
+    // Thomson-East Coast Line Stage 5 (est. 2026)
+    { name: 'Bayshore',          line: 'TEL Stage 5', opens: 2026, lat: 1.3149, lon: 103.9302, uplift: 8 },
+    { name: 'Bedok South',       line: 'TEL Stage 5', opens: 2026, lat: 1.3204, lon: 103.9422, uplift: 7 },
     // CRL Phase 2 (est. 2032)
-    { name: 'Jurong Lake District', line: 'CRL Phase 2', opens: 2032, lat: 1.3334, lon: 103.7402, uplift: 9 },
+    { name: 'Jurong Lake District Stn', line: 'CRL Phase 2', opens: 2032, lat: 1.3334, lon: 103.7402, uplift: 9 },
+];
+
+// URA Master Plan long-term transformation zones (search radius in km)
+const _URA_ZONES = [
+    { name: 'Jurong Lake District',          type: 'Regional CBD',         opens: 2028, lat: 1.3334, lon: 103.7402, uplift: 12, radius: 3.0, desc: "Singapore's second CBD — 100,000 new jobs, offices, retail & waterfront living" },
+    { name: 'Paya Lebar Airbase Relocation', type: 'Urban Transformation', opens: 2030, lat: 1.3601, lon: 103.9025, uplift: 15, radius: 3.0, desc: "Largest urban renewal since Marina Bay — 150ha released for mixed-use housing & commerce" },
+    { name: 'Greater Southern Waterfront',   type: 'Waterfront District',  opens: 2030, lat: 1.2700, lon: 103.8200, uplift: 10, radius: 2.5, desc: '9km promenade from Marina South to Pasir Panjang — 9,000 new waterfront homes & parks' },
+    { name: 'Tengah Eco-Town',              type: 'New Town',             opens: 2027, lat: 1.3530, lon: 103.7430, uplift: 8,  radius: 2.0, desc: "Singapore's first car-free town centre — 42,000 new HDB homes, central forest corridor" },
+    { name: 'Punggol Digital District',      type: 'Tech Cluster',         opens: 2026, lat: 1.4050, lon: 103.9050, uplift: 7,  radius: 2.0, desc: 'SIT campus + JTC business park — 28,000 digital economy jobs by 2026' },
+    { name: 'One-North Expansion',           type: 'Research & Biomedical', opens: 2027, lat: 1.2990, lon: 103.7880, uplift: 6,  radius: 1.5, desc: 'Expanded innovation cluster — new biomedical and deep-tech research blocks' },
+    { name: 'Woodlands Regional Centre',     type: 'Regional Hub',         opens: 2030, lat: 1.4370, lon: 103.7870, uplift: 7,  radius: 2.5, desc: 'Northern gateway upgrade + RTS Link to Johor Bahru — regional employment hub' },
+    { name: 'Changi Airport Terminal 5',     type: 'Mega Infrastructure',  opens: 2035, lat: 1.3543, lon: 103.9874, uplift: 8,  radius: 3.0, desc: 'New terminal handling 50M passengers — 100,000 new aviation-sector jobs' },
 ];
 
 function _haversineKm(lat1, lon1, lat2, lon2) {
@@ -3975,53 +3986,139 @@ function _haversineKm(lat1, lon1, lat2, lon2) {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function renderAmenityFuture(lat, lon) {
+function renderAmenityFuture(lat, lon, estimatedValue) {
     const section = document.getElementById('amenity-future-section');
     const body    = document.getElementById('amenity-future-body');
     if (!section || !body) return;
 
-    if (!lat || !lon) {
-        section.classList.add('hidden');
-        return;
-    }
+    if (!lat || !lon) { section.classList.add('hidden'); return; }
 
-    // Find upcoming stations within 1.5 km, sort by distance
-    const nearby = _UPCOMING_MRT
-        .map(s => ({ ...s, dist: _haversineKm(lat, lon, s.lat, s.lon) }))
+    // MRT stations within 1.5 km
+    const nearbyMrt = _UPCOMING_MRT
+        .map(s => ({ ...s, dist: _haversineKm(lat, lon, s.lat, s.lon), kind: 'mrt' }))
         .filter(s => s.dist <= 1.5)
         .sort((a, b) => a.dist - b.dist);
 
-    if (!nearby.length) {
-        section.classList.add('hidden');
-        return;
-    }
+    // URA transformation zones within each zone's own radius
+    const nearbyUra = _URA_ZONES
+        .map(z => ({ ...z, dist: _haversineKm(lat, lon, z.lat, z.lon), kind: 'ura' }))
+        .filter(z => z.dist <= z.radius)
+        .sort((a, b) => a.dist - b.dist);
 
+    const allCatalysts = [...nearbyMrt, ...nearbyUra];
+    if (!allCatalysts.length) { section.classList.add('hidden'); return; }
     section.classList.remove('hidden');
-    body.innerHTML = nearby.map(s => {
-        const distStr  = s.dist < 0.1 ? '<100m' : `${(s.dist * 1000).toFixed(0)}m`;
-        const lineColor = s.line.includes('CRL') ? 'text-teal-600 bg-teal-50 dark:bg-teal-900/30 border-teal-100'
-                        : s.line.includes('JRL') ? 'text-violet-600 bg-violet-50 dark:bg-violet-900/30 border-violet-100'
-                        : 'text-blue-600 bg-blue-50 dark:bg-blue-900/30 border-blue-100';
-        const urgency  = s.opens <= 2027 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700';
+
+    // Compound uplift: lead catalyst + 35% credit for each additional
+    const sorted = [...allCatalysts].sort((a, b) => b.uplift - a.uplift);
+    const baseUplift = sorted[0].uplift;
+    const compoundUplift = Math.min(
+        25,
+        Math.round(baseUplift + sorted.slice(1).reduce((acc, c) => acc + c.uplift * 0.35, 0))
+    );
+    const targetYear = Math.max(...allCatalysts.map(c => c.opens));
+    const dollarGain = estimatedValue ? Math.round(estimatedValue * compoundUplift / 100) : null;
+
+    // XAI headline
+    const catCount = allCatalysts.length;
+    let headline, subline;
+    if (compoundUplift >= 12) {
+        headline = `Strong growth signal — predicted +${compoundUplift}% property value uplift by ${targetYear}`;
+        subline  = `${catCount} nearby infrastructure ${catCount === 1 ? 'catalyst' : 'catalysts'} identified from LTA and URA Master Plan data.`;
+    } else if (compoundUplift >= 7) {
+        headline = `Predicted +${compoundUplift}% value growth by ${targetYear} from nearby infrastructure`;
+        subline  = `${catCount} upcoming ${catCount === 1 ? 'development' : 'developments'} within proximity will drive demand in this corridor.`;
+    } else {
+        headline = `Moderate uplift potential — projected +${compoundUplift}% by ${targetYear}`;
+        subline  = `Nearby infrastructure improvements support long-term value retention.`;
+    }
+    const dollarHtml = dollarGain
+        ? `<span class="ml-2 text-emerald-600 dark:text-emerald-400 font-bold">≈ +S$${dollarGain.toLocaleString()} on current valuation</span>`
+        : '';
+
+    // MRT card renderer
+    const mrtCards = nearbyMrt.map(s => {
+        const distStr   = s.dist < 0.1 ? '<100m' : `${(s.dist * 1000).toFixed(0)}m`;
+        const walkMin   = Math.round((s.dist * 1000) / 80); // ~80m/min walking
+        const lineColor = s.line.includes('CRL') ? 'text-teal-600 bg-teal-50 dark:bg-teal-900/30 border-teal-200 dark:border-teal-700'
+                        : s.line.includes('JRL') ? 'text-violet-600 bg-violet-50 dark:bg-violet-900/30 border-violet-200 dark:border-violet-700'
+                        : 'text-blue-600 bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700';
+        const badge     = s.opens <= 2027 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400'
+                        : s.opens <= 2030 ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400'
+                        : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400';
         return `
-        <div class="flex items-start gap-4 p-4 rounded-2xl border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/40 mb-3">
+        <div class="flex items-start gap-4 p-4 rounded-2xl border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/40">
             <div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${lineColor} border">
                 <i data-lucide="train-front" class="w-5 h-5"></i>
             </div>
             <div class="flex-1 min-w-0">
                 <div class="flex flex-wrap items-center gap-2 mb-1">
-                    <span class="font-semibold text-slate-800 dark:text-slate-100">${s.name}</span>
-                    <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${urgency}">Opens ${s.opens}</span>
-                    <span class="text-[10px] text-slate-400">${distStr} away</span>
+                    <span class="font-semibold text-slate-800 dark:text-slate-100">${s.name} MRT</span>
+                    <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${badge}">Opens ${s.opens}</span>
+                    <span class="text-[10px] text-slate-400">${distStr} · ~${walkMin} min walk</span>
                 </div>
                 <p class="text-xs text-slate-500 dark:text-slate-400 mb-1">${s.line}</p>
-                <p class="text-xs text-emerald-700 dark:text-emerald-400 font-semibold">
-                    Projected +${s.uplift}% value uplift by ${s.opens}
-                    <span class="font-normal text-slate-400"> — based on comparable MRT opening impact studies</span>
+                <p class="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+                    +${s.uplift}% projected uplift by ${s.opens}
+                    <span class="font-normal text-slate-400"> · based on comparable MRT opening impact studies</span>
                 </p>
             </div>
         </div>`;
     }).join('');
+
+    // URA zone card renderer
+    const typeIcon = { 'Regional CBD': 'building-2', 'Urban Transformation': 'construction', 'Waterfront District': 'waves', 'New Town': 'home', 'Tech Cluster': 'cpu', 'Research & Biomedical': 'flask-conical', 'Regional Hub': 'landmark', 'Mega Infrastructure': 'plane' };
+    const typeColor = { 'Regional CBD': 'text-indigo-600 bg-indigo-50 dark:bg-indigo-900/30 border-indigo-200', 'Urban Transformation': 'text-orange-600 bg-orange-50 dark:bg-orange-900/30 border-orange-200', 'Waterfront District': 'text-sky-600 bg-sky-50 dark:bg-sky-900/30 border-sky-200', 'New Town': 'text-green-600 bg-green-50 dark:bg-green-900/30 border-green-200', 'Tech Cluster': 'text-violet-600 bg-violet-50 dark:bg-violet-900/30 border-violet-200', 'Research & Biomedical': 'text-pink-600 bg-pink-50 dark:bg-pink-900/30 border-pink-200', 'Regional Hub': 'text-blue-600 bg-blue-50 dark:bg-blue-900/30 border-blue-200', 'Mega Infrastructure': 'text-slate-600 bg-slate-100 dark:bg-slate-700 border-slate-200' };
+    const uraCards = nearbyUra.map(z => {
+        const distStr = z.dist < 0.5 ? `${(z.dist * 1000).toFixed(0)}m` : `${z.dist.toFixed(1)}km`;
+        const icon    = typeIcon[z.type] || 'map-pin';
+        const color   = typeColor[z.type] || 'text-slate-600 bg-slate-100 border-slate-200';
+        const badge   = z.opens <= 2027 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400'
+                      : z.opens <= 2030 ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400'
+                      : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400';
+        return `
+        <div class="flex items-start gap-4 p-4 rounded-2xl border border-slate-100 dark:border-slate-700 bg-white dark:bg-slate-800/60">
+            <div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${color} border">
+                <i data-lucide="${icon}" class="w-5 h-5"></i>
+            </div>
+            <div class="flex-1 min-w-0">
+                <div class="flex flex-wrap items-center gap-2 mb-1">
+                    <span class="font-semibold text-slate-800 dark:text-slate-100">${z.name}</span>
+                    <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${badge}">Est. ${z.opens}</span>
+                    <span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400">${z.type}</span>
+                    <span class="text-[10px] text-slate-400">${distStr} away</span>
+                </div>
+                <p class="text-xs text-slate-500 dark:text-slate-400 mb-1">${z.desc}</p>
+                <p class="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+                    +${z.uplift}% projected area uplift by ${z.opens}
+                    <span class="font-normal text-slate-400"> · URA Master Plan 2025</span>
+                </p>
+            </div>
+        </div>`;
+    }).join('');
+
+    const mrtSection = nearbyMrt.length ? `
+        <p class="text-[11px] font-semibold uppercase tracking-widest text-slate-400 mb-2">Upcoming MRT Stations</p>
+        <div class="space-y-3 mb-5">${mrtCards}</div>` : '';
+    const uraSection = nearbyUra.length ? `
+        <p class="text-[11px] font-semibold uppercase tracking-widest text-slate-400 mb-2">URA Master Plan Transformations</p>
+        <div class="space-y-3">${uraCards}</div>` : '';
+
+    body.innerHTML = `
+        <!-- XAI summary banner -->
+        <div class="rounded-2xl bg-gradient-to-r from-emerald-50 to-teal-50 dark:from-emerald-900/20 dark:to-teal-900/20 border border-emerald-200 dark:border-emerald-700 p-5 mb-5">
+            <div class="flex items-start gap-3">
+                <div class="w-9 h-9 rounded-xl bg-emerald-500 flex items-center justify-center flex-shrink-0">
+                    <i data-lucide="trending-up" class="w-5 h-5 text-white"></i>
+                </div>
+                <div>
+                    <p class="font-bold text-emerald-900 dark:text-emerald-200 text-sm leading-snug">${headline}</p>
+                    <p class="text-xs text-emerald-700 dark:text-emerald-400 mt-1">${subline}${dollarHtml}</p>
+                    <p class="text-[10px] text-slate-400 mt-2">Compound uplift reflects ${catCount} catalyst${catCount > 1 ? 's' : ''} — each additional catalyst discounted at 35%. Cap: 25%. For illustration only.</p>
+                </div>
+            </div>
+        </div>
+        ${mrtSection}${uraSection}`;
     lucide.createIcons();
 }
 
