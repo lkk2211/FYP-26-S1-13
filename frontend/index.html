@@ -635,16 +635,19 @@
                     <p class="text-xs text-slate-400 mt-3">Based on XGBoost model explanation (SHAP TreeExplainer). Values in log-price units.</p>
                 </div>
 
-                <!-- What-If Sliders (shown after prediction) -->
+                <!-- Price Intelligence (shown after prediction) -->
                 <div id="whatif-section" class="hidden bg-white dark:bg-slate-800/80 p-8 rounded-[32px] border border-slate-100 dark:border-slate-700 card-shadow">
-                    <div class="flex items-center gap-3 mb-6">
-                        <div class="w-9 h-9 bg-sky-50 dark:bg-sky-900/30 rounded-xl flex items-center justify-center">
-                            <i data-lucide="sliders-horizontal" class="w-5 h-5 text-sky-600"></i>
+                    <div class="flex items-center justify-between mb-6">
+                        <div class="flex items-center gap-3">
+                            <div class="w-9 h-9 bg-sky-50 dark:bg-sky-900/30 rounded-xl flex items-center justify-center">
+                                <i data-lucide="sliders-horizontal" class="w-5 h-5 text-sky-600"></i>
+                            </div>
+                            <div>
+                                <h2 class="text-lg font-bold dark:text-white">Price Intelligence</h2>
+                                <p class="text-xs text-slate-400">Adjust key parameters to explore how they move your valuation</p>
+                            </div>
                         </div>
-                        <div>
-                            <h2 class="text-lg font-bold dark:text-white">What-If Scenario</h2>
-                            <p class="text-xs text-slate-400">Adjust floor level or remaining lease to see how they affect valuation</p>
-                        </div>
+                        <span class="text-[10px] font-semibold px-2 py-1 rounded-full bg-sky-50 dark:bg-sky-900/30 text-sky-600 border border-sky-200 dark:border-sky-700">Interactive</span>
                     </div>
                     <!-- Freehold notice (shown instead of sliders for freehold/999yr) -->
                     <div id="wi-freehold-msg" class="hidden text-sm text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-700/50 rounded-xl p-4">

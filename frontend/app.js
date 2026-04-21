@@ -371,11 +371,21 @@ async function handlePostalSearch() {
                 } else {
                     window._cachedRemainingLease = null;
                 }
-                // Apply floor data from DB lookup if available
+                // Apply floor data from DB lookup — derive max from storey_range strings
+                // if the server didn't send an explicit max_floor value
+                const _parseMaxFromRanges = (ranges) => {
+                    const tops = ranges.map(s => {
+                        const top = s.split(/\s+TO\s+/i).pop();
+                        return parseInt(top) || 0;
+                    }).filter(n => n > 0);
+                    return tops.length ? Math.max(...tops) : 0;
+                };
                 if (info.storey_ranges && info.storey_ranges.length) {
                     _cachedStoreyRanges = info.storey_ranges;
-                    _cachedMaxFloor     = info.max_floor || 50;
-                } else if (info.max_floor) {
+                    _cachedMaxFloor     = (info.max_floor && info.max_floor > 0)
+                        ? info.max_floor
+                        : (_parseMaxFromRanges(info.storey_ranges) || 20);
+                } else if (info.max_floor && info.max_floor > 0) {
                     _cachedMaxFloor     = info.max_floor;
                     _cachedStoreyRanges = [];
                 } else {
@@ -433,6 +443,8 @@ async function handlePredict() {
         const body = { postal, area, bedrooms, floor, property_type: propType, town: _predictTown };
         if (flatType) body.flat_type = flatType;
         if (window._cachedRemainingLease != null) body.remaining_lease_years = window._cachedRemainingLease;
+        if (_cachedMaxFloor)   body.max_floor = _cachedMaxFloor;
+        if (_predictBlock)     body.block     = _predictBlock;
         const response = await fetch('/api/predict', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

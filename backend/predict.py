@@ -8,6 +8,74 @@ from datetime import datetime
 
 MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
 
+# ─── Bala's Curve (SISV standard) — synced with train_model.py ───────────────
+_BALA_PTS = [
+    (99, 1.000), (90, 0.914), (80, 0.811), (70, 0.697), (60, 0.565),
+    (50, 0.420), (40, 0.272), (30, 0.133), (20, 0.062), (10, 0.015), (0, 0.0),
+]
+
+def _bala_fraction(lr):
+    lr = max(0.0, min(float(lr), 99.0))
+    for i in range(len(_BALA_PTS) - 1):
+        y0, f0 = _BALA_PTS[i]
+        y1, f1 = _BALA_PTS[i + 1]
+        if y1 <= lr <= y0:
+            t = (lr - y1) / (y0 - y1)
+            return round(f1 + t * (f0 - f1), 6)
+    return 0.0
+
+# ─── MRT station coordinates — synced with train_model.py ────────────────────
+_MRT_STATIONS = [
+    (1.4474,103.7742),(1.4617,103.7875),(1.4739,103.8003),(1.4271,103.8384),
+    (1.4041,103.8485),(1.3817,103.8449),(1.3620,103.8330),(1.3699,103.8486),
+    (1.3514,103.8479),(1.3394,103.8443),(1.3263,103.8458),(1.3197,103.8442),
+    (1.3101,103.8454),(1.3006,103.8365),(1.2970,103.8441),(1.2958,103.8523),
+    (1.2831,103.8451),(1.2833,103.8530),(1.2784,103.8485),(1.2742,103.8510),
+    (1.3799,103.7453),(1.3629,103.7456),(1.3693,103.7457),(1.3970,103.7479),
+    (1.4323,103.7633),(1.4374,103.7870),(1.3290,103.8887),(1.3193,103.9021),
+    (1.3143,103.9122),(1.3030,103.9022),(1.2967,103.9021),(1.2736,103.8456),
+    (1.2759,103.8362),(1.2787,103.8193),(1.2909,103.8006),(1.2960,103.7899),
+    (1.3113,103.7876),(1.3140,103.7756),(1.3031,103.7625),(1.3153,103.7655),
+    (1.3337,103.7421),(1.3451,103.7028),(1.3424,103.6886),(1.3496,103.7227),
+    (1.3374,103.7058),(1.3286,103.7000),(1.3352,103.9309),(1.3435,103.9486),
+    (1.3518,103.9644),(1.3541,103.9825),(1.3600,103.9870),(1.3343,103.9158),
+    (1.3202,103.9219),(1.2877,103.8456),(1.2800,103.8475),(1.2785,103.8319),
+    (1.3017,103.8559),(1.3121,103.8649),(1.3214,103.8652),(1.3297,103.8749),
+    (1.3392,103.8872),(1.3504,103.8938),(1.3621,103.8870),(1.3718,103.8819),
+    (1.3897,103.8919),(1.3963,103.9012),(1.4063,103.9022),(1.2917,103.8574),
+    (1.2996,103.8614),(1.3055,103.8558),(1.3060,103.8634),(1.3104,103.8789),
+    (1.3092,103.8869),(1.3069,103.8940),(1.3340,103.9047),(1.3333,103.9023),
+    (1.3606,103.8861),(1.3328,103.8252),(1.3197,103.8072),(1.3007,103.8010),
+    (1.2971,103.7876),(1.2913,103.7812),(1.3059,103.7759),(1.2975,103.7883),
+    (1.2930,103.7762),(1.2892,103.7628),(1.2834,103.7489),(1.2776,103.7646),
+    (1.2716,103.7738),(1.2688,103.7848),(1.3424,103.7491),(1.3378,103.7499),
+    (1.3317,103.7530),(1.3228,103.7631),(1.3240,103.7789),(1.3250,103.7905),
+    (1.3260,103.8001),(1.3173,103.8063),(1.3079,103.8186),(1.3027,103.8321),
+    (1.2996,103.8451),(1.2854,103.8451),(1.2788,103.8501),(1.2851,103.8631),
+    (1.3103,103.9048),(1.3125,103.9317),(1.3155,103.9416),(1.3204,103.9500),
+    (1.3518,103.9464),(1.3667,103.9309),(1.3583,103.9199),(1.3505,103.9101),
+    (1.3370,103.9066),(1.4537,103.8185),(1.4474,103.8194),(1.4382,103.8395),
+    (1.3884,103.8389),(1.3741,103.8322),(1.3611,103.8351),(1.3446,103.8330),
+    (1.3176,103.8279),(1.3093,103.8356),(1.3080,103.8315),(1.2930,103.8453),
+    (1.2885,103.8365),(1.2807,103.8399),(1.2767,103.8449),(1.2763,103.8630),
+    (1.2847,103.8631),(1.3149,103.9302),(1.3204,103.9422),
+]
+
+def _dist_nearest_mrt(lat, lon):
+    """Haversine distance in km to nearest MRT station."""
+    R = 6371.0
+    lat_r = math.radians(lat)
+    min_d = float('inf')
+    for mrt_lat, mrt_lon in _MRT_STATIONS:
+        dlat = math.radians(mrt_lat - lat)
+        dlon = math.radians(mrt_lon - lon)
+        a = (math.sin(dlat / 2) ** 2 +
+             math.cos(lat_r) * math.cos(math.radians(mrt_lat)) * math.sin(dlon / 2) ** 2)
+        d = R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+        if d < min_d:
+            min_d = d
+    return round(min_d, 4)
+
 # ─── Rule-based fallback (used when ML models are not available) ──────────────
 
 POSTAL_CONFIG = {
@@ -464,29 +532,95 @@ def _predict_ml(features):
     flat_age_years        = float(med.get('flat_age_years', 34.0))
     lat_med = float(med.get('lat', lat or 1.35))
     lon_med = float(med.get('lon', lon or 103.82))
+    eff_lat = lat or lat_med
+    eff_lon = lon or lon_med
 
     # Latest policy + SORA (from meta, refreshed from DB at load time)
     pol = _meta.get('latest_policy', {})
     sora = float(_meta.get('latest_sora', 3.5))
 
+    # ── New accuracy features ─────────────────────────────────────────────────
+    # 1. Bala's non-linear lease fraction
+    bala_frac = _bala_fraction(remaining_lease_years)
+
+    # 2. Distance to nearest MRT (km)
+    dist_mrt = _dist_nearest_mrt(eff_lat, eff_lon)
+
+    # 3. Storey % of building height — use max_floor from request if provided
+    max_floor_hint = features.get('max_floor')
+    if max_floor_hint and float(max_floor_hint) > 0:
+        storey_pct = min(float(floor) / float(max_floor_hint), 1.0)
+    else:
+        # Approximate: assume typical HDB = 12 floors, condo = 20
+        storey_pct = min(float(floor) / 12.0, 1.0)
+
+    # 4. Block-level 6-month rolling median PSF — query DB for recent block txns
+    block_rolling_psf = None
+    blk = str(features.get('block', '')).strip()
+    if blk:
+        try:
+            DATABASE_URL = os.environ.get('DATABASE_URL', '')
+            if DATABASE_URL:
+                import psycopg2, psycopg2.extras
+                _c = psycopg2.connect(DATABASE_URL)
+                _cur = _c.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+                ph = '%s'
+            else:
+                import sqlite3
+                _c = sqlite3.connect(os.path.join(os.path.dirname(__file__), 'propaisg.db'))
+                _c.row_factory = sqlite3.Row
+                _cur = _c.cursor()
+                ph = '?'
+            _cur.execute(
+                f"SELECT AVG(CAST(resale_price AS REAL) / (CAST(floor_area_sqm AS REAL) * 10.764)) "
+                f"AS median_psf FROM resale_flat_prices "
+                f"WHERE UPPER(block) = {ph} AND UPPER(flat_type) = {ph} "
+                f"AND month >= date('now', '-7 months') AND month < date('now', '-1 month')",
+                (blk.upper(), flat_type)
+            )
+            row_psf = _cur.fetchone()
+            if row_psf:
+                v = dict(row_psf).get('median_psf')
+                if v:
+                    block_rolling_psf = float(v)
+            _c.close()
+        except Exception:
+            pass
+    # Fall back to estimated PSF from this prediction
+    if block_rolling_psf is None or block_rolling_psf <= 0:
+        area_sqft = area_sqm * 10.764
+        # Use town PSF benchmarks from the existing insight logic
+        _town_psf_bench = {
+            'BISHAN': 750, 'TOA PAYOH': 700, 'QUEENSTOWN': 730, 'BUKIT MERAH': 680,
+            'KALLANG/WHAMPOA': 670, 'MARINE PARADE': 700, 'ANG MO KIO': 600,
+            'SERANGOON': 590, 'TAMPINES': 545, 'BEDOK': 530, 'HOUGANG': 520,
+            'SENGKANG': 500, 'PUNGGOL': 490, 'WOODLANDS': 465, 'YISHUN': 460,
+            'JURONG WEST': 470, 'CHOA CHU KANG': 480, 'BUKIT PANJANG': 490,
+        }
+        block_rolling_psf = float(_town_psf_bench.get(town, 520))
+
     # Build feature row using exactly the columns the model was trained on
     num_cols = _meta.get('numerical_cols', [])
     feat = {
         'town': town, 'flat_type': flat_type, 'flat_model': flat_model,
-        'floor_area_sqm':        area_sqm,
-        'year':                  year,
-        'quarter':               quarter,
-        'time_idx':              time_idx,
-        'storey_mid':            storey_mid,
-        'remaining_lease_years': remaining_lease_years,
-        'flat_age_years':        flat_age_years,
-        'direction':             float(pol.get('direction', 0)),
-        'severity':              float(pol.get('severity', 0)),
-        'policy_impact':         float(pol.get('policy_impact', 0)),
+        'floor_area_sqm':          area_sqm,
+        'year':                    year,
+        'quarter':                 quarter,
+        'time_idx':                time_idx,
+        'storey_mid':              storey_mid,
+        'storey_pct':              storey_pct,
+        'remaining_lease_years':   remaining_lease_years,
+        'flat_age_years':          flat_age_years,
+        'bala_fraction':           bala_frac,
+        'direction':               float(pol.get('direction', 0)),
+        'severity':                float(pol.get('severity', 0)),
+        'policy_impact':           float(pol.get('policy_impact', 0)),
         'months_since_policy_change': int(pol.get('months_since_policy_change', 0)),
-        'sora':                  sora,
-        'lat':                   lat or lat_med,
-        'lon':                   lon or lon_med,
+        'sora':                    sora,
+        'lat':                     eff_lat,
+        'lon':                     eff_lon,
+        'dist_nearest_mrt_km':     dist_mrt,
+        'block_rolling_psf_6m':    block_rolling_psf,
     }
     row = pd.DataFrame([{k: feat[k] for k in (_meta.get('categorical_cols', ['town','flat_type','flat_model']) + num_cols) if k in feat}])
 

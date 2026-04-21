@@ -41,7 +41,7 @@ RESOURCE_ID = 'f1765b54-a209-4718-8d38-a39237f502b3'
 MIN_YEAR    = 2021
 
 CATEGORICAL_COLS = ["town", "flat_type", "flat_model"]
-# Full feature set matching the notebook (lat/lon + policy + SORA)
+# Full feature set — lat/lon + policy + SORA + 4 new accuracy features
 NUMERICAL_COLS_FULL = [
     "floor_area_sqm",
     "direction",
@@ -53,21 +53,107 @@ NUMERICAL_COLS_FULL = [
     "quarter",
     "time_idx",
     "storey_mid",
+    "storey_pct",            # [NEW] floor level as % of building height
     "remaining_lease_years",
     "flat_age_years",
+    "bala_fraction",         # [NEW] SISV non-linear lease decay (Bala's Curve)
     "lat",
     "lon",
+    "dist_nearest_mrt_km",   # [NEW] haversine distance to nearest MRT station
+    "block_rolling_psf_6m",  # [NEW] 6-month lagged block-level median PSF
 ]
-# Minimal fallback (no geo, no policy, no SORA — same as original model)
+# Minimal fallback (no geo, no policy, no SORA)
 NUMERICAL_COLS_MIN = [
     "floor_area_sqm",
     "year",
     "quarter",
     "time_idx",
     "storey_mid",
+    "storey_pct",
     "remaining_lease_years",
     "flat_age_years",
+    "bala_fraction",
+    "block_rolling_psf_6m",
 ]
+
+# ─── Bala's Curve (SISV standard — 11-point table) ───────────────────────────
+_BALA_PTS = [
+    (99, 1.000), (90, 0.914), (80, 0.811), (70, 0.697), (60, 0.565),
+    (50, 0.420), (40, 0.272), (30, 0.133), (20, 0.062), (10, 0.015), (0, 0.0),
+]
+
+def _bala_fraction(lr):
+    """Interpolate Bala's depreciation fraction for a given remaining lease (years)."""
+    lr = max(0.0, min(float(lr), 99.0))
+    for i in range(len(_BALA_PTS) - 1):
+        y0, f0 = _BALA_PTS[i]
+        y1, f1 = _BALA_PTS[i + 1]
+        if y1 <= lr <= y0:
+            t = (lr - y1) / (y0 - y1)
+            return round(f1 + t * (f0 - f1), 6)
+    return 0.0
+
+# ─── MRT stations: lat/lon for all Singapore lines ───────────────────────────
+# Sources: LTA, Wikipedia — covers NSL, EWL, NEL, CCL, DTL, TEL (~130 stations)
+_MRT_STATIONS = [
+    # North-South Line
+    (1.4474, 103.7742),(1.4617, 103.7875),(1.4739, 103.8003),(1.4271, 103.8384),
+    (1.4041, 103.8485),(1.3817, 103.8449),(1.3620, 103.8330),(1.3699, 103.8486),
+    (1.3514, 103.8479),(1.3394, 103.8443),(1.3263, 103.8458),(1.3197, 103.8442),
+    (1.3101, 103.8454),(1.3006, 103.8365),(1.2970, 103.8441),(1.2958, 103.8523),
+    (1.2831, 103.8451),(1.2833, 103.8530),(1.2784, 103.8485),(1.2742, 103.8510),
+    (1.3799, 103.7453),(1.3629, 103.7456),(1.3693, 103.7457),(1.3970, 103.7479),
+    (1.4323, 103.7633),(1.4374, 103.7870),
+    # East-West Line
+    (1.3290, 103.8887),(1.3193, 103.9021),(1.3143, 103.9122),(1.3030, 103.9022),
+    (1.2967, 103.9021),(1.2736, 103.8456),(1.2759, 103.8362),(1.2787, 103.8193),
+    (1.2909, 103.8006),(1.2960, 103.7899),(1.3113, 103.7876),(1.3140, 103.7756),
+    (1.3031, 103.7625),(1.3153, 103.7655),(1.3337, 103.7421),(1.3451, 103.7028),
+    (1.3424, 103.6886),(1.3496, 103.7227),(1.3374, 103.7058),(1.3286, 103.7000),
+    (1.3352, 103.9309),(1.3435, 103.9486),(1.3518, 103.9644),(1.3541, 103.9825),
+    (1.3600, 103.9870),(1.3343, 103.9158),(1.3202, 103.9219),
+    # North-East Line
+    (1.2877, 103.8456),(1.2800, 103.8475),(1.2785, 103.8319),(1.3017, 103.8559),
+    (1.3121, 103.8649),(1.3214, 103.8652),(1.3297, 103.8749),(1.3392, 103.8872),
+    (1.3504, 103.8938),(1.3621, 103.8870),(1.3718, 103.8819),(1.3897, 103.8919),
+    (1.3963, 103.9012),(1.4063, 103.9022),
+    # Circle Line
+    (1.2917, 103.8574),(1.2996, 103.8614),(1.3055, 103.8558),(1.3060, 103.8634),
+    (1.3104, 103.8789),(1.3092, 103.8869),(1.3069, 103.8940),(1.3340, 103.9047),
+    (1.3333, 103.9023),(1.3606, 103.8861),(1.3328, 103.8252),(1.3197, 103.8072),
+    (1.3007, 103.8010),(1.2971, 103.7876),(1.2913, 103.7812),(1.3059, 103.7759),
+    (1.2975, 103.7883),(1.2930, 103.7762),(1.2892, 103.7628),(1.2834, 103.7489),
+    (1.2776, 103.7646),(1.2716, 103.7738),(1.2688, 103.7848),
+    # Downtown Line
+    (1.3424, 103.7491),(1.3378, 103.7499),(1.3317, 103.7530),(1.3228, 103.7631),
+    (1.3240, 103.7789),(1.3250, 103.7905),(1.3260, 103.8001),(1.3173, 103.8063),
+    (1.3079, 103.8186),(1.3027, 103.8321),(1.2996, 103.8451),(1.2854, 103.8451),
+    (1.2788, 103.8501),(1.2851, 103.8631),(1.3103, 103.9048),(1.3125, 103.9317),
+    (1.3155, 103.9416),(1.3204, 103.9500),(1.3518, 103.9464),(1.3667, 103.9309),
+    (1.3583, 103.9199),(1.3505, 103.9101),(1.3370, 103.9066),
+    # Thomson-East Coast Line
+    (1.4537, 103.8185),(1.4474, 103.8194),(1.4382, 103.8395),(1.3884, 103.8389),
+    (1.3741, 103.8322),(1.3611, 103.8351),(1.3446, 103.8330),(1.3176, 103.8279),
+    (1.3093, 103.8356),(1.3080, 103.8315),(1.2930, 103.8453),(1.2885, 103.8365),
+    (1.2807, 103.8399),(1.2767, 103.8449),(1.2763, 103.8630),(1.2847, 103.8631),
+    (1.3149, 103.9302),(1.3204, 103.9422),
+]
+
+def _dist_nearest_mrt(lat, lon):
+    """Haversine distance in km to the nearest MRT station."""
+    import math as _m
+    R = 6371.0
+    lat_r = _m.radians(lat)
+    min_d = float('inf')
+    for mrt_lat, mrt_lon in _MRT_STATIONS:
+        dlat = _m.radians(mrt_lat - lat)
+        dlon = _m.radians(mrt_lon - lon)
+        a = (_m.sin(dlat / 2) ** 2 +
+             _m.cos(lat_r) * _m.cos(_m.radians(mrt_lat)) * _m.sin(dlon / 2) ** 2)
+        d = R * 2 * _m.atan2(_m.sqrt(a), _m.sqrt(1 - a))
+        if d < min_d:
+            min_d = d
+    return round(min_d, 4)
 
 
 # ─── DB connection helper ─────────────────────────────────────────────────────
@@ -232,6 +318,31 @@ def engineer_features(df, policy_df, sora_df, geo_df):
     for col in ['town', 'flat_type', 'flat_model']:
         df[col] = df[col].astype(str).str.strip().str.upper().str.replace(r'\s+', ' ', regex=True)
 
+    # ── [NEW] Bala's Curve fraction (non-linear lease decay) ─────────────────
+    df['bala_fraction'] = df['remaining_lease_years'].apply(_bala_fraction)
+
+    # ── [NEW] Storey % of building height (context-aware floor premium) ───────
+    # Max storey per block; fall back to flat-type median if block data is thin
+    df['block_key'] = (df['block'].fillna('').astype(str).str.strip() + '_' +
+                       df['flat_type'].astype(str).str.strip())
+    block_max = df.groupby('block_key')['storey_mid'].transform('max')
+    ft_max    = df.groupby('flat_type')['storey_mid'].transform('median')
+    df['max_storey_in_block'] = block_max.where(block_max > 0, ft_max).fillna(10.0)
+    df['storey_pct'] = (df['storey_mid'] / df['max_storey_in_block']).clip(0.0, 1.0)
+
+    # ── [NEW] Block-level 6-month lagged rolling median PSF ───────────────────
+    # Shift by 1 month to prevent data leakage; fill missing with flat_type median
+    df['psf'] = df['resale_price'] / (df['floor_area_sqm'].replace(0, np.nan) * 10.764)
+    df_s = df.sort_values(['block_key', 'month'])
+    df_s['block_rolling_psf_6m'] = (
+        df_s.groupby('block_key')['psf']
+        .transform(lambda x: x.shift(1).rolling(6, min_periods=1).median())
+    )
+    # Fill NaN (first transactions in a block) with flat_type median PSF
+    ft_psf_median = df_s.groupby('flat_type')['psf'].transform('median')
+    df_s['block_rolling_psf_6m'] = df_s['block_rolling_psf_6m'].fillna(ft_psf_median)
+    df = df_s.sort_index()   # restore original row order
+
     # ── Policy merge (merge_asof backward) ──────────────────────────────────
     if policy_df is not None and len(policy_df) > 0:
         pol = policy_df.copy()
@@ -285,6 +396,26 @@ def engineer_features(df, policy_df, sora_df, geo_df):
         df['lat'] = 0.0
         df['lon'] = 0.0
 
+    # ── [NEW] Distance to nearest MRT (requires lat/lon) ─────────────────────
+    if has_geo:
+        print("  Computing MRT distances (vectorised)...")
+        R = 6371.0
+        lats = np.radians(df['lat'].values)
+        lons = np.radians(df['lon'].values)
+        mrt_arr = np.array(_MRT_STATIONS)
+        mrt_lats = np.radians(mrt_arr[:, 0])
+        mrt_lons = np.radians(mrt_arr[:, 1])
+
+        # Vectorised haversine: shape (n_rows, n_mrt)
+        dlat = mrt_lats[None, :] - lats[:, None]
+        dlon = mrt_lons[None, :] - lons[:, None]
+        a = (np.sin(dlat / 2) ** 2 +
+             np.cos(lats[:, None]) * np.cos(mrt_lats[None, :]) * np.sin(dlon / 2) ** 2)
+        dist_matrix = R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+        df['dist_nearest_mrt_km'] = dist_matrix.min(axis=1).round(4)
+    else:
+        df['dist_nearest_mrt_km'] = 0.5   # Singapore-wide average ~500m
+
     return df, has_geo
 
 
@@ -327,13 +458,15 @@ def train(from_db=False):
     # Determine which numerical cols are actually available
     has_policy = policy_df is not None and len(policy_df) > 0
     has_sora   = sora_df   is not None and len(sora_df)   > 0
+    # dist_nearest_mrt_km is always present (defaults to 0.5 when no geo)
+    _geo_only = {'lat', 'lon'}   # drop these when no geo; dist_nearest_mrt keeps its fallback
     actual_num = [c for c in NUMERICAL_COLS_FULL if c in df_feat.columns and
-                  not (c in ('lat', 'lon') and not has_geo) and
+                  not (c in _geo_only and not has_geo) and
                   not (c in ('direction', 'severity', 'policy_impact',
                              'months_since_policy_change') and not has_policy) and
                   not (c == 'sora' and not has_sora)]
     if not has_geo:
-        actual_num = [c for c in actual_num if c not in ('lat', 'lon')]
+        actual_num = [c for c in actual_num if c not in _geo_only]
     all_features = CATEGORICAL_COLS + actual_num
     print(f"After filtering: {len(df_feat):,} records | Features: {len(all_features)}")
 
