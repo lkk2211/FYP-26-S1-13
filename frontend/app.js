@@ -425,6 +425,7 @@ async function handlePredict() {
     try {
         const body = { postal, area, bedrooms, floor, property_type: propType, town: _predictTown };
         if (flatType) body.flat_type = flatType;
+        if (window._cachedRemainingLease != null) body.remaining_lease_years = window._cachedRemainingLease;
         const response = await fetch('/api/predict', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

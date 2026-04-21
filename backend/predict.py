@@ -454,10 +454,13 @@ def _predict_ml(features):
 
     storey_mid = float(floor)
 
-    # Lease/age defaults from training medians
+    # Lease/age — use actual property value from frontend if available, else training median
     key = (town, flat_type)
     med = _meta['medians_by_town_type'].get(key, {})
-    remaining_lease_years = float(med.get('remaining_lease_years', 65.0))
+    _actual_lease = features.get('remaining_lease_years')
+    remaining_lease_years = (float(_actual_lease)
+                             if _actual_lease is not None and float(_actual_lease) > 0
+                             else float(med.get('remaining_lease_years', 65.0)))
     flat_age_years        = float(med.get('flat_age_years', 34.0))
     lat_med = float(med.get('lat', lat or 1.35))
     lon_med = float(med.get('lon', lon or 103.82))
@@ -569,24 +572,49 @@ def _predict_ml(features):
     ppsf = round(estimated_value / area_sqft) if area_sqft > 0 else 0
 
     # ── Contextual insights ───────────────────────────────────────────────────
-    sora_label = "elevated" if sora > 3.5 else ("easing" if sora < 2.8 else "moderate")
-    pol_dir    = float(pol.get('direction', 0))
-    lease_label = "strong" if remaining_lease_years > 75 else ("adequate" if remaining_lease_years > 60 else "watch closely")
+    sora_label  = "elevated" if sora > 3.5 else ("easing" if sora < 2.8 else "moderate")
+    pol_dir     = float(pol.get('direction', 0))
+    lease_label = "strong" if remaining_lease_years > 75 else ("adequate" if remaining_lease_years > 60 else "declining — factor into CPF and loan planning")
     floor_label = "high-floor" if floor >= 20 else ("mid-floor" if floor >= 10 else "lower-floor")
     area_label  = "spacious" if area_sqm >= 90 else ("standard" if area_sqm >= 65 else "compact")
 
+    # PSF context vs town median (approximated from model output)
+    # Town median PSF rough benchmarks (OCR HDB ~S$490–560/sqft based on 2026 data)
+    town_psf_bench = {'BISHAN': 750,'TOA PAYOH': 700,'QUEENSTOWN': 730,'BUKIT MERAH': 680,
+                      'KALLANG/WHAMPOA': 670,'MARINE PARADE': 700,'ANG MO KIO': 600,
+                      'SERANGOON': 590,'TAMPINES': 545,'BEDOK': 530,'HOUGANG': 520,
+                      'SENGKANG': 500,'PUNGGOL': 490,'WOODLANDS': 465,'YISHUN': 460,
+                      'JURONG WEST': 470,'CHOA CHU KANG': 480,'BUKIT PANJANG': 490}.get(town, 520)
+    if ppsf > town_psf_bench * 1.10:
+        psf_note = f"S${ppsf} PSF is above the {location_display} median — strong floor, check condition carefully."
+    elif ppsf < town_psf_bench * 0.90:
+        psf_note = f"S${ppsf} PSF is below the {location_display} median — investigate lease length and unit condition."
+    else:
+        psf_note = f"S${ppsf} PSF is in line with the {location_display} market median."
+
+    # Lease-specific buying advice
+    if remaining_lease_years < 30:
+        lease_advice = f"Critical: only {int(remaining_lease_years)} yrs remaining — bank financing and CPF usage are severely restricted."
+    elif remaining_lease_years < 60:
+        lease_advice = f"Note: {int(remaining_lease_years)} yrs remaining — younger buyers may have limited CPF usage; this depresses your future resale pool."
+    elif remaining_lease_years < 75:
+        lease_advice = f"Lease of {int(remaining_lease_years)} yrs is adequate — CPF fully usable, but monitor for future restrictions."
+    else:
+        lease_advice = f"Lease of {int(remaining_lease_years)} yrs is strong — full CPF and bank financing eligibility for buyers."
+
     insight = (
-        f"{location_display} · {flat_type.title()} · {floor_label} (Lvl {floor}) · {area_sqm:.0f} sqm\n"
-        f"ML ensemble estimates S${estimated_value:,} (confidence: {confidence:.0f}%). "
-        f"Remaining lease of ~{int(remaining_lease_years)} yrs is {lease_label}. "
-        f"SORA at {sora:.2f}% is {sora_label} — {'factor in higher mortgage costs' if sora > 3.5 else 'financing conditions are relatively favourable'}. "
-        f"{'Government cooling policy currently in effect.' if pol_dir < 0 else ('Policy environment is supportive.' if pol_dir > 0 else 'Policy environment is neutral.')}"
+        f"{location_display} · {flat_type.title()} · {floor_label} (Lvl {floor}) · {area_sqm:.0f} sqm · {area_label}\n"
+        f"ML ensemble estimates S${estimated_value:,} (confidence: {confidence:.0f}%). {psf_note} "
+        f"{lease_label.capitalize()} lease position: {int(remaining_lease_years)} yrs remaining. "
+        f"SORA at {sora:.2f}% is {sora_label} — {'budget for higher mortgage costs' if sora > 3.5 else 'financing conditions are relatively favourable'}. "
+        f"{'Active government cooling measures in place — ABSD and LTV rules apply.' if pol_dir < 0 else ('Policy environment is supportive of the HDB market.' if pol_dir > 0 else 'Policy environment is currently neutral.')}"
     )
     recommendation = (
         f"For a {flat_type.title()} at Level {floor} in {location_display} ({area_label}, {area_sqm:.0f} sqm): "
         f"expect S${min_value:,}–S${max_value:,}. "
-        f"{'Compare CPF usage vs cash outlay carefully under current rates.' if sora > 3.5 else 'Relatively good time to lock in a fixed-rate package.'} "
-        f"Check HDB Resale Portal for recent {location_display} transactions to validate this estimate."
+        f"{lease_advice} "
+        f"{'At elevated SORA, compare fixed vs floating packages before committing.' if sora > 3.5 else 'Consider locking in a fixed-rate package while SORA is still moderate.'} "
+        f"Verify with recent {location_display} transactions on the HDB Resale Portal before offering."
     )
 
     # ── 12-month price forecast ───────────────────────────────────────────────
@@ -679,6 +707,53 @@ def _predict_fallback(features):
     ]
 
     ppsf_fb = round(estimated_value / area_sqft) if area_sqft > 0 else 0
+
+    # ── Dynamic insight from actual computed values ────────────────────────────
+    flat_type_fb  = str(features.get('flat_type', '')).strip() or f'{beds}-room'
+    area_label_fb = "spacious" if area >= 90 else ("standard" if area >= 65 else "compact")
+    floor_label_fb = "high-floor" if floor >= 20 else ("mid-floor" if floor >= 10 else "lower-floor")
+    loc = config["location"]
+    mkt = config["market_state"]
+
+    # Derive lease context from features or a best estimate
+    rem_lease_fb = float(features.get('remaining_lease_years', 0)) or None
+    if rem_lease_fb:
+        lease_label_fb = ("strong" if rem_lease_fb > 75
+                          else "adequate" if rem_lease_fb > 60 else "watch closely")
+        lease_note = f"Remaining lease of ~{int(rem_lease_fb)} yrs is {lease_label_fb}."
+    else:
+        lease_note = "Check remaining lease carefully — it directly affects CPF usage and loan eligibility."
+
+    price_note = (
+        f"S${'k'.join(str(estimated_value//1000).split()) if estimated_value < 1_000_000 else f'{estimated_value/1_000_000:.2f}M'}"
+        f" ({confidence:.0f}% confidence, rule-based estimate)."
+    )
+
+    insight_fb = (
+        f"{loc} · {flat_type_fb.title()} · {floor_label_fb} (Lvl {floor}) · {area:.0f} sqm · {area_label_fb}\n"
+        f"Indicative valuation: {price_note} "
+        f"{lease_note} "
+        f"Market is {mkt.lower()} — {'strong demand from upgraders and first-time buyers' if mkt in ('Very Active','Active') else 'transaction volume has softened; negotiate carefully'}."
+    )
+
+    # Recommendation varies by floor, area, and market state
+    if mkt in ('Very Active', 'Active'):
+        timing = "Act decisively — well-priced units in this area move quickly."
+    else:
+        timing = "Take your time — market conditions favour buyers for due diligence."
+
+    if ppsf_fb > 700:
+        psf_note = f"At S${ppsf_fb} PSF this unit is in the upper range for {loc}; verify against recent transactions on the HDB Resale Portal."
+    elif ppsf_fb > 500:
+        psf_note = f"S${ppsf_fb} PSF is typical for {loc}; cross-check recent nearby sales before committing."
+    else:
+        psf_note = f"S${ppsf_fb} PSF is competitively priced for {loc}; investigate why it is below the area median."
+
+    rec_fb = (
+        f"For a {flat_type_fb.title()} at Level {floor} in {loc} ({area:.0f} sqm): "
+        f"budget S${min_value:,}–S${max_value:,}. {psf_note} {timing}"
+    )
+
     return {
         "estimated_value": estimated_value,
         "min_value":        min_value,
@@ -691,8 +766,8 @@ def _predict_fallback(features):
         "location":         config["location"],
         "property_type":    config["property_type"],
         "district":         config["district"],
-        "insight":          config["insight"],
-        "recommendation":   config["recommendation"],
+        "insight":          insight_fb,
+        "recommendation":   rec_fb,
         "factors":          factors,
     }
 
@@ -935,32 +1010,58 @@ def _predict_fallback_condo(features):
         'OCR': 'Outside Central Region',
     }.get(segment, segment)
 
+    ppsf_fc = round(estimated_value / area_sqft) if area_sqft > 0 else 0
+    floor_label_fc = "high-floor" if floor >= 20 else ("mid-floor" if floor >= 10 else "lower-floor")
+    size_label_fc  = "large" if area_sqft >= 1400 else ("standard" if area_sqft >= 900 else "compact")
+
+    seg_bench = {'CCR': 2800, 'RCR': 1900, 'OCR': 1350}[segment]
+    psf_vs_bench = psf - seg_bench
+    if abs(psf_vs_bench) < seg_bench * 0.05:
+        psf_note_fc = f"at the {location_display} median (S${seg_bench:,.0f} PSF benchmark)"
+    elif psf_vs_bench > 0:
+        psf_note_fc = f"{(psf_vs_bench/seg_bench*100):.0f}% above the {location_display} median — verify with recent URA caveats"
+    else:
+        psf_note_fc = f"{(abs(psf_vs_bench)/seg_bench*100):.0f}% below the {location_display} median — investigate condition and leasehold status"
+
+    insight_fc = (
+        f"{location_display} · {district} · {floor_label_fc} (Lvl {floor}) · {area_sqft:.0f} sqft · {size_label_fc}\n"
+        f"Indicative valuation: S${estimated_value:,} at S${ppsf_fc:,} PSF (78% confidence). "
+        f"This unit is priced {psf_note_fc}. "
+        f"Private residential in {segment} remains resilient — driven by upgrader and investor demand."
+    )
+    rec_fc = (
+        f"{size_label_fc.capitalize()} {segment} unit at Level {floor} in {district}: "
+        f"indicative range S${int(estimated_value*0.91):,}–S${int(estimated_value*1.09):,}. "
+        f"Cross-check URA caveat lodgements for {district} and compare listings on 99.co or PropertyGuru. "
+        f"At S${ppsf_fc:,} PSF, {'this is a premium unit — negotiate only if the seller is motivated' if ppsf_fc > seg_bench * 1.1 else 'there is reasonable room to offer below asking price' if ppsf_fc < seg_bench * 0.95 else 'the pricing is in line with the market — move quickly if the unit suits your needs'}."
+    )
+
     return {
         "estimated_value": estimated_value,
         "min_value":  int(estimated_value * 0.91),
         "max_value":  int(estimated_value * 1.09),
         "confidence": 78.0,
-        "ppsf":       round(estimated_value / area_sqft) if area_sqft > 0 else 0,
+        "ppsf":       ppsf_fc,
         "market_trend":    "+2.1%", "trend_direction": "up",
         "market_state":    "Active",
         "location":        location_display,
         "property_type":   "Condominium",
         "district":        district,
-        "insight": (
-            f"Estimated at S${psf:,.0f} PSF for a {segment} condominium in {district}. "
-            "This is a rule-based estimate; train the private property model for higher accuracy."
-        ),
-        "recommendation": (
-            f"Indicative value: S${estimated_value:,}. Cross-check with URA caveat data and "
-            "recent transactions on PropertyGuru or 99.co before proceeding."
-        ),
+        "insight":         insight_fc,
+        "recommendation":  rec_fc,
         "factors": [
-            {"name": "Market Demand",       "score": 76, "label": "High",   "desc": f"Stable demand in {location_display}."},
-            {"name": "Floor Level Premium", "score": min(int(35+floor*1.5),98), "label": "High", "desc": f"Level {floor} adds a view premium."},
-            {"name": "Floor Area",          "score": min(int(45+(area_sqft-700)*0.05),98), "label": "Moderate", "desc": f"{area_sqft:.0f} sqft unit."},
-            {"name": "Location Premium",    "score": 80 if segment=="CCR" else 72, "label": "High", "desc": f"{district} ({segment})."},
-            {"name": "Investment Potential","score": 72, "label": "High",   "desc": "Private residential remains a stable asset class."},
-            {"name": "MRT Proximity",       "score": 75, "label": "High",   "desc": "Good MRT coverage across Singapore."},
+            {"name": "Market Demand",       "score": 76, "label": "High",
+             "desc": f"Consistent buyer interest in {location_display} — expat and upgrader pool is broad."},
+            {"name": "Floor Level Premium", "score": min(int(35+floor*1.5),98), "label": "High",
+             "desc": f"Level {floor} adds view and ventilation premiums typical in condominiums."},
+            {"name": "Floor Area",          "score": min(int(45+(area_sqft-700)*0.05),98), "label": "Moderate",
+             "desc": f"{area_sqft:.0f} sqft — {size_label_fc} for a {segment} condo."},
+            {"name": "Location Premium",    "score": 80 if segment=="CCR" else 72, "label": "High",
+             "desc": f"{district} ({segment}) offers {'premium' if segment=='CCR' else 'good'} connectivity and infrastructure."},
+            {"name": "Investment Potential","score": 72, "label": "High",
+             "desc": "Private residential prices remain resilient with stable expat and upgrader demand."},
+            {"name": "MRT Proximity",       "score": 75, "label": "High",
+             "desc": "Strong MRT network coverage across Singapore supports private property values."},
         ],
     }
 
