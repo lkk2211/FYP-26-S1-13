@@ -721,6 +721,13 @@ _SECTOR_TO_DISTRICT = {
 _CCR_DISTRICTS = {'D01','D02','D04','D09','D10','D11'}
 _RCR_DISTRICTS = {'D03','D05','D06','D07','D08','D12','D13','D14','D15','D20','D21'}
 
+# PSF sanity bounds per segment (above 2026 Singapore market peaks with headroom)
+_PSF_BOUNDS = {
+    'CCR': (1200, 7000),   # Core Central Region
+    'RCR': ( 900, 4500),   # Rest of Central Region
+    'OCR': ( 600, 3000),   # Outside Central Region
+}
+
 
 def _predict_private_ml(features):
     postal    = str(features.get('postal', '')).strip().zfill(6)
@@ -778,6 +785,16 @@ def _predict_private_ml(features):
         else:
             ensemble_log = float(np.mean(preds_log))
         estimated_value = int(np.exp(ensemble_log))
+
+        # ── PSF sanity check — clamp extreme extrapolations ───────────────────
+        if area_sqft > 0:
+            raw_psf = estimated_value / area_sqft
+            psf_min, psf_max = _PSF_BOUNDS.get(segment, (600, 5000))
+            if raw_psf > psf_max or raw_psf < psf_min:
+                clamped_psf  = max(psf_min, min(psf_max, raw_psf))
+                estimated_value = int(clamped_psf * area_sqft)
+                print(f"[predict_private] PSF clamped {raw_psf:,.0f} → {clamped_psf:,.0f} "
+                      f"({segment}, {area_sqft:.0f} sqft)")
     except Exception as e:
         print(f"[predict_private] inference error: {e}")
         return None

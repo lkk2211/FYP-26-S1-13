@@ -390,6 +390,14 @@ async function handlePredict() {
     btn.disabled = true;
     btn.innerHTML = '<i data-lucide="loader-2" class="w-6 h-6 animate-spin"></i> Calculating...';
     lucide.createIcons();
+
+    // Reset dynamic sections so stale charts from prior search never linger
+    ['forecast-section','shap-section','whatif-section'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.add('hidden');
+    });
+    if (_forecastChart) { _forecastChart.destroy(); _forecastChart = null; }
+    if (_shapChart)     { _shapChart.destroy();     _shapChart     = null; }
     
     const postal   = document.getElementById('input-postal').value;
     lastMapPostal  = postal;
@@ -504,11 +512,12 @@ async function handlePredict() {
 
         // What-if sliders — initialise with current prediction values
         initWhatIfSliders({
-            floor:   body.floor || 10,
-            area:    body.area  || 90,
-            lease:   data.remaining_lease_years || 65,
-            basePrice: data.estimated_value,
-            isCondo: propType.toLowerCase().includes('condo') || propType.toLowerCase().includes('private'),
+            floor:      body.floor || 10,
+            lease:      data.remaining_lease_years || window._cachedRemainingLease || 65,
+            basePrice:  data.estimated_value,
+            isCondo:    propType.toLowerCase().includes('condo') || propType.toLowerCase().includes('private'),
+            isFreehold: isFreehold,
+            maxFloor:   _cachedMaxFloor || (isHdb ? 50 : 50),
         });
 
         // Save to recent searches
@@ -4002,24 +4011,43 @@ function renderShapChart(contributions) {
 
 // ── What-If Sliders ───────────────────────────────────────────────────────────
 let _whatIfBase = null;
-function initWhatIfSliders({ floor, area, lease, basePrice, isCondo }) {
+function initWhatIfSliders({ floor, lease, basePrice, isCondo, isFreehold, maxFloor }) {
     const section = document.getElementById('whatif-section');
     if (!section) return;
     section.classList.remove('hidden');
 
-    _whatIfBase = { floor, area, lease, basePrice, isCondo };
+    const effectiveMaxFloor = maxFloor || (isCondo ? 50 : 50);
+    _whatIfBase = { floor, lease, basePrice, isCondo, isFreehold };
 
-    const floorEl = document.getElementById('wi-floor');
-    const areaEl  = document.getElementById('wi-area');
-    const leaseEl = document.getElementById('wi-lease');
-    const leaseRow = document.getElementById('wi-lease-row');
+    const floorEl    = document.getElementById('wi-floor');
+    const leaseEl    = document.getElementById('wi-lease');
+    const leaseRow   = document.getElementById('wi-lease-row');
+    const slidersDiv = document.getElementById('wi-sliders');
+    const freeholdMsg = document.getElementById('wi-freehold-msg');
 
-    if (floorEl) { floorEl.value = Math.round(floor); document.getElementById('wi-floor-val').textContent = Math.round(floor); }
-    if (areaEl)  { areaEl.value  = Math.round(area);  document.getElementById('wi-area-val').textContent  = Math.round(area); }
-    if (leaseEl) { leaseEl.value = Math.round(lease); document.getElementById('wi-lease-val').textContent = Math.round(lease); }
+    // Show freehold message and hide sliders if freehold
+    const showFreehold = isFreehold;
+    if (freeholdMsg) freeholdMsg.classList.toggle('hidden', !showFreehold);
+    if (slidersDiv)  slidersDiv.classList.toggle('hidden', showFreehold);
 
-    // Hide lease slider for condo/freehold
-    if (leaseRow) leaseRow.style.display = isCondo ? 'none' : '';
+    if (!showFreehold) {
+        // Floor slider — set max from actual building data
+        if (floorEl) {
+            floorEl.max   = effectiveMaxFloor;
+            floorEl.value = Math.min(Math.round(floor), effectiveMaxFloor);
+            document.getElementById('wi-floor-val').textContent = floorEl.value;
+        }
+        const floorMaxEl = document.getElementById('wi-floor-max');
+        if (floorMaxEl) floorMaxEl.textContent = `(max: ${effectiveMaxFloor})`;
+
+        // Lease slider — only for HDB leasehold
+        const showLease = !isCondo && !isFreehold;
+        if (leaseRow) leaseRow.style.display = showLease ? '' : 'none';
+        if (leaseEl && showLease) {
+            leaseEl.value = Math.round(lease);
+            document.getElementById('wi-lease-val').textContent = Math.round(lease);
+        }
+    }
 
     document.getElementById('whatif-result').classList.add('hidden');
 }
@@ -4028,30 +4056,27 @@ function updateWhatIf() {
     if (!_whatIfBase) return;
 
     const floor = parseInt(document.getElementById('wi-floor').value);
-    const area  = parseInt(document.getElementById('wi-area').value);
     const lease = parseInt(document.getElementById('wi-lease').value);
 
     document.getElementById('wi-floor-val').textContent = floor;
-    document.getElementById('wi-area-val').textContent  = area;
-    document.getElementById('wi-lease-val').textContent = lease;
+    if (document.getElementById('wi-lease-val')) {
+        document.getElementById('wi-lease-val').textContent = lease;
+    }
 
-    // Multiplicative adjustment relative to base inputs
     const baseFloor = _whatIfBase.floor || 10;
-    const baseArea  = _whatIfBase.area  || 90;
     const baseLease = _whatIfBase.lease || 65;
     const isCondo   = _whatIfBase.isCondo;
+    const isFreehold = _whatIfBase.isFreehold;
 
     // Floor: ~0.6% per level for HDB, ~1.2% for condo
     const floorRate = isCondo ? 0.012 : 0.006;
     const floorAdj  = 1 + floorRate * (floor - baseFloor);
 
-    // Area: linear proportion
-    const areaAdj = area / Math.max(baseArea, 1);
+    // Lease: ~0.8% per year for HDB leasehold only
+    const showLease = !isCondo && !isFreehold;
+    const leaseAdj  = showLease ? (1 + 0.008 * (lease - baseLease)) : 1;
 
-    // Lease: ~0.8% per year for HDB (not applicable for condo)
-    const leaseAdj = isCondo ? 1 : (1 + 0.008 * (lease - baseLease));
-
-    const adjusted = Math.round(_whatIfBase.basePrice * floorAdj * areaAdj * leaseAdj);
+    const adjusted = Math.round(_whatIfBase.basePrice * floorAdj * leaseAdj);
     const delta    = adjusted - _whatIfBase.basePrice;
     const pct      = ((delta / _whatIfBase.basePrice) * 100).toFixed(1);
 

@@ -644,23 +644,21 @@
                         </div>
                         <div>
                             <h2 class="text-lg font-bold dark:text-white">What-If Scenario</h2>
-                            <p class="text-xs text-slate-400">Adjust floor, area, or remaining lease to see how they affect valuation</p>
+                            <p class="text-xs text-slate-400">Adjust floor level or remaining lease to see how they affect valuation</p>
                         </div>
                     </div>
-                    <div class="space-y-5">
+                    <!-- Freehold notice (shown instead of sliders for freehold/999yr) -->
+                    <div id="wi-freehold-msg" class="hidden text-sm text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-700/50 rounded-xl p-4">
+                        <p class="font-semibold text-slate-700 dark:text-slate-200 mb-1">Freehold / 999-year tenure</p>
+                        <p>Lease decay does not apply to this property. Use the <strong>SHAP Contributions</strong> chart above or the <strong>Lease Decay Projection</strong> below for further analysis.</p>
+                    </div>
+                    <div id="wi-sliders" class="space-y-5">
                         <div>
                             <div class="flex justify-between text-sm mb-1">
-                                <span class="text-slate-600 dark:text-slate-300 font-medium">Floor Level</span>
+                                <span class="text-slate-600 dark:text-slate-300 font-medium">Floor Level <span id="wi-floor-max" class="text-slate-400 font-normal text-xs">(max: 50)</span></span>
                                 <span id="wi-floor-val" class="text-sky-600 font-semibold">10</span>
                             </div>
                             <input type="range" id="wi-floor" min="1" max="50" value="10" class="w-full accent-sky-500" oninput="updateWhatIf()">
-                        </div>
-                        <div>
-                            <div class="flex justify-between text-sm mb-1">
-                                <span class="text-slate-600 dark:text-slate-300 font-medium">Floor Area (sqm)</span>
-                                <span id="wi-area-val" class="text-sky-600 font-semibold">90</span>
-                            </div>
-                            <input type="range" id="wi-area" min="30" max="200" value="90" class="w-full accent-sky-500" oninput="updateWhatIf()">
                         </div>
                         <div id="wi-lease-row">
                             <div class="flex justify-between text-sm mb-1">
