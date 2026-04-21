@@ -3207,6 +3207,7 @@ _ALLOWED_MODEL_FILES = {
     'xgb_pipeline.joblib', 'lgbm_pipeline.joblib', 'cat_pipeline.joblib', 'meta.joblib',
     'xgb_private_pipeline.joblib', 'lgbm_private_pipeline.joblib',
     'cat_private_pipeline.joblib', 'meta_private.joblib',
+    'shap_hdb.joblib', 'shap_private.joblib',
 }
 
 @app.route('/api/admin/trigger-training', methods=['POST'])
