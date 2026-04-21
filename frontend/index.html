@@ -50,7 +50,10 @@
 
             <div class="hidden items-center gap-3 relative group" id="nav-user-profile">
                 <div class="flex items-center gap-3 cursor-pointer">
-                    <span class="text-sm font-bold text-slate-700" id="nav-user-name">User Name</span>
+                    <div class="flex flex-col items-end">
+                        <span class="text-sm font-bold text-slate-700 dark:text-white leading-tight" id="nav-user-name">User Name</span>
+                        <span id="nav-agent-badge" class="hidden text-[9px] font-bold text-violet-600 dark:text-violet-400 uppercase tracking-wide">Agent</span>
+                    </div>
                     <div class="w-10 h-10 bg-slate-100 rounded-full border-2 border-slate-200 flex items-center justify-center overflow-hidden">
                         <img id="nav-user-avatar" src="https://picsum.photos/seed/user/100/100" alt="Avatar" class="w-full h-full object-cover">
                     </div>
@@ -1392,8 +1395,23 @@
                     <p class="text-xs text-slate-400 mt-3">Random sample from the 3 most recent available months. Select a flat type above to filter.</p>
                 </div>
 
+                <!-- Agent tools teaser (shown to logged-in homeowners/buyers only) -->
+                <div id="agent-tools-teaser" class="hidden bg-gradient-to-br from-violet-50 to-indigo-50 dark:from-violet-900/20 dark:to-indigo-900/20 p-6 rounded-[28px] border border-violet-200 dark:border-violet-700">
+                    <div class="flex items-center gap-3 mb-3">
+                        <div class="w-9 h-9 bg-violet-100 dark:bg-violet-900/40 rounded-xl flex items-center justify-center">
+                            <i data-lucide="briefcase" class="w-5 h-5 text-violet-600 dark:text-violet-400"></i>
+                        </div>
+                        <div>
+                            <p class="font-bold text-violet-900 dark:text-violet-200 text-sm">Agent Tools — MOP Leads &amp; Gap Analysis</p>
+                            <p class="text-xs text-violet-600 dark:text-violet-400">Exclusive to licensed property agents</p>
+                        </div>
+                    </div>
+                    <p class="text-xs text-violet-700 dark:text-violet-300 mb-4">Identify HDB blocks approaching their Minimum Occupation Period and uncover undervalued clusters where sellers have outsized leverage — tools built for professional agents.</p>
+                    <button onclick="showView('setting');showTab('profile')" class="text-xs bg-violet-600 text-white px-4 py-2 rounded-xl hover:bg-violet-700 transition-colors font-semibold">Upgrade to Agent Account →</button>
+                </div>
+
                 <!-- MOP Leads (agent-only) -->
-                <div id="mop-leads-section" class="hidden bg-white dark:bg-slate-800/80 p-8 rounded-[32px] border border-violet-100 dark:border-violet-900/40 card-shadow">
+                <div id="mop-leads-section" class="agent-only hidden bg-white dark:bg-slate-800/80 p-8 rounded-[32px] border border-violet-100 dark:border-violet-900/40 card-shadow">
                     <div class="flex items-center justify-between mb-6">
                         <div class="flex items-center gap-3">
                             <div class="w-9 h-9 bg-violet-50 dark:bg-violet-900/30 rounded-xl flex items-center justify-center">
@@ -1412,7 +1430,7 @@
                 </div>
 
                 <!-- Gap Analysis (agent-only) -->
-                <div id="gap-analysis-section" class="hidden bg-white dark:bg-slate-800/80 p-8 rounded-[32px] border border-violet-100 dark:border-violet-900/40 card-shadow">
+                <div id="gap-analysis-section" class="agent-only hidden bg-white dark:bg-slate-800/80 p-8 rounded-[32px] border border-violet-100 dark:border-violet-900/40 card-shadow">
                     <div class="flex items-center justify-between mb-6">
                         <div class="flex items-center gap-3">
                             <div class="w-9 h-9 bg-violet-50 dark:bg-violet-900/30 rounded-xl flex items-center justify-center">
@@ -1734,14 +1752,18 @@
                                 </div>
                             </div>
 
-                            <!-- Trusted Devices info -->
-                            <div class="p-5 rounded-2xl bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-800">
-                                <div class="flex items-start gap-3">
-                                    <i data-lucide="info" class="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0"></i>
-                                    <div>
-                                        <p class="font-bold text-amber-800 dark:text-amber-300 text-sm">Trusted Devices</p>
-                                        <p class="text-xs text-amber-700 dark:text-amber-400 mt-1">When you verify your identity, you can choose to trust your current device for 30 days. You can revoke all trusted devices by disabling and re-enabling 2FA.</p>
+                            <!-- Trusted Devices -->
+                            <div id="trusted-devices-section" class="hidden">
+                                <div class="flex items-center justify-between mb-3">
+                                    <div class="flex items-center gap-2">
+                                        <i data-lucide="monitor-smartphone" class="w-5 h-5 text-slate-500"></i>
+                                        <p class="font-bold text-slate-900 dark:text-white text-sm">Trusted Devices</p>
                                     </div>
+                                    <button onclick="revokeAllDevices()" class="text-xs text-rose-600 hover:text-rose-700 font-semibold transition-colors">Revoke All</button>
+                                </div>
+                                <p class="text-xs text-slate-400 mb-4">When you verify your identity via 2FA, you can trust the current device for 30 days — you won't be asked again until it expires.</p>
+                                <div id="trusted-devices-list" class="space-y-2">
+                                    <p class="text-xs text-slate-400 animate-pulse">Loading…</p>
                                 </div>
                             </div>
                         </div>

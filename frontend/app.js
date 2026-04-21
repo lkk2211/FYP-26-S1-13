@@ -3048,7 +3048,33 @@ function updateAuthUI() {
         });
     }
 
+    applyAccountFeatures();
     lucide.createIcons();
+}
+
+// ── Account-type feature gating ────────────────────────────────────────────────
+// Mark elements in HTML with class="agent-only" or class="buyer-only" to
+// automatically show/hide them based on the signed-in user's account_type.
+function applyAccountFeatures() {
+    const isAgent   = currentUser?.account_type === 'agent';
+    const isBuyer   = !isAgent; // homeowner or not logged in
+
+    document.querySelectorAll('.agent-only').forEach(el => {
+        el.classList.toggle('hidden', !isAgent || !currentUser);
+    });
+    document.querySelectorAll('.buyer-only').forEach(el => {
+        el.classList.toggle('hidden', !isBuyer || !currentUser);
+    });
+
+    // Agent badge in nav
+    const badge = document.getElementById('nav-agent-badge');
+    if (badge) badge.classList.toggle('hidden', !isAgent);
+
+    // Show agent teaser in trend tab when user is not an agent (logged in but homeowner)
+    const agentTeaser = document.getElementById('agent-tools-teaser');
+    if (agentTeaser) {
+        agentTeaser.classList.toggle('hidden', !currentUser || isAgent);
+    }
 }
 
 function clearProfileForm() {
@@ -4923,6 +4949,8 @@ function load2FAStatus() {
         desc.textContent  = 'Your account is secured with an authenticator app.';
         btnEn.classList.add('hidden');
         btnDis.classList.remove('hidden');
+        // Load trusted devices when 2FA is enabled
+        loadTrustedDevices();
     } else {
         icon.className  = 'w-12 h-12 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center';
         icon.innerHTML  = '<i data-lucide="shield" class="w-6 h-6 text-slate-400"></i>';
@@ -4931,8 +4959,64 @@ function load2FAStatus() {
         desc.textContent  = 'Your account is protected by password only.';
         btnEn.classList.remove('hidden');
         btnDis.classList.add('hidden');
+        document.getElementById('trusted-devices-section')?.classList.add('hidden');
     }
     lucide.createIcons();
+}
+
+async function loadTrustedDevices() {
+    const section = document.getElementById('trusted-devices-section');
+    const list    = document.getElementById('trusted-devices-list');
+    if (!section || !list || !currentUser) return;
+    section.classList.remove('hidden');
+    list.innerHTML = '<p class="text-xs text-slate-400 animate-pulse">Loading…</p>';
+    try {
+        const res  = await fetch(`/api/2fa/trusted-devices?user_id=${currentUser.id}`);
+        const data = await res.json();
+        if (data.error || !data.devices) {
+            list.innerHTML = '<p class="text-xs text-slate-400">Unable to load devices.</p>';
+            return;
+        }
+        if (!data.devices.length) {
+            list.innerHTML = '<p class="text-xs text-slate-400">No trusted devices — you haven\'t checked "Remember this device" after a 2FA login yet.</p>';
+            return;
+        }
+        list.innerHTML = data.devices.map(d => {
+            const added   = d.created_at ? new Date(d.created_at).toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+            const expires = d.expires_at ? new Date(d.expires_at).toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+            return `<div class="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-700/50 border border-slate-100 dark:border-slate-700">
+                <div class="flex items-center gap-2.5">
+                    <i data-lucide="monitor" class="w-4 h-4 text-slate-400 flex-shrink-0"></i>
+                    <div>
+                        <p class="text-xs font-semibold text-slate-700 dark:text-slate-200">${d.ip_address}</p>
+                        <p class="text-[10px] text-slate-400">Added ${added} · Expires ${expires}</p>
+                    </div>
+                </div>
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300">Active</span>
+            </div>`;
+        }).join('');
+        lucide.createIcons();
+    } catch {
+        list.innerHTML = '<p class="text-xs text-rose-500">Failed to load devices.</p>';
+    }
+}
+
+async function revokeAllDevices() {
+    if (!currentUser) return;
+    if (!confirm('Revoke all trusted devices? You will need to re-verify with 2FA on all devices next time you sign in.')) return;
+    try {
+        const res  = await fetch('/api/2fa/revoke-all', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: currentUser.id }),
+        });
+        const data = await res.json();
+        if (data.error) { showToast(data.error, true); return; }
+        showToast(`${data.revoked || 0} trusted device${data.revoked !== 1 ? 's' : ''} revoked.`);
+        loadTrustedDevices();
+    } catch {
+        showToast('Failed to revoke devices.', true);
+    }
 }
 
 async function initSetup2FA() {

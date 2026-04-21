@@ -1875,7 +1875,7 @@ def twofa_enable():
         conn.close()
         return jsonify({"error": "Invalid code — try again"}), 400
 
-    cur.execute(_q("UPDATE users SET totp_enabled = TRUE WHERE id = ?"), (user_id,))
+    cur.execute(_q("UPDATE users SET totp_enabled = ? WHERE id = ?"), (True, user_id))
     conn.commit()
     conn.close()
     return jsonify({"success": True, "message": "2FA enabled successfully"})
@@ -1979,7 +1979,7 @@ def twofa_disable():
         conn.close()
         return jsonify({"error": "Invalid code — try again"}), 400
 
-    cur.execute(_q("UPDATE users SET totp_secret = NULL, totp_enabled = FALSE WHERE id = ?"), (user_id,))
+    cur.execute(_q("UPDATE users SET totp_secret = NULL, totp_enabled = ? WHERE id = ?"), (False, user_id))
     try:
         cur.execute(_q("DELETE FROM trusted_devices WHERE user_id = ?"), (user_id,))
     except Exception:
@@ -2006,6 +2006,72 @@ def twofa_status():
     if not row:
         return jsonify({"error": "User not found"}), 404
     return jsonify({"totp_enabled": bool(row.get("totp_enabled"))})
+
+
+@app.route('/api/2fa/trusted-devices', methods=['GET'])
+def twofa_trusted_devices():
+    """List active trusted devices for a user."""
+    user_id = request.args.get('user_id')
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
+    try:
+        conn = get_db()
+        cur  = _cursor(conn)
+        now  = datetime.utcnow().isoformat() if not USE_POSTGRES else 'NOW()'
+        if USE_POSTGRES:
+            cur.execute(
+                "SELECT id, ip_address, created_at, expires_at FROM trusted_devices "
+                "WHERE user_id = %s AND expires_at > NOW() ORDER BY created_at DESC",
+                (user_id,)
+            )
+        else:
+            cur.execute(
+                "SELECT id, ip_address, created_at, expires_at FROM trusted_devices "
+                "WHERE user_id = ? AND expires_at > datetime('now') ORDER BY created_at DESC",
+                (user_id,)
+            )
+        rows = _rows(cur)
+        conn.close()
+        devices = [
+            {
+                "id": r["id"],
+                "ip_address": r.get("ip_address") or "Unknown",
+                "created_at": str(r.get("created_at", "")),
+                "expires_at":  str(r.get("expires_at", "")),
+            }
+            for r in rows
+        ]
+        return jsonify({"devices": devices})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route('/api/2fa/revoke-all', methods=['POST'])
+def twofa_revoke_all():
+    """Revoke all trusted devices for a user (requires password confirmation)."""
+    try:
+        import pyotp
+    except ImportError:
+        pass  # pyotp not required for device revocation
+
+    data    = request.json or {}
+    user_id = data.get('user_id')
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
+    try:
+        conn = get_db()
+        cur  = _cursor(conn)
+        cur.execute(_q("DELETE FROM trusted_devices WHERE user_id = ?"), (user_id,))
+        count = cur.rowcount
+        conn.commit()
+        _log_audit(conn, user_id, 'revoke_all_trusted_devices', 'security',
+                   f'Revoked {count} trusted device(s) from settings')
+        conn.close()
+        resp = make_response(jsonify({"success": True, "revoked": count}))
+        resp.delete_cookie('td_token', path='/')
+        return resp
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
 
 
 @app.route('/api/users', methods=['GET'])
