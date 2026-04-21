@@ -202,13 +202,20 @@ async function _loadFlatSpecs() {
         const data = await res.json();
 
         const areas = data.floor_areas || [];
-        // Use cached floor data from property_lookup if backend couldn't narrow it down
-        // Default 20 (not 50) — typical HDB mid-range, avoids inflating predictions
-        const maxFloor     = data.max_floor     || _cachedMaxFloor     || 20;
         const storeyRanges = (data.storey_ranges && data.storey_ranges.length)
                              ? data.storey_ranges
                              : (_cachedStoreyRanges.length ? _cachedStoreyRanges : []);
         const defaultRange = data.default_storey_range || null;
+
+        // Derive max floor: prefer explicit value, fall back to parsing "XX TO XX" strings
+        let maxFloor = data.max_floor || _cachedMaxFloor || 0;
+        if (!maxFloor && storeyRanges.length) {
+            maxFloor = Math.max(...storeyRanges.map(s => {
+                const top = s.split(/\s+TO\s+/i).pop();
+                return parseInt(top) || 0;
+            }));
+        }
+        if (!maxFloor) maxFloor = 20;
 
         // ── Floor range dropdown (HDB only) ──────────────────────
         if (isHdb) _populateFloorRanges(storeyRanges, maxFloor, defaultRange);
@@ -991,37 +998,20 @@ async function reverseGeocodeAndShow(lat, lng) {
 function showPinResultBar(postal, address, lat, lng, propInfo) {
     if (!_draggablePin) return;
 
-    const isHdb    = propInfo?.db_is_hdb  === true;
-    const isCondo  = propInfo?.db_is_condo === true;
-    const isLanded = propInfo?.is_landed   === true;
-
     // Building name for condos/named developments
     const buildingName = (propInfo?.building_name && propInfo.building_name !== 'NIL')
         ? propInfo.building_name : '';
 
-    // Simple property-type chip — informational only, no prediction language
-    let typeChip;
-    if (isHdb) {
-        typeChip = `<span style="display:inline-flex;align-items:center;gap:5px;background:#dcfce7;border:1px solid #86efac;border-radius:8px;padding:3px 9px;font-size:10px;font-weight:700;color:#15803d">🏢 HDB</span>`;
-    } else if (isCondo) {
-        typeChip = `<span style="display:inline-flex;align-items:center;gap:5px;background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;padding:3px 9px;font-size:10px;font-weight:700;color:#1d4ed8">🏙️ Condo / EC</span>`;
-    } else if (isLanded) {
-        typeChip = `<span style="display:inline-flex;align-items:center;gap:5px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:3px 9px;font-size:10px;font-weight:700;color:#c2410c">🏡 Landed</span>`;
-    } else {
-        typeChip = `<span style="display:inline-flex;align-items:center;gap:5px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:8px;padding:3px 9px;font-size:10px;font-weight:700;color:#64748b">📍 Location</span>`;
-    }
-
     const nameHtml = buildingName
-        ? `<p style="font-weight:700;font-size:12px;color:#0f172a;margin:2px 0 1px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${buildingName}</p>`
+        ? `<p style="font-weight:700;font-size:13px;color:#0f172a;margin:0 0 2px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${buildingName}</p>`
         : '';
 
     const exploreBtn = `<button onclick="(function(){document.querySelector('.leaflet-popup-close-button')&&document.querySelector('.leaflet-popup-close-button').click();loadAmenities(${lat},${lng},'${postal||''}');})()" style="background:linear-gradient(135deg,#f97316,#ea580c);color:white;border:none;padding:7px 18px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;width:100%">🔍 Explore Amenities</button>`;
 
     const popupHtml = `
         <div style="min-width:200px;font-family:inherit">
-            <div style="margin-bottom:8px">${typeChip}</div>
-            <p style="font-weight:700;font-size:13px;color:#0f172a;margin:0 0 1px">${postal ? postal : '—'}</p>
             ${nameHtml}
+            <p style="font-weight:${buildingName ? '400' : '700'};font-size:${buildingName ? '11' : '13'}px;color:#0f172a;margin:0 0 1px">${postal ? postal : '—'}</p>
             <p style="font-size:11px;color:#64748b;margin:0 0 10px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${address}">${address}</p>
             ${exploreBtn}
         </div>`;
@@ -3966,14 +3956,22 @@ const _UPCOMING_MRT = [
 
 // URA Master Plan long-term transformation zones (search radius in km)
 const _URA_ZONES = [
-    { name: 'Jurong Lake District',          type: 'Regional CBD',         opens: 2028, lat: 1.3334, lon: 103.7402, uplift: 12, radius: 3.0, desc: "Singapore's second CBD — 100,000 new jobs, offices, retail & waterfront living" },
-    { name: 'Paya Lebar Airbase Relocation', type: 'Urban Transformation', opens: 2030, lat: 1.3601, lon: 103.9025, uplift: 15, radius: 3.0, desc: "Largest urban renewal since Marina Bay — 150ha released for mixed-use housing & commerce" },
-    { name: 'Greater Southern Waterfront',   type: 'Waterfront District',  opens: 2030, lat: 1.2700, lon: 103.8200, uplift: 10, radius: 2.5, desc: '9km promenade from Marina South to Pasir Panjang — 9,000 new waterfront homes & parks' },
-    { name: 'Tengah Eco-Town',              type: 'New Town',             opens: 2027, lat: 1.3530, lon: 103.7430, uplift: 8,  radius: 2.0, desc: "Singapore's first car-free town centre — 42,000 new HDB homes, central forest corridor" },
-    { name: 'Punggol Digital District',      type: 'Tech Cluster',         opens: 2026, lat: 1.4050, lon: 103.9050, uplift: 7,  radius: 2.0, desc: 'SIT campus + JTC business park — 28,000 digital economy jobs by 2026' },
-    { name: 'One-North Expansion',           type: 'Research & Biomedical', opens: 2027, lat: 1.2990, lon: 103.7880, uplift: 6,  radius: 1.5, desc: 'Expanded innovation cluster — new biomedical and deep-tech research blocks' },
-    { name: 'Woodlands Regional Centre',     type: 'Regional Hub',         opens: 2030, lat: 1.4370, lon: 103.7870, uplift: 7,  radius: 2.5, desc: 'Northern gateway upgrade + RTS Link to Johor Bahru — regional employment hub' },
-    { name: 'Changi Airport Terminal 5',     type: 'Mega Infrastructure',  opens: 2035, lat: 1.3543, lon: 103.9874, uplift: 8,  radius: 3.0, desc: 'New terminal handling 50M passengers — 100,000 new aviation-sector jobs' },
+    // OCR / West
+    { name: 'Jurong Lake District',          type: 'Regional CBD',          opens: 2028, lat: 1.3334, lon: 103.7402, uplift: 12, radius: 3.0, desc: "Singapore's second CBD — 100,000 new jobs, offices, retail & waterfront living" },
+    { name: 'Tengah Eco-Town',               type: 'New Town',              opens: 2027, lat: 1.3530, lon: 103.7430, uplift: 8,  radius: 2.0, desc: "Singapore's first car-free town centre — 42,000 new HDB homes, central forest corridor" },
+    { name: 'One-North Expansion',           type: 'Research & Biomedical', opens: 2027, lat: 1.2990, lon: 103.7880, uplift: 6,  radius: 2.0, desc: 'Expanded innovation cluster — new biomedical and deep-tech research blocks' },
+    // OCR / North & East
+    { name: 'Punggol Digital District',      type: 'Tech Cluster',          opens: 2026, lat: 1.4050, lon: 103.9050, uplift: 7,  radius: 2.0, desc: 'SIT campus + JTC business park — 28,000 digital economy jobs by 2026' },
+    { name: 'Woodlands Regional Centre',     type: 'Regional Hub',          opens: 2030, lat: 1.4370, lon: 103.7870, uplift: 7,  radius: 2.5, desc: 'Northern gateway upgrade + RTS Link to Johor Bahru — regional employment hub' },
+    { name: 'Changi Airport Terminal 5',     type: 'Mega Infrastructure',   opens: 2035, lat: 1.3543, lon: 103.9874, uplift: 8,  radius: 3.0, desc: 'New terminal handling 50M passengers — 100,000 new aviation-sector jobs' },
+    { name: 'Paya Lebar Airbase Relocation', type: 'Urban Transformation',  opens: 2030, lat: 1.3601, lon: 103.9025, uplift: 15, radius: 3.0, desc: "Largest urban renewal since Marina Bay — 150ha released for mixed-use housing & commerce" },
+    // CCR / RCR — Central
+    { name: 'Greater Southern Waterfront',   type: 'Waterfront District',   opens: 2030, lat: 1.2742, lon: 103.8388, uplift: 10, radius: 3.0, desc: '9km waterfront promenade from Tanjong Pagar to Pasir Panjang — 9,000 new mixed-use homes' },
+    { name: 'Marina South Residential',      type: 'New Urban District',    opens: 2028, lat: 1.2763, lon: 103.8630, uplift: 9,  radius: 2.5, desc: 'New high-density residential enclave adjacent to Marina Bay Financial Centre' },
+    { name: 'Orchard Road Rejuvenation',     type: 'Lifestyle & Retail Hub', opens: 2027, lat: 1.3048, lon: 103.8318, uplift: 5, radius: 2.0, desc: 'URA Orchard Road Blueprint — experiential retail, new residential towers, lifestyle precincts' },
+    { name: 'Ophir-Rochor Corridor',         type: 'Live-Work-Play District', opens: 2027, lat: 1.3010, lon: 103.8573, uplift: 6, radius: 1.5, desc: 'Mixed-use intensification of Bugis–Rochor — new commercial and residential towers' },
+    { name: 'Kallang Alive Masterplan',      type: 'Sports & Lifestyle Hub', opens: 2027, lat: 1.3097, lon: 103.8698, uplift: 7, radius: 2.5, desc: 'New national sports precinct — stadium, aquatics centre, parks & new homes alongside the Kallang River' },
+    { name: 'Mount Pleasant New Town',       type: 'New Town',              opens: 2030, lat: 1.3260, lon: 103.8390, uplift: 8,  radius: 2.0, desc: 'Former Police Academy site — 5,000 homes in a heritage-rich greenery corridor near Novena' },
 ];
 
 function _haversineKm(lat1, lon1, lat2, lon2) {
@@ -3993,10 +3991,10 @@ function renderAmenityFuture(lat, lon, estimatedValue) {
 
     if (!lat || !lon) { section.classList.add('hidden'); return; }
 
-    // MRT stations within 1.5 km
+    // MRT stations within 2 km
     const nearbyMrt = _UPCOMING_MRT
         .map(s => ({ ...s, dist: _haversineKm(lat, lon, s.lat, s.lon), kind: 'mrt' }))
-        .filter(s => s.dist <= 1.5)
+        .filter(s => s.dist <= 2.0)
         .sort((a, b) => a.dist - b.dist);
 
     // URA transformation zones within each zone's own radius
@@ -4067,8 +4065,8 @@ function renderAmenityFuture(lat, lon, estimatedValue) {
     }).join('');
 
     // URA zone card renderer
-    const typeIcon = { 'Regional CBD': 'building-2', 'Urban Transformation': 'construction', 'Waterfront District': 'waves', 'New Town': 'home', 'Tech Cluster': 'cpu', 'Research & Biomedical': 'flask-conical', 'Regional Hub': 'landmark', 'Mega Infrastructure': 'plane' };
-    const typeColor = { 'Regional CBD': 'text-indigo-600 bg-indigo-50 dark:bg-indigo-900/30 border-indigo-200', 'Urban Transformation': 'text-orange-600 bg-orange-50 dark:bg-orange-900/30 border-orange-200', 'Waterfront District': 'text-sky-600 bg-sky-50 dark:bg-sky-900/30 border-sky-200', 'New Town': 'text-green-600 bg-green-50 dark:bg-green-900/30 border-green-200', 'Tech Cluster': 'text-violet-600 bg-violet-50 dark:bg-violet-900/30 border-violet-200', 'Research & Biomedical': 'text-pink-600 bg-pink-50 dark:bg-pink-900/30 border-pink-200', 'Regional Hub': 'text-blue-600 bg-blue-50 dark:bg-blue-900/30 border-blue-200', 'Mega Infrastructure': 'text-slate-600 bg-slate-100 dark:bg-slate-700 border-slate-200' };
+    const typeIcon  = { 'Regional CBD': 'building-2', 'Urban Transformation': 'construction', 'Waterfront District': 'waves', 'New Town': 'home', 'Tech Cluster': 'cpu', 'Research & Biomedical': 'flask-conical', 'Regional Hub': 'landmark', 'Mega Infrastructure': 'plane', 'New Urban District': 'building', 'Lifestyle & Retail Hub': 'shopping-bag', 'Live-Work-Play District': 'layers', 'Sports & Lifestyle Hub': 'dumbbell' };
+    const typeColor = { 'Regional CBD': 'text-indigo-600 bg-indigo-50 dark:bg-indigo-900/30 border-indigo-200', 'Urban Transformation': 'text-orange-600 bg-orange-50 dark:bg-orange-900/30 border-orange-200', 'Waterfront District': 'text-sky-600 bg-sky-50 dark:bg-sky-900/30 border-sky-200', 'New Town': 'text-green-600 bg-green-50 dark:bg-green-900/30 border-green-200', 'Tech Cluster': 'text-violet-600 bg-violet-50 dark:bg-violet-900/30 border-violet-200', 'Research & Biomedical': 'text-pink-600 bg-pink-50 dark:bg-pink-900/30 border-pink-200', 'Regional Hub': 'text-blue-600 bg-blue-50 dark:bg-blue-900/30 border-blue-200', 'Mega Infrastructure': 'text-slate-600 bg-slate-100 dark:bg-slate-700 border-slate-200', 'New Urban District': 'text-blue-600 bg-blue-50 dark:bg-blue-900/30 border-blue-200', 'Lifestyle & Retail Hub': 'text-rose-600 bg-rose-50 dark:bg-rose-900/30 border-rose-200', 'Live-Work-Play District': 'text-amber-600 bg-amber-50 dark:bg-amber-900/30 border-amber-200', 'Sports & Lifestyle Hub': 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 border-emerald-200' };
     const uraCards = nearbyUra.map(z => {
         const distStr = z.dist < 0.5 ? `${(z.dist * 1000).toFixed(0)}m` : `${z.dist.toFixed(1)}km`;
         const icon    = typeIcon[z.type] || 'map-pin';
@@ -4241,10 +4239,10 @@ function startMarketTicker() {
                     if (current) current.remove();
                     _tickerIdx  = next;
                     _tickerBusy = false;
-                }, 500);
+                }, 800);
             });
         });
-    }, 4000);
+    }, 5500);
 }
 
 // ── Feedback form ─────────────────────────────────────────────
