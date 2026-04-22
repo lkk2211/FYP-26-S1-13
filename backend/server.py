@@ -1483,7 +1483,10 @@ def stats():
 
     total_users       = count(cur, 'users')
     total_predictions = count(cur, 'predictions')
-    total_records     = count(cur, 'price_records')
+    try:
+        total_records = count(cur, 'price_records')
+    except Exception:
+        total_records = 0
 
     # New table counts
     try:

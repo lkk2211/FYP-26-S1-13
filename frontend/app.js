@@ -44,7 +44,6 @@ function showView(viewId) {
 
     if (viewId === 'admin') {
         fetchAdminStats();
-        setTimeout(initAdminTypeChart, 100);
     }
 
     if (viewId === 'setting') {
@@ -1843,65 +1842,56 @@ function loadComparableTable(data) {
 
 let adminTypeChart;
 
-async function initAdminTypeChart() {
+function initAdminTypeChart(stats) {
     const canvas = document.getElementById('adminTypeChart');
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (adminTypeChart) adminTypeChart.destroy();
 
-    let labels = [];
-    let dataValues = [];
+    const setEl = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
 
-    try {
-        const res = await fetch('/api/stats');
-        if (!res.ok) throw new Error('Stats API failed');
+    // HDB vs Private breakdown from recent_predictions
+    const rp = stats.recent_predictions || [];
+    const hdbTypes = new Set(['1 ROOM','2 ROOM','3 ROOM','4 ROOM','5 ROOM','EXECUTIVE','MULTI-GENERATION']);
+    const hdbPreds  = rp.filter(r => hdbTypes.has((r.flat_type||'').toUpperCase()) || (r.flat_type||'').toUpperCase().includes('ROOM'));
+    const privPreds = rp.filter(r => !hdbTypes.has((r.flat_type||'').toUpperCase()) && !(r.flat_type||'').toUpperCase().includes('ROOM'));
+    const avg     = arr => arr.length ? Math.round(arr.reduce((s,r) => s + (r.estimated_value||0), 0) / arr.length) : 0;
+    const avgConf = arr => arr.length ? (arr.reduce((s,r) => s + (r.confidence||0), 0) / arr.length).toFixed(1) : '—';
+    const hdbAvg = avg(hdbPreds), privAvg = avg(privPreds);
+    const fmt = v => v ? `S$${v.toLocaleString()}` : '—';
 
-        const stats = await res.json();
+    // Use server-side counts (more accurate than filtering 50 rows)
+    const hdbCount  = stats.predictions_by_type?.hdb     || 0;
+    const privCount = stats.predictions_by_type?.private  || 0;
 
-        labels = ['Total Predictions'];
-        dataValues = [stats.total_predictions];
+    setEl('admin-hdb-avg-val', fmt(hdbAvg));
+    setEl('admin-hdb-count',   hdbCount.toLocaleString());
+    setEl('admin-hdb-conf',    hdbPreds.length  ? avgConf(hdbPreds)  + '%' : '—');
+    setEl('admin-priv-avg-val', fmt(privAvg));
+    setEl('admin-priv-count',   privCount.toLocaleString());
+    setEl('admin-priv-conf',    privPreds.length ? avgConf(privPreds) + '%' : '—');
 
-        document.getElementById('admin-users').innerText = stats.total_users || 0;
-        document.getElementById('admin-predictions').innerText = stats.total_predictions || 0;
-        document.getElementById('admin-db').innerText = stats.db_size || '-';
+    // Top towns
+    const townsEl = document.getElementById('admin-top-towns');
+    if (townsEl) {
+        const towns = stats.predictions_by_town || [];
+        townsEl.innerHTML = towns.length
+            ? towns.slice(0,8).map((t,i) => `
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <span class="w-5 h-5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 text-xs font-black flex items-center justify-center">${i+1}</span>
+                        <span class="text-sm font-medium text-slate-700 dark:text-slate-300">${t.town||'Unknown'}</span>
+                    </div>
+                    <span class="text-sm font-bold text-slate-900 dark:text-white">${(t.count||0).toLocaleString()}</span>
+                </div>`).join('')
+            : '<p class="text-xs text-slate-400">No prediction data yet.</p>';
+    }
 
-        // HDB vs Private comparison
-        const rp = stats.recent_predictions || [];
-        const hdbTypes = new Set(['1 ROOM','2 ROOM','3 ROOM','4 ROOM','5 ROOM','EXECUTIVE','MULTI-GENERATION']);
-        const hdbPreds = rp.filter(r => hdbTypes.has((r.flat_type||'').toUpperCase()) || (r.flat_type||'').toUpperCase().includes('ROOM'));
-        const privPreds = rp.filter(r => !hdbTypes.has((r.flat_type||'').toUpperCase()) && !(r.flat_type||'').toUpperCase().includes('ROOM'));
-        const avg = arr => arr.length ? Math.round(arr.reduce((s,r) => s + (r.estimated_value||0), 0) / arr.length) : 0;
-        const avgConf = arr => arr.length ? (arr.reduce((s,r) => s + (r.confidence||0), 0) / arr.length).toFixed(1) : '—';
-        const hdbAvg = avg(hdbPreds), privAvg = avg(privPreds);
-        const fmt = v => v ? `S$${v.toLocaleString()}` : '—';
-        const setEl = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-        setEl('admin-hdb-avg-val', fmt(hdbAvg));
-        setEl('admin-hdb-count', (stats.predictions_by_type?.hdb || 0).toLocaleString());
-        setEl('admin-hdb-conf', hdbPreds.length ? avgConf(hdbPreds) + '%' : '—');
-        setEl('admin-priv-avg-val', fmt(privAvg));
-        setEl('admin-priv-count', (stats.predictions_by_type?.private || 0).toLocaleString());
-        setEl('admin-priv-conf', privPreds.length ? avgConf(privPreds) + '%' : '—');
-
-        // Top towns
-        const townsEl = document.getElementById('admin-top-towns');
-        if (townsEl) {
-            const towns = stats.predictions_by_town || [];
-            townsEl.innerHTML = towns.length
-                ? towns.slice(0,8).map((t,i) => `
-                    <div class="flex items-center justify-between">
-                        <div class="flex items-center gap-3">
-                            <span class="w-5 h-5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 text-xs font-black flex items-center justify-center">${i+1}</span>
-                            <span class="text-sm font-medium text-slate-700 dark:text-slate-300">${t.town||'Unknown'}</span>
-                        </div>
-                        <span class="text-sm font-bold text-slate-900 dark:text-white">${(t.count||0).toLocaleString()}</span>
-                    </div>`).join('')
-                : '<p class="text-xs text-slate-400">No prediction data yet.</p>';
-        }
-
-        // Compare chart
-        const compareCanvas = document.getElementById('adminCompareChart');
-        if (compareCanvas && (hdbAvg || privAvg)) {
-            if (window._adminCompareChart) window._adminCompareChart.destroy();
+    // Avg Estimated Value compare chart
+    const compareCanvas = document.getElementById('adminCompareChart');
+    if (compareCanvas) {
+        if (window._adminCompareChart) window._adminCompareChart.destroy();
+        if (hdbAvg || privAvg) {
             window._adminCompareChart = new Chart(compareCanvas.getContext('2d'), {
                 type: 'bar',
                 data: {
@@ -1915,7 +1905,7 @@ async function initAdminTypeChart() {
                 },
                 options: {
                     responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => `  S$${ctx.parsed.y.toLocaleString()}` } } },
+                    plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `  S$${c.parsed.y.toLocaleString()}` } } },
                     scales: {
                         y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.03)' }, ticks: { callback: v => `S$${(v/1000).toFixed(0)}k`, font: { size: 10 }, color: '#94a3b8' } },
                         x: { grid: { display: false }, ticks: { font: { weight: 'bold', size: 11 }, color: '#334155' } }
@@ -1923,23 +1913,22 @@ async function initAdminTypeChart() {
                 }
             });
         }
-
-    } catch (err) {
-        console.error('Admin stats failed:', err);
-        labels = ['No Data'];
-        dataValues = [0];
     }
+
+    // Predictions by Type bar chart — HDB vs Private counts
+    const labels     = ['HDB Resale', 'Private / Condo'];
+    const dataValues = [hdbCount, privCount];
 
     adminTypeChart = new Chart(ctx, {
         type: 'bar',
         data: {
-            labels: labels,
+            labels,
             datasets: [{
                 label: 'Predictions',
                 data: dataValues,
-                backgroundColor: '#0F172A',
+                backgroundColor: ['rgba(59,130,246,0.85)', 'rgba(139,92,246,0.85)'],
                 borderRadius: 8,
-                barThickness: 24
+                barThickness: 40,
             }]
         },
         options: {
@@ -1947,17 +1936,13 @@ async function initAdminTypeChart() {
             maintainAspectRatio: false,
             plugins: {
                 legend: { display: false },
-                tooltip: {
-                    backgroundColor: '#0F172A',
-                    padding: 12,
-                    cornerRadius: 8
-                }
+                tooltip: { callbacks: { label: c => `  ${c.parsed.y} predictions` } }
             },
             scales: {
                 y: {
                     beginAtZero: true,
                     grid: { color: 'rgba(0,0,0,0.03)', drawBorder: false },
-                    ticks: { font: { weight: 'bold' }, color: '#94A3B8' }
+                    ticks: { font: { weight: 'bold' }, color: '#94A3B8', precision: 0 }
                 },
                 x: {
                     grid: { display: false },
@@ -2135,6 +2120,7 @@ async function deleteUser(id) {
 async function fetchAdminStats() {
     try {
         const response = await fetch('/api/stats');
+        if (!response.ok) throw new Error(`Stats API ${response.status}`);
         const data = await response.json();
         const _setEl = (id, v) => { const el = document.getElementById(id); if (el) el.innerText = v; };
         _setEl('admin-users', (data.total_users || 0).toLocaleString());
@@ -2175,6 +2161,9 @@ async function fetchAdminStats() {
                     </div>
                 </div>`).join('');
         }
+
+        // Render charts with the same data — no second fetch needed
+        initAdminTypeChart(data);
     } catch (e) { console.error('fetchAdminStats error:', e); }
 }
 
