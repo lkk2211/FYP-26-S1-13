@@ -372,12 +372,32 @@ def _load_models():
     try:
         xgb  = joblib.load(os.path.join(MODELS_DIR, 'xgb_pipeline.joblib'))
         meta = joblib.load(os.path.join(MODELS_DIR, 'meta.joblib'))
-        _pipelines = [xgb]   # XGB only — LGBM+CatBoost exceed 512MB RAM on free tier
+
+        # Attempt to load LGBM and CatBoost; fall back gracefully if RAM is tight
+        loaded = {'xgb': xgb}
+        for name, fname in [('lgbm', 'lgbm_pipeline.joblib'), ('cat', 'cat_pipeline.joblib')]:
+            try:
+                loaded[name] = joblib.load(os.path.join(MODELS_DIR, fname))
+                print(f"[predict] Loaded {fname}")
+            except Exception as ex:
+                print(f"[predict] Skipping {fname}: {ex}")
+
+        # Build pipeline list in training order so stacker coefficients align
+        training_order = meta.get('model_names') or ['xgb', 'lgbm', 'cat']
+        _pipelines = [loaded[n] for n in training_order if n in loaded]
+
+        # Narrow stacker coefficients to only the models that actually loaded
+        stacker_coef = meta.get('stacker_coef')
+        if stacker_coef and len(stacker_coef) == len(training_order):
+            kept_indices = [i for i, n in enumerate(training_order) if n in loaded]
+            meta = dict(meta)
+            meta['stacker_coef'] = [stacker_coef[i] for i in kept_indices]
+
         _meta = meta
         pol, sor = _load_latest_policy_sora()
         if pol:   _meta['latest_policy'] = pol
         if sor is not None: _meta['latest_sora'] = sor
-        print("[predict] HDB ML models loaded successfully")
+        print(f"[predict] HDB ML models loaded: {list(loaded.keys())}")
         return True
     except Exception as e:
         print(f"[predict] HDB ML models not available: {e}")
@@ -391,12 +411,32 @@ def _load_private_models():
     try:
         xgb  = joblib.load(os.path.join(MODELS_DIR, 'xgb_private_pipeline.joblib'))
         meta = joblib.load(os.path.join(MODELS_DIR, 'meta_private.joblib'))
-        _private_pipelines = [xgb]   # XGB only — free tier RAM limit
+
+        # Attempt to load LGBM and CatBoost; fall back gracefully if RAM is tight
+        loaded = {'xgb': xgb}
+        for name, fname in [('lgbm', 'lgbm_private_pipeline.joblib'), ('cat', 'cat_private_pipeline.joblib')]:
+            try:
+                loaded[name] = joblib.load(os.path.join(MODELS_DIR, fname))
+                print(f"[predict] Loaded {fname}")
+            except Exception as ex:
+                print(f"[predict] Skipping {fname}: {ex}")
+
+        # Build pipeline list in training order so stacker coefficients align
+        training_order = meta.get('model_names') or ['xgb', 'lgbm', 'cat']
+        _private_pipelines = [loaded[n] for n in training_order if n in loaded]
+
+        # Narrow stacker coefficients to only the models that actually loaded
+        stacker_coef = meta.get('stacker_coef')
+        if stacker_coef and len(stacker_coef) == len(training_order):
+            kept_indices = [i for i, n in enumerate(training_order) if n in loaded]
+            meta = dict(meta)
+            meta['stacker_coef'] = [stacker_coef[i] for i in kept_indices]
+
         _private_meta = meta
         pol, sor = _load_latest_policy_sora()
         if pol:   _private_meta['latest_policy'] = pol
         if sor is not None: _private_meta['latest_sora'] = sor
-        print("[predict] Private ML models loaded successfully")
+        print(f"[predict] Private ML models loaded: {list(loaded.keys())}")
         return True
     except Exception as e:
         print(f"[predict] Private ML models not available: {e}")

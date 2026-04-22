@@ -593,6 +593,7 @@ def train(from_db=False):
         'latest_sora':          latest_sora,
         'stacker_coef':         stacker_weights,
         'stacker_intercept':    stacker_intercept,
+        'model_names':          list(model_specs.keys()),
         'trained_at':           datetime.utcnow().isoformat(),
     }
     joblib.dump(meta, os.path.join(MODELS_DIR, 'meta.joblib'))

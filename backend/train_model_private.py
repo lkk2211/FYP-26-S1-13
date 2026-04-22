@@ -500,6 +500,7 @@ def train(df_raw: pd.DataFrame):
         'latest_sora':          latest_sora,
         'stacker_coef':         stacker_weights,
         'stacker_intercept':    stacker_intercept,
+        'model_names':          list(model_specs.keys()),
         'trained_at':           datetime.now(timezone.utc).isoformat(),
     }
 
