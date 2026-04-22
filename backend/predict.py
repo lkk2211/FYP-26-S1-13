@@ -373,18 +373,22 @@ def _load_models():
         xgb  = joblib.load(os.path.join(MODELS_DIR, 'xgb_pipeline.joblib'))
         meta = joblib.load(os.path.join(MODELS_DIR, 'meta.joblib'))
 
-        # Attempt to load LGBM and CatBoost; fall back gracefully if RAM is tight
+        # Attempt to load additional models only when LOAD_ALL_MODELS=1 is set
+        # (requires ≥2GB RAM; free/starter Render tier is 512MB — XGB alone fits)
+        load_all = os.environ.get('LOAD_ALL_MODELS', '0') == '1'
         loaded = {'xgb': xgb}
-        for name, fname in [('lgbm', 'lgbm_pipeline.joblib'), ('cat', 'cat_pipeline.joblib')]:
-            try:
-                loaded[name] = joblib.load(os.path.join(MODELS_DIR, fname))
-                print(f"[predict] Loaded {fname}")
-            except Exception as ex:
-                print(f"[predict] Skipping {fname}: {ex}")
+        if load_all:
+            for name, fname in [('lgbm', 'lgbm_pipeline.joblib'), ('cat', 'cat_pipeline.joblib')]:
+                try:
+                    loaded[name] = joblib.load(os.path.join(MODELS_DIR, fname))
+                    print(f"[predict] Loaded {fname}")
+                except Exception as ex:
+                    print(f"[predict] Skipping {fname}: {ex}")
 
         # Build pipeline list in training order so stacker coefficients align
         training_order = meta.get('model_names') or ['xgb', 'lgbm', 'cat']
         _pipelines = [loaded[n] for n in training_order if n in loaded]
+
 
         # Narrow stacker coefficients to only the models that actually loaded
         stacker_coef = meta.get('stacker_coef')
@@ -412,14 +416,16 @@ def _load_private_models():
         xgb  = joblib.load(os.path.join(MODELS_DIR, 'xgb_private_pipeline.joblib'))
         meta = joblib.load(os.path.join(MODELS_DIR, 'meta_private.joblib'))
 
-        # Attempt to load LGBM and CatBoost; fall back gracefully if RAM is tight
+        # Attempt to load additional models only when LOAD_ALL_MODELS=1 is set
+        load_all = os.environ.get('LOAD_ALL_MODELS', '0') == '1'
         loaded = {'xgb': xgb}
-        for name, fname in [('lgbm', 'lgbm_private_pipeline.joblib'), ('cat', 'cat_private_pipeline.joblib')]:
-            try:
-                loaded[name] = joblib.load(os.path.join(MODELS_DIR, fname))
-                print(f"[predict] Loaded {fname}")
-            except Exception as ex:
-                print(f"[predict] Skipping {fname}: {ex}")
+        if load_all:
+            for name, fname in [('lgbm', 'lgbm_private_pipeline.joblib'), ('cat', 'cat_private_pipeline.joblib')]:
+                try:
+                    loaded[name] = joblib.load(os.path.join(MODELS_DIR, fname))
+                    print(f"[predict] Loaded {fname}")
+                except Exception as ex:
+                    print(f"[predict] Skipping {fname}: {ex}")
 
         # Build pipeline list in training order so stacker coefficients align
         training_order = meta.get('model_names') or ['xgb', 'lgbm', 'cat']
