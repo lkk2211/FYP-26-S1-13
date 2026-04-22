@@ -623,7 +623,7 @@ async function handlePredict() {
 
 function showDemoResult() {
     document.getElementById('output-price').innerText = "S$465,000";
-    document.getElementById('output-confidence').innerText = "92%";
+    document.getElementById('output-confidence').innerText = "—";
     togglePredictView('output');
 }
 

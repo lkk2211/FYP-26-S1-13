@@ -649,10 +649,66 @@ def _predict_ml(features):
     except Exception as _se:
         print(f"[predict] SHAP HDB inference skipped: {_se}")
 
-    # Confidence: higher when all three models agree
-    spread = float(np.std([np.exp(v) for v in preds_log]))
-    cv = spread / estimated_value
-    confidence = round(max(70.0, min(95.0, 92.0 - cv * 200)), 1)
+    # ── Confidence: two independent signals combined ──────────────────────────
+    # Signal 1 — intra-model spread (only meaningful when ensemble has 2+ models;
+    #             with a single model we still get signal via first/second half of trees)
+    xgb_pipe = _pipelines[0]
+    try:
+        booster   = xgb_pipe.named_steps['model'].get_booster()
+        n_trees   = booster.num_boosted_rounds()
+        prep_row  = xgb_pipe.named_steps['preprocessor'].transform(row)
+        import xgboost as _xgb
+        dmat = _xgb.DMatrix(prep_row)
+        if n_trees >= 4:
+            half = n_trees // 2
+            pred_first  = float(np.exp(booster.predict(dmat, iteration_range=(0,    half),    output_margin=True)[0]))
+            pred_second = float(np.exp(booster.predict(dmat, iteration_range=(half, n_trees), output_margin=True)[0]))
+            tree_spread = abs(pred_first - pred_second)
+            cv = tree_spread / estimated_value
+        else:
+            spread = float(np.std([np.exp(v) for v in preds_log]))
+            cv = spread / estimated_value
+    except Exception:
+        spread = float(np.std([np.exp(v) for v in preds_log]))
+        cv = spread / estimated_value
+
+    base_conf = round(92.0 - cv * 180, 1)   # ensemble/tree agreement signal
+
+    # Signal 2 — block-level data density: more recent transactions → higher confidence
+    density_adj = 0.0
+    if blk:
+        try:
+            DATABASE_URL = os.environ.get('DATABASE_URL', '')
+            if DATABASE_URL:
+                import psycopg2, psycopg2.extras as _pge
+                _dc = psycopg2.connect(DATABASE_URL)
+                _dcu = _dc.cursor(cursor_factory=_pge.RealDictCursor)
+                _dcu.execute(
+                    "SELECT COUNT(*) AS n FROM resale_flat_prices "
+                    "WHERE UPPER(block) = %s AND UPPER(flat_type) = %s "
+                    "AND month >= (CURRENT_DATE - INTERVAL '24 months')::text",
+                    (blk.upper(), flat_type)
+                )
+            else:
+                import sqlite3 as _sq
+                _dc = _sq.connect(os.path.join(os.path.dirname(__file__), 'propaisg.db'))
+                _dc.row_factory = _sq.Row
+                _dcu = _dc.cursor()
+                _dcu.execute(
+                    "SELECT COUNT(*) AS n FROM resale_flat_prices "
+                    "WHERE UPPER(block) = ? AND UPPER(flat_type) = ? "
+                    "AND month >= date('now', '-24 months')",
+                    (blk.upper(), flat_type)
+                )
+            _dr = _dcu.fetchone()
+            n_local = int(dict(_dr).get('n', 0)) if _dr else 0
+            _dc.close()
+            # 0 txns → −4 pts  |  10 txns → 0 pts  |  30+ txns → +3 pts
+            density_adj = max(-4.0, min(3.0, (n_local - 10) * 0.35))
+        except Exception:
+            pass
+
+    confidence = round(max(70.0, min(95.0, base_conf + density_adj)), 1)
 
     min_value = int(estimated_value * 0.92)
     max_value = int(estimated_value * 1.08)
@@ -1023,9 +1079,27 @@ def _predict_private_ml(features):
     except Exception as _se:
         print(f"[predict] SHAP Private inference skipped: {_se}")
 
-    spread = float(np.std([np.exp(v) for v in preds_log]))
-    cv = spread / max(estimated_value, 1)
-    confidence = round(max(68.0, min(93.0, 90.0 - cv * 200)), 1)
+    # Intra-model spread via first/second half of trees (same logic as HDB path)
+    xgb_priv = _private_pipelines[0]
+    try:
+        booster   = xgb_priv.named_steps['model'].get_booster()
+        n_trees   = booster.num_boosted_rounds()
+        prep_row  = xgb_priv.named_steps['preprocessor'].transform(row)
+        import xgboost as _xgb2
+        dmat = _xgb2.DMatrix(prep_row)
+        if n_trees >= 4:
+            half = n_trees // 2
+            pred_first  = float(np.exp(booster.predict(dmat, iteration_range=(0,    half),    output_margin=True)[0]))
+            pred_second = float(np.exp(booster.predict(dmat, iteration_range=(half, n_trees), output_margin=True)[0]))
+            cv = abs(pred_first - pred_second) / max(estimated_value, 1)
+        else:
+            spread = float(np.std([np.exp(v) for v in preds_log]))
+            cv = spread / max(estimated_value, 1)
+    except Exception:
+        spread = float(np.std([np.exp(v) for v in preds_log]))
+        cv = spread / max(estimated_value, 1)
+
+    confidence = round(max(68.0, min(93.0, 90.0 - cv * 180)), 1)
 
     psf = estimated_value / area_sqft if area_sqft > 0 else 0
     ppsf = round(psf)
