@@ -2868,7 +2868,19 @@ function saveCurrentUser() {
 function loadCurrentUser() {
     const saved = localStorage.getItem('currentUser');
     if (saved) {
-        currentUser = JSON.parse(saved);
+        try {
+            const parsed = JSON.parse(saved);
+            // If the stored session pre-dates the token field, clear it so the
+            // user logs in again and receives a proper session token.
+            if (parsed && !parsed.token) {
+                localStorage.removeItem('currentUser');
+                currentUser = null;
+            } else {
+                currentUser = parsed;
+            }
+        } catch {
+            currentUser = null;
+        }
     } else {
         currentUser = null;
     }
@@ -4480,6 +4492,7 @@ async function loadGapAnalysis() {
             headers: { Authorization: `Bearer ${currentUser.token}` },
         });
         const data = await res.json();
+        if (data.error) { body.innerHTML = `<p class="text-rose-500 text-sm">${data.error}</p>`; return; }
         const gaps = data.gaps || [];
 
         if (!gaps.length) {
