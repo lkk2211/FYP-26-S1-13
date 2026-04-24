@@ -2414,11 +2414,13 @@ def gap_analysis():
         cur.execute(
             f"""
             SELECT town,
-                   AVG(CAST(resale_price AS REAL)) AS avg_price,
+                   AVG(CAST(resale_price AS REAL))   AS avg_price,
                    AVG(CAST(floor_area_sqm AS REAL)) AS avg_sqm,
                    COUNT(*) AS tx_count
             FROM resale_flat_prices
             WHERE {hdb_date_filter}
+              AND CAST(resale_price   AS REAL) BETWEEN 100000 AND 2500000
+              AND CAST(floor_area_sqm AS REAL) BETWEEN 28     AND 300
             GROUP BY town
             HAVING COUNT(*) >= 20
             """
@@ -2426,6 +2428,7 @@ def gap_analysis():
         hdb_rows = _rows(cur)
 
         # Private new-launch avg PSF per market segment (last 24 months)
+        # Cap PSF to realistic Singapore range (S$500–S$8000/sqft) to exclude outliers
         cur.execute(
             f"""
             SELECT market_segment,
@@ -2433,7 +2436,7 @@ def gap_analysis():
                    COUNT(*) AS tx_count
             FROM ura_transactions
             WHERE type_of_sale IN ('New Sale','Sub Sale')
-              AND unit_price_psf > 0
+              AND unit_price_psf BETWEEN 500 AND 8000
               AND {ura_date_filter}
             GROUP BY market_segment
             HAVING COUNT(*) >= 5
@@ -2463,13 +2466,19 @@ def gap_analysis():
             avg_p    = float(r.get('avg_price') or 0)
             avg_sqm  = float(r.get('avg_sqm')  or 90)
             tx_count = int(r.get('tx_count')   or 0)
-            if avg_p <= 0 or avg_sqm <= 0:
+            # Skip implausible aggregates (outlier rows leaked past SQL filter)
+            if avg_p <= 100000 or avg_p > 2500000:
+                continue
+            if avg_sqm < 28 or avg_sqm > 300:
                 continue
             segment  = _TOWN_SEGMENT.get(town, 'OCR')
             nl_psf   = seg_psf.get(segment, BENCH.get(segment, 1350))
             avg_sqft = avg_sqm * 10.764
             nl_total = nl_psf * avg_sqft
             gap_pct  = (nl_total - avg_p) / avg_p if avg_p > 0 else 0
+            # Skip rows with implausible gap (> 500% signals bad data slipping through)
+            if gap_pct > 5.0 or gap_pct < 0:
+                continue
             deviation = gap_pct - HIST_GAP           # +ve → gap wider than historical
 
             results.append({
