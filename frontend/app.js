@@ -4508,9 +4508,9 @@ async function loadGapAnalysis() {
                     <th class="pb-3">Town</th>
                     <th class="pb-3">Segment</th>
                     <th class="pb-3 text-right">HDB Avg</th>
-                    <th class="pb-3 text-right">NL Equiv</th>
+                    <th class="pb-3 text-right">Resale Condo Equiv</th>
                     <th class="pb-3 text-right">Gap %</th>
-                    <th class="pb-3 text-right">vs Hist (${HIST}%)</th>
+                    <th class="pb-3 text-right">vs Norm (${HIST}%)</th>
                     <th class="pb-3 pl-3">Signal</th>
                 </tr>
             </thead>
@@ -4528,7 +4528,7 @@ async function loadGapAnalysis() {
                         <td class="py-3 font-semibold text-slate-700 dark:text-slate-200">${g.town.replace(/_/g,' ').split(' ').map(w=>w[0]+w.slice(1).toLowerCase()).join(' ')}</td>
                         <td class="py-3"><span class="text-xs font-bold px-2 py-0.5 rounded ${g.segment==='CCR'?'bg-rose-100 text-rose-700':g.segment==='RCR'?'bg-amber-100 text-amber-700':'bg-sky-100 text-sky-700'}">${g.segment}</span></td>
                         <td class="py-3 text-right text-slate-600 dark:text-slate-300">S$${Math.round(g.hdb_avg/1000)}k</td>
-                        <td class="py-3 text-right text-slate-600 dark:text-slate-300">S$${Math.round(g.nl_total/1000)}k</td>
+                        <td class="py-3 text-right text-slate-600 dark:text-slate-300">S$${Math.round(g.rc_total/1000)}k</td>
                         <td class="py-3 text-right ${gapCls}">${g.gap_pct}%</td>
                         <td class="py-3 text-right text-xs ${g.deviation>=0?'text-emerald-600':'text-rose-500'}">${devSign}${g.deviation}%</td>
                         <td class="py-3 pl-3">${badge}</td>
@@ -4536,7 +4536,7 @@ async function loadGapAnalysis() {
                 }).join('')}
             </tbody>
         </table>
-        <p class="text-xs text-slate-400 mt-3">NL Equiv = New Launch PSF × HDB avg floor area. "Seller Leverage" means gap exceeds historical norm — use this to pitch sellers on their asset's relative undervaluation vs comparable new launches.</p>`;
+        <p class="text-xs text-slate-400 mt-3">Resale Condo Equiv = Resale condo avg PSF (same market segment) × HDB avg floor area. Gap % = how much more a comparable resale condo costs. "Seller Leverage" means the upgrade premium exceeds the historical norm (~60%) — use this to pitch sellers on their HDB's relative value vs the private resale market.</p>`;
     } catch (e) {
         body.innerHTML = `<p class="text-rose-500 text-sm">Failed to load: ${e.message}</p>`;
     }

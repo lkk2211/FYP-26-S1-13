@@ -2371,9 +2371,9 @@ def mop_leads():
 @app.route('/api/agent/gap-analysis', methods=['GET'])
 def gap_analysis():
     """
-    HDB resale vs private new-launch price gap by HDB town / market segment.
+    HDB resale vs resale condo price gap by HDB town / market segment.
     Agent-only. Returns towns where the upgrade premium deviates from the
-    historical average (~45%), flagging potential under/over-valued clusters.
+    historical average (~60%), flagging potential under/over-valued clusters.
     """
     token = request.headers.get('Authorization', '').replace('Bearer ', '').strip()
     user_id = _verify_temp_token(token) if token else None
@@ -2427,7 +2427,7 @@ def gap_analysis():
         )
         hdb_rows = _rows(cur)
 
-        # Private new-launch avg PSF per market segment (last 24 months)
+        # Resale condo avg PSF per market segment (last 24 months)
         # Cap PSF to realistic Singapore range (S$500–S$8000/sqft) to exclude outliers
         cur.execute(
             f"""
@@ -2435,7 +2435,7 @@ def gap_analysis():
                    AVG(unit_price_psf) AS avg_psf,
                    COUNT(*) AS tx_count
             FROM ura_transactions
-            WHERE type_of_sale IN ('New Sale','Sub Sale')
+            WHERE type_of_sale = 'Resale'
               AND unit_price_psf BETWEEN 500 AND 8000
               AND {ura_date_filter}
             GROUP BY market_segment
@@ -2452,13 +2452,13 @@ def gap_analysis():
             if s:
                 seg_psf[s] = float(r.get('avg_psf') or 0)
 
-        # Default benchmark PSFs if DB is sparse (2026 estimates)
-        BENCH = {'CCR': 2800, 'RCR': 1900, 'OCR': 1350}
+        # Default benchmark PSFs if DB is sparse — resale condo 2026 estimates
+        BENCH = {'CCR': 2200, 'RCR': 1550, 'OCR': 1150}
         for k, v in BENCH.items():
             if k not in seg_psf or seg_psf[k] < 500:
                 seg_psf[k] = v
 
-        HIST_GAP = 0.45   # historical HDB-to-new-launch premium ~45%
+        HIST_GAP = 0.60   # historical HDB-to-resale-condo upgrade premium ~60%
 
         results = []
         for r in hdb_rows:
@@ -2472,10 +2472,10 @@ def gap_analysis():
             if avg_sqm < 28 or avg_sqm > 300:
                 continue
             segment  = _TOWN_SEGMENT.get(town, 'OCR')
-            nl_psf   = seg_psf.get(segment, BENCH.get(segment, 1350))
+            rc_psf   = seg_psf.get(segment, BENCH.get(segment, 1150))
             avg_sqft = avg_sqm * 10.764
-            nl_total = nl_psf * avg_sqft
-            gap_pct  = (nl_total - avg_p) / avg_p if avg_p > 0 else 0
+            rc_total = rc_psf * avg_sqft
+            gap_pct  = (rc_total - avg_p) / avg_p if avg_p > 0 else 0
             # Skip rows with implausible gap (> 500% signals bad data slipping through)
             if gap_pct > 5.0 or gap_pct < 0:
                 continue
@@ -2485,8 +2485,8 @@ def gap_analysis():
                 "town":        town,
                 "segment":     segment,
                 "hdb_avg":     round(avg_p),
-                "nl_psf":      round(nl_psf),
-                "nl_total":    round(nl_total),
+                "rc_psf":      round(rc_psf),
+                "rc_total":    round(rc_total),
                 "gap_pct":     round(gap_pct * 100, 1),
                 "hist_gap":    round(HIST_GAP * 100, 1),
                 "deviation":   round(deviation * 100, 1),
@@ -2495,7 +2495,7 @@ def gap_analysis():
 
         # Sort: widest deviation first (best leads)
         results.sort(key=lambda x: x['deviation'], reverse=True)
-        return jsonify({"gaps": results[:25], "seg_psf": seg_psf})
+        return jsonify({"gaps": results[:25], "seg_psf": seg_psf, "comparison": "resale_condo"})
     except Exception as e:
         try: conn.close()
         except Exception: pass
@@ -2957,7 +2957,7 @@ def property_areas():
             def _fetch_hdb_areas(extra_where, params):
                 cur.execute(_q(
                     "SELECT DISTINCT floor_area_sqm FROM resale_flat_prices "
-                    f"WHERE flat_type = ? {extra_where} AND floor_area_sqm IS NOT NULL ORDER BY floor_area_sqm"
+                    f"WHERE UPPER(flat_type) = ? {extra_where} AND floor_area_sqm IS NOT NULL ORDER BY floor_area_sqm"
                 ), params)
                 rows = cur.fetchall()
                 return sorted(set(float(r['floor_area_sqm'] if hasattr(r, '__getitem__') else r[0])
@@ -2987,7 +2987,7 @@ def property_areas():
             def _fetch_storeys(extra_where, params):
                 cur.execute(_q(
                     "SELECT DISTINCT storey_range FROM resale_flat_prices "
-                    f"WHERE flat_type = ? {extra_where} AND storey_range LIKE '% TO %' ORDER BY storey_range"
+                    f"WHERE UPPER(flat_type) = ? {extra_where} AND storey_range LIKE '% TO %' ORDER BY storey_range"
                 ), params)
                 rows = cur.fetchall()
                 return [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0]) for r in rows]
