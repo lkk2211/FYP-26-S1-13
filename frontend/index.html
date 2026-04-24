@@ -1568,6 +1568,27 @@
                             </div>
                         </div>
 
+                        <!-- Account Type -->
+                        <div id="account-type-section" class="space-y-3 pt-4 border-t border-slate-100 dark:border-slate-700">
+                            <h4 class="font-bold text-slate-900 dark:text-white">Account Type</h4>
+                            <div id="acct-type-homeowner" class="hidden flex items-center justify-between p-5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700">
+                                <div>
+                                    <p class="font-bold text-slate-900 dark:text-white">Homeowner / Buyer</p>
+                                    <p class="text-sm text-slate-400">Access AI valuation and market insights</p>
+                                </div>
+                                <button onclick="upgradeToAgent()" class="px-5 py-2.5 bg-violet-600 text-white rounded-xl text-sm font-bold hover:bg-violet-700 transition-all flex items-center gap-2">
+                                    <i data-lucide="briefcase" class="w-4 h-4"></i> Upgrade to Agent
+                                </button>
+                            </div>
+                            <div id="acct-type-agent" class="hidden flex items-center justify-between p-5 rounded-2xl bg-violet-50 dark:bg-violet-900/20 border border-violet-100 dark:border-violet-800/40">
+                                <div>
+                                    <p class="font-bold text-violet-900 dark:text-violet-300">Property Agent</p>
+                                    <p class="text-sm text-violet-600 dark:text-violet-400">Access MOP Leads, Gap Analysis and all agent tools</p>
+                                </div>
+                                <p class="text-xs text-slate-400 max-w-[180px] text-right">To downgrade, contact an administrator</p>
+                            </div>
+                        </div>
+
                         <!-- Password Change -->
                         <div class="space-y-4 pt-4 border-t border-slate-100 dark:border-slate-700">
                             <h4 class="font-bold text-slate-900 dark:text-white">Change Password <span class="text-xs font-normal text-slate-400 ml-2">(leave blank to keep current)</span></h4>
@@ -1580,6 +1601,12 @@
                                     <label class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">New Password</label>
                                     <input id="profile-new-password" type="password" placeholder="••••••••" class="w-full px-6 py-4 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium" />
                                 </div>
+                            </div>
+                            <!-- 2FA code for password change (shown when 2FA is enabled) -->
+                            <div id="pw-change-2fa-row" class="hidden space-y-2">
+                                <label class="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">Authenticator Code <span class="text-rose-500">*</span></label>
+                                <input id="profile-totp-code" type="text" inputmode="numeric" maxlength="6" placeholder="6-digit code" class="w-full md:w-48 px-6 py-4 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium tracking-widest" />
+                                <p class="text-xs text-slate-400">Required for all password changes — even on trusted devices.</p>
                             </div>
                         </div>
 
@@ -1969,6 +1996,7 @@
                                     <tr class="text-slate-400 text-[10px] font-bold uppercase tracking-wider border-b border-slate-50">
                                         <th class="pb-4 pl-4">User</th>
                                         <th class="pb-4">Role</th>
+                                        <th class="pb-4">Account Type</th>
                                         <th class="pb-4 pr-4 text-right">Action</th>
                                     </tr>
                                 </thead>

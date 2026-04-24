@@ -2040,13 +2040,18 @@ function renderUsers(users) {
     if (!tbody) return;
 
     if (!users.length) {
-        tbody.innerHTML = '<tr><td colspan="3" class="py-8 text-center text-slate-400 text-sm">No users found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4" class="py-8 text-center text-slate-400 text-sm">No users found</td></tr>';
         return;
     }
 
     tbody.innerHTML = users.map(user => {
-        const initials = user.full_name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
-        const isAdmin = user.role === 'admin';
+        const initials  = user.full_name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+        const isAdmin   = user.role === 'admin';
+        const acctType  = user.account_type || 'homeowner';
+        const isAgent   = acctType === 'agent';
+        const acctBadge = isAgent
+            ? '<span class="px-2 py-0.5 bg-violet-100 text-violet-700 rounded text-[10px] font-bold">Agent</span>'
+            : '<span class="px-2 py-0.5 bg-slate-100 text-slate-500 rounded text-[10px] font-bold">Homeowner</span>';
         return `
             <tr class="group">
                 <td class="py-5 pl-4">
@@ -2060,6 +2065,15 @@ function renderUsers(users) {
                 </td>
                 <td class="py-5">
                     <span class="px-2 py-1 ${isAdmin ? 'bg-blue-600' : 'bg-emerald-500'} text-white rounded text-[10px] font-bold">${isAdmin ? 'Admin' : 'User'}</span>
+                </td>
+                <td class="py-5">
+                    <div class="flex items-center gap-2">
+                        ${acctBadge}
+                        <button onclick="adminToggleAccountType(${user.id}, '${isAgent ? 'homeowner' : 'agent'}')"
+                            class="text-[10px] text-slate-400 hover:text-slate-700 underline transition-colors" title="${isAgent ? 'Downgrade to Homeowner' : 'Upgrade to Agent'}">
+                            ${isAgent ? 'Downgrade' : 'Upgrade'}
+                        </button>
+                    </div>
                 </td>
                 <td class="py-5 pr-4 text-right">
                     <div class="flex justify-end gap-3">
@@ -2076,6 +2090,42 @@ function renderUsers(users) {
     }).join('');
 
     lucide.createIcons();
+}
+
+async function upgradeToAgent() {
+    if (!currentUser) return;
+    if (!confirm('Upgrade your account to Agent? You will gain access to MOP Leads, Gap Analysis and other agent tools.')) return;
+    const res  = await fetch(`/api/profile/${currentUser.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            full_name: currentUser.full_name,
+            email: currentUser.email,
+            phone: currentUser.phone || '',
+            account_type: 'agent',
+        }),
+    });
+    const data = await res.json();
+    if (data.error) { showToast(data.error, true); return; }
+    currentUser = { ...currentUser, ...data.user };
+    saveCurrentUser();
+    updateAuthUI();
+    loadProfileForm();
+    showToast('Account upgraded to Agent');
+}
+
+async function adminToggleAccountType(userId, newType) {
+    const label = newType === 'agent' ? 'upgrade to Agent' : 'downgrade to Homeowner';
+    if (!confirm(`${label.charAt(0).toUpperCase() + label.slice(1)} this user?`)) return;
+    const res  = await fetch(`/api/users/${userId}/account-type`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ account_type: newType }),
+    });
+    const data = await res.json();
+    if (data.error) { showToast(data.error, true); return; }
+    showToast(`Account type updated to ${newType}`);
+    loadAdminUsers();
 }
 
 async function updateUserRole(id, newRole) {
@@ -3122,11 +3172,24 @@ function loadProfileForm() {
             if (bioEl) bioEl.value = currentUser.bio        || '';
         }
     }
+    // Account type display
+    const isAgent = currentUser.account_type === 'agent';
+    const homeEl  = document.getElementById('acct-type-homeowner');
+    const agentEl = document.getElementById('acct-type-agent');
+    if (homeEl)  homeEl.classList.toggle('hidden', isAgent);
+    if (agentEl) agentEl.classList.toggle('hidden', !isAgent);
+
+    // Show 2FA field in password change section if 2FA is enabled
+    const twoFaRow = document.getElementById('pw-change-2fa-row');
+    if (twoFaRow) twoFaRow.classList.toggle('hidden', !currentUser.totp_enabled);
+
     // Clear password fields on reload
     const curPwEl = document.getElementById('profile-cur-password');
     const newPwEl = document.getElementById('profile-new-password');
+    const totpEl  = document.getElementById('profile-totp-code');
     if (curPwEl) curPwEl.value = '';
     if (newPwEl) newPwEl.value = '';
+    if (totpEl)  totpEl.value  = '';
 }
 
 function cancelProfileChanges() {
@@ -3161,14 +3224,15 @@ async function saveProfile() {
     if (new_password) {
         payload.current_password = cur_password;
         payload.new_password = new_password;
-        // If user has 2FA enabled, collect TOTP code
+        // 2FA is always required for password changes when enabled (even on trusted devices)
         if (currentUser?.totp_enabled) {
-            const code = prompt('Enter your 6-digit authenticator code to confirm the password change:');
-            if (!code || code.trim().length !== 6) {
-                showToast('Password change cancelled — 2FA code required.', true);
+            const code = (document.getElementById('profile-totp-code')?.value || '').trim();
+            if (!code || code.length !== 6) {
+                showToast('Enter your 6-digit authenticator code to confirm the password change.', true);
+                document.getElementById('profile-totp-code')?.focus();
                 return;
             }
-            payload.totp_code = code.trim();
+            payload.totp_code = code;
         }
     }
 

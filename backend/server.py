@@ -49,12 +49,14 @@ def _decrypt_secret(ciphertext: str) -> str:
     key_ext = (key * (len(data) // len(key) + 1))[:len(data)]
     return bytes(a ^ b for a, b in zip(data, key_ext)).decode()
 
-def _make_temp_token(user_id: int) -> str:
-    """Create a short-lived (5 min) signed token encoding user_id."""
-    expiry = int(time.time()) + 300
+def _make_temp_token(user_id: int, ttl: int = 300) -> str:
+    """Create a signed token encoding user_id. Default TTL 5 min (2FA flow); pass ttl for longer sessions."""
+    expiry = int(time.time()) + ttl
     payload = f"{user_id}:{expiry}"
     sig = _hmac.new(MASTER_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
     return base64.urlsafe_b64encode(f"{payload}:{sig}".encode()).decode()
+
+_SESSION_TTL = 30 * 24 * 3600  # 30-day session token for authenticated API calls
 
 def _verify_temp_token(token: str):
     """Return user_id (int) if valid and not expired, else None."""
@@ -1752,7 +1754,9 @@ def register():
     cur.execute(_q("SELECT id, full_name, email, phone, role, account_type, cea_number, whatsapp, bio FROM users WHERE id = ?"), (user_id,))
     user = _row(cur)
     conn.close()
-    return jsonify({"user": user}), 201
+    user_dict = dict(user)
+    user_dict['token'] = _make_temp_token(user_id, ttl=_SESSION_TTL)
+    return jsonify({"user": user_dict}), 201
 
 
 @app.route('/api/login', methods=['POST'])
@@ -1800,6 +1804,7 @@ def login():
             ), (td_hash, user["id"], now_str))
             if _row(cur):
                 conn.close()
+                user_obj['token'] = _make_temp_token(user["id"], ttl=_SESSION_TTL)
                 return jsonify({"user": user_obj})
 
         conn.close()
@@ -1807,6 +1812,7 @@ def login():
         return jsonify({"requires_2fa": True, "temp_token": temp_token})
 
     conn.close()
+    user_obj['token'] = _make_temp_token(user["id"], ttl=_SESSION_TTL)
     return jsonify({"user": user_obj})
 
 
@@ -1924,6 +1930,7 @@ def twofa_verify():
         "whatsapp": user.get("whatsapp", ""),
         "bio": user.get("bio", ""),
         "totp_enabled": True,
+        "token": _make_temp_token(user["id"], ttl=_SESSION_TTL),
     }
 
     resp = make_response(jsonify({"user": user_obj}))
@@ -2091,10 +2098,12 @@ def get_users():
 def delete_user(user_id):
     conn = get_db()
     cur  = _cursor(conn)
-    cur.execute(_q("SELECT id FROM users WHERE id = ?"), (user_id,))
-    if not _row(cur):
+    cur.execute(_q("SELECT id, email, full_name FROM users WHERE id = ?"), (user_id,))
+    u = _row(cur)
+    if not u:
         conn.close()
         return jsonify({"error": "User not found"}), 404
+    _log_audit(conn, user_id, f"User deleted by admin: {u.get('email','?')}", 'account_deleted', f"name={u.get('full_name','?')}")
     cur.execute(_q("DELETE FROM users WHERE id = ?"), (user_id,))
     conn.commit()
     conn.close()
@@ -2119,6 +2128,29 @@ def update_user_role(user_id):
     updated = _row(cur)
     conn.close()
     return jsonify({"user": updated})
+
+
+@app.route('/api/users/<int:user_id>/account-type', methods=['PUT'])
+def admin_change_account_type(user_id):
+    """Admin endpoint to change a user's account type."""
+    data = request.json or {}
+    new_type = data.get('account_type', '').strip()
+    if new_type not in ('homeowner', 'agent'):
+        return jsonify({"error": "account_type must be 'homeowner' or 'agent'"}), 400
+    conn = get_db()
+    cur  = _cursor(conn)
+    cur.execute(_q("SELECT id, email, full_name, account_type FROM users WHERE id = ?"), (user_id,))
+    u = _row(cur)
+    if not u:
+        conn.close()
+        return jsonify({"error": "User not found"}), 404
+    old_type = u.get('account_type', 'homeowner')
+    cur.execute(_q("UPDATE users SET account_type = ? WHERE id = ?"), (new_type, user_id))
+    _log_audit(conn, user_id, f"Account type changed by admin: {old_type} → {new_type}", 'account_type_change',
+               f"user={u.get('email','?')}, changed_by=admin")
+    conn.commit()
+    conn.close()
+    return jsonify({"success": True, "account_type": new_type})
 
 
 @app.route('/api/forgot-password', methods=['POST'])
@@ -2194,7 +2226,11 @@ def update_profile(user_id):
 
     set_clause = "full_name = ?, email = ?, phone = ?"
     params     = [full_name, email, phone]
+    old_account_type = None
     if account_type in ('homeowner', 'agent'):
+        cur.execute(_q("SELECT account_type FROM users WHERE id = ?"), (user_id,))
+        _old = _row(cur)
+        old_account_type = (_old or {}).get('account_type')
         set_clause += ", account_type = ?"
         params.append(account_type)
     if cea_number is not None:
@@ -2208,6 +2244,8 @@ def update_profile(user_id):
         params.append(bio)
     params.append(user_id)
     cur.execute(_q(f"UPDATE users SET {set_clause} WHERE id = ?"), params)
+    if old_account_type and account_type and old_account_type != account_type:
+        _log_audit(conn, user_id, f"Account type changed: {old_account_type} → {account_type}", 'account_type_change', f"user_id={user_id}")
     conn.commit()
     cur.execute(_q("SELECT id, full_name, email, phone, role, account_type, cea_number, whatsapp, bio FROM users WHERE id = ?"), (user_id,))
     user = _row(cur)
@@ -2233,6 +2271,9 @@ def delete_account(user_id):
     if row['password_hash'] != hashlib.sha256(password.encode()).hexdigest():
         conn.close()
         return jsonify({"error": "Incorrect password"}), 401
+    cur.execute(_q("SELECT email, full_name FROM users WHERE id = ?"), (user_id,))
+    u = _row(cur)
+    _log_audit(conn, user_id, f"Account deleted: {(u or {}).get('email','?')}", 'account_deleted', f"name={(u or {}).get('full_name','?')}")
     cur.execute(_q("DELETE FROM users WHERE id = ?"), (user_id,))
     conn.commit()
     conn.close()
@@ -2249,14 +2290,8 @@ def mop_leads():
     """
     token = request.headers.get('Authorization', '').replace('Bearer ', '').strip()
     user_id = _verify_temp_token(token) if token else None
-    # Also support simple token lookup (same as other protected endpoints)
     conn = get_db()
     cur  = _cursor(conn)
-    if not user_id and token:
-        cur.execute(_q("SELECT id, account_type FROM users WHERE token = ?"), (token,))
-        u = _row(cur)
-        if u:
-            user_id = u['id']
     if not user_id:
         conn.close()
         return jsonify({"error": "Unauthorised"}), 401
@@ -2344,11 +2379,6 @@ def gap_analysis():
     user_id = _verify_temp_token(token) if token else None
     conn = get_db()
     cur  = _cursor(conn)
-    if not user_id and token:
-        cur.execute(_q("SELECT id, account_type FROM users WHERE token = ?"), (token,))
-        u = _row(cur)
-        if u:
-            user_id = u['id']
     if not user_id:
         conn.close()
         return jsonify({"error": "Unauthorised"}), 401
@@ -2374,36 +2404,41 @@ def gap_analysis():
         }
 
         # HDB avg resale price and avg sqm (last 24 months of data)
-        cur.execute(_q(
-            """
+        if USE_POSTGRES:
+            hdb_date_filter = "month >= TO_CHAR(CURRENT_DATE - INTERVAL '24 months', 'YYYY-MM')"
+            ura_date_filter = "sale_date >= TO_CHAR(CURRENT_DATE - INTERVAL '24 months', 'YYYY-MM')"
+        else:
+            hdb_date_filter = "month >= strftime('%Y-%m', date('now', '-24 months'))"
+            ura_date_filter = "sale_date >= strftime('%Y-%m', date('now', '-24 months'))"
+
+        cur.execute(
+            f"""
             SELECT town,
                    AVG(CAST(resale_price AS REAL)) AS avg_price,
                    AVG(CAST(floor_area_sqm AS REAL)) AS avg_sqm,
                    COUNT(*) AS tx_count
             FROM resale_flat_prices
-            WHERE CAST(REPLACE(SUBSTR(month,1,7),'-','') AS INTEGER) >=
-                  CAST(REPLACE(date('now','-24 months','start of month'),'-','') AS INTEGER)
-               OR month >= '2024-01'
+            WHERE {hdb_date_filter}
             GROUP BY town
             HAVING COUNT(*) >= 20
             """
-        ), [])
+        )
         hdb_rows = _rows(cur)
 
         # Private new-launch avg PSF per market segment (last 24 months)
-        cur.execute(_q(
-            """
+        cur.execute(
+            f"""
             SELECT market_segment,
                    AVG(unit_price_psf) AS avg_psf,
                    COUNT(*) AS tx_count
             FROM ura_transactions
             WHERE type_of_sale IN ('New Sale','Sub Sale')
               AND unit_price_psf > 0
-              AND (sale_date >= '2024' OR sale_date >= date('now','-24 months'))
+              AND {ura_date_filter}
             GROUP BY market_segment
             HAVING COUNT(*) >= 5
             """
-        ), [])
+        )
         priv_rows  = _rows(cur)
         conn.close()
 
