@@ -167,7 +167,9 @@ function _onPropertyTypeChange() {
 }
 
 function _onFlatTypeChange() {
-    _availableAreas = [];
+    _availableAreas     = [];
+    _cachedStoreyRanges = [];   // clear stale ranges so new flat_type doesn't inherit old floors
+    _cachedMaxFloor     = null;
     _loadFlatSpecs();
 }
 
@@ -237,9 +239,11 @@ async function _loadFlatSpecs() {
         const data = await res.json();
 
         const areas = data.floor_areas || [];
+        // Always prefer server response; only fall back to cache when server returned nothing
+        // AND the cache was seeded from the same context (same flat_type search)
         const storeyRanges = (data.storey_ranges && data.storey_ranges.length)
                              ? data.storey_ranges
-                             : (_cachedStoreyRanges.length ? _cachedStoreyRanges : []);
+                             : _cachedStoreyRanges;   // cache was cleared on flat_type change so this is safe
         const defaultRange = data.default_storey_range || null;
 
         // Derive max floor: prefer explicit value, fall back to parsing "XX TO XX" strings
