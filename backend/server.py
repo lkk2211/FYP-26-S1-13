@@ -1566,6 +1566,26 @@ def stats():
         db_size  = f"{db_bytes/1024:.1f} KB" if db_bytes < 1024**2 else f"{db_bytes/1024**2:.2f} MB"
 
     conn.close()
+
+    # Model eval metrics from saved meta files
+    model_metrics = {}
+    try:
+        import joblib as _jl
+        _mdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
+        for key, fname in [('hdb', 'meta.joblib'), ('private', 'meta_private.joblib')]:
+            _mp = os.path.join(_mdir, fname)
+            if os.path.exists(_mp):
+                _m = _jl.load(_mp)
+                model_metrics[key] = {
+                    'mae':        _m.get('eval_mae'),
+                    'r2':         _m.get('eval_r2'),
+                    'mape':       _m.get('eval_mape'),
+                    'n_test':     _m.get('eval_n_test'),
+                    'trained_at': _m.get('trained_at'),
+                }
+    except Exception:
+        pass
+
     return jsonify({
         "total_users": total_users, "total_predictions": total_predictions,
         "total_records": total_records, "db_size": db_size,
@@ -1577,6 +1597,7 @@ def stats():
         "daily_predictions": daily_predictions,
         "daily_registrations": daily_registrations,
         "recent_predictions": recent_preds,
+        "model_metrics": model_metrics,
     })
 
 

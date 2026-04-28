@@ -468,8 +468,15 @@ def train(df_raw: pd.DataFrame):
     stacked_preds = np.exp(stacked_log)
     simple_avg    = np.exp(np.mean(test_log_preds, axis=1))
 
-    print(f'\nSimple avg: MAE=S${mean_absolute_error(y_test, simple_avg):,.0f}  R²={r2_score(y_test, simple_avg):.4f}')
-    print(f'Stacked:    MAE=S${mean_absolute_error(y_test, stacked_preds):,.0f}  R²={r2_score(y_test, stacked_preds):.4f}')
+    def _mape(y_true, y_pred):
+        mask = y_true > 0
+        return float(np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100)
+
+    stacked_mae  = mean_absolute_error(y_test, stacked_preds)
+    stacked_r2   = r2_score(y_test, stacked_preds)
+    stacked_mape = _mape(y_test.values, stacked_preds)
+    print(f'\nSimple avg: MAE=S${mean_absolute_error(y_test, simple_avg):,.0f}  R²={r2_score(y_test, simple_avg):.4f}  MAPE={_mape(y_test.values, simple_avg):.2f}%')
+    print(f'Stacked:    MAE=S${stacked_mae:,.0f}  R²={stacked_r2:.4f}  MAPE={stacked_mape:.2f}%')
 
     # ── Save meta ─────────────────────────────────────────────────────────────
     medians = (
@@ -502,6 +509,10 @@ def train(df_raw: pd.DataFrame):
         'stacker_intercept':    stacker_intercept,
         'model_names':          list(model_specs.keys()),
         'trained_at':           datetime.now(timezone.utc).isoformat(),
+        'eval_mae':             round(stacked_mae, 0),
+        'eval_r2':              round(stacked_r2, 4),
+        'eval_mape':            round(stacked_mape, 2),
+        'eval_n_test':          len(y_test),
     }
 
     joblib.dump(meta, os.path.join(MODELS_DIR, 'meta_private.joblib'))
