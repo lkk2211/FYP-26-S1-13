@@ -58,6 +58,7 @@ NUMERICAL_COLS   = [
     'tenure_remaining_years', 'is_strata',
     'year', 'quarter', 'time_idx',
     'direction', 'severity', 'policy_impact', 'months_since_policy_change', 'sora',
+    'project_rolling_psf_6m',   # avg PSF for this project in prior 6 months (no leakage)
 ]
 ALL_FEATURES = CATEGORICAL_COLS + NUMERICAL_COLS
 
@@ -235,6 +236,7 @@ def download_from_ura_api(access_key: str) -> pd.DataFrame:
                 tenure_raw = det.get('tenure', '')
                 type_of_area = str(det.get('typeOfArea') or '').strip()
                 rows.append({
+                    'project':                 str(proj.get('project') or '').strip().upper(),
                     'property_type':          det.get('propertyType', ''),
                     'market_segment':          market_seg,
                     'type_of_sale':            _TYPE_OF_SALE_API.get(str(det.get('typeOfSale', '3')), 'Resale'),
@@ -295,6 +297,7 @@ def load_from_db() -> pd.DataFrame:
         tenure_raw   = str(r.get('tenure') or '')
         type_of_area = str(r.get('type_of_area') or r.get('typeofarea') or '')
         rows.append({
+            'project':                str(r.get('project') or '').strip().upper(),
             'property_type':          str(r.get('property_type') or '').strip().upper(),
             'market_segment':         str(r.get('market_segment') or '').strip().upper(),
             'type_of_sale':           str(r.get('type_of_sale') or 'Resale').strip(),
@@ -363,9 +366,46 @@ def engineer_features(df: pd.DataFrame, policy_df=None, sora_df=None) -> pd.Data
     else:
         df['sora'] = 3.5
 
+    # ── Project-level rolling PSF (6-month lookback, no data leakage) ───────────
+    # For each transaction: mean PSF of the same project in the prior 2 quarters.
+    # Shift(1) on the quarter index ensures current quarter is excluded → no leakage.
+    if 'project' in df.columns:
+        df['_project_key'] = df['project'].fillna('').astype(str).str.strip().str.upper()
+        df['_unit_psf']    = (df['transacted_price'] / df['floor_area_sqft'].replace(0, np.nan)).clip(200, 8000)
+        df['_time_key']    = df['year'] * 4 + df['quarter']
+
+        proj_qtr = (
+            df.groupby(['_project_key', '_time_key'])['_unit_psf']
+            .mean()
+            .reset_index(name='_proj_qtr_psf')
+            .sort_values(['_project_key', '_time_key'])
+        )
+        proj_qtr['project_rolling_psf_6m'] = (
+            proj_qtr.groupby('_project_key')['_proj_qtr_psf']
+            .transform(lambda s: s.shift(1).rolling(2, min_periods=1).mean())
+        )
+        df = df.merge(
+            proj_qtr[['_project_key', '_time_key', 'project_rolling_psf_6m']],
+            left_on=['_project_key', '_time_key'], right_on=['_project_key', '_time_key'],
+            how='left',
+        )
+        # Fallback for new projects with no prior history: use district median PSF
+        dist_psf = df.groupby('postal_district')['_unit_psf'].median()
+        df['project_rolling_psf_6m'] = df['project_rolling_psf_6m'].fillna(
+            df['postal_district'].map(dist_psf)
+        ).fillna(df['_unit_psf'].median())
+        df.drop(columns=['_project_key', '_unit_psf', '_time_key'], inplace=True)
+    else:
+        # No project column: fall back to district PSF estimate
+        df['_unit_psf'] = (df['transacted_price'] / df['floor_area_sqft'].replace(0, np.nan)).clip(200, 8000)
+        dist_psf = df.groupby('postal_district')['_unit_psf'].median()
+        df['project_rolling_psf_6m'] = df['postal_district'].map(dist_psf).fillna(df['_unit_psf'].median())
+        df.drop(columns=['_unit_psf'], inplace=True)
+
     required = CATEGORICAL_COLS + ['floor_area_sqft', 'floor_level_num', 'tenure_remaining_years',
                                     'is_strata', 'year', 'quarter', 'direction', 'severity',
-                                    'policy_impact', 'months_since_policy_change', 'sora', 'transacted_price']
+                                    'policy_impact', 'months_since_policy_change', 'sora',
+                                    'project_rolling_psf_6m', 'transacted_price']
     return df.dropna(subset=[c for c in required if c != 'transacted_price'] + ['transacted_price'])
 
 

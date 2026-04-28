@@ -484,6 +484,7 @@ async function handlePredict() {
         if (window._cachedRemainingLease != null) body.remaining_lease_years = window._cachedRemainingLease;
         if (_cachedMaxFloor)   body.max_floor = _cachedMaxFloor;
         if (_predictBlock)     body.block     = _predictBlock;
+        if (_predictProject)   body.project   = _predictProject;
         const response = await fetch('/api/predict', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

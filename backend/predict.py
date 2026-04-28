@@ -1044,6 +1044,7 @@ def _predict_private_ml(features):
     postal    = str(features.get('postal', '')).strip().zfill(6)
     area_sqft = float(features.get('area', 1000))
     floor     = int(features.get('floor', 10))
+    project   = str(features.get('project', '')).strip().upper()
 
     sector   = postal[:2]
     district = _SECTOR_TO_DISTRICT.get(sector, 'D15')
@@ -1062,6 +1063,44 @@ def _predict_private_ml(features):
 
     pol  = _private_meta.get('latest_policy', {})
     sora = float(_private_meta.get('latest_sora', 3.5))
+
+    # ── Project rolling PSF: avg PSF for this project in last 6 months ───────
+    project_rolling_psf = None
+    if project:
+        try:
+            _DATABASE_URL = os.environ.get('DATABASE_URL', '')
+            if _DATABASE_URL:
+                import psycopg2, psycopg2.extras
+                _pc = psycopg2.connect(_DATABASE_URL)
+                _pcur = _pc.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+                _pcur.execute(
+                    "SELECT AVG(unit_price_psf) AS avg_psf FROM ura_transactions "
+                    "WHERE UPPER(project) = %s AND unit_price_psf BETWEEN 300 AND 8000 "
+                    "AND sale_date >= TO_CHAR(CURRENT_DATE - INTERVAL '6 months', 'YYYY-MM')",
+                    (project,)
+                )
+            else:
+                import sqlite3 as _sq
+                _pc = _sq.connect(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'propaisg.db'))
+                _pc.row_factory = _sq.Row
+                _pcur = _pc.cursor()
+                _pcur.execute(
+                    "SELECT AVG(unit_price_psf) AS avg_psf FROM ura_transactions "
+                    "WHERE UPPER(project) = ? AND unit_price_psf BETWEEN 300 AND 8000 "
+                    "AND sale_date >= strftime('%Y-%m', date('now', '-6 months'))",
+                    (project,)
+                )
+            _row = _pcur.fetchone()
+            if _row:
+                v = dict(_row).get('avg_psf')
+                if v:
+                    project_rolling_psf = float(v)
+            _pc.close()
+        except Exception:
+            pass
+    # Fallback: segment benchmark PSF
+    if not project_rolling_psf or project_rolling_psf < 300:
+        project_rolling_psf = {'CCR': 2200, 'RCR': 1550, 'OCR': 1150}.get(segment, 1200)
 
     num_cols = _private_meta.get('numerical_cols', [])
     cat_cols = _private_meta.get('categorical_cols', ['property_type','market_segment','type_of_sale','postal_district'])
@@ -1083,6 +1122,7 @@ def _predict_private_ml(features):
         'policy_impact':          float(pol.get('policy_impact', 0)),
         'months_since_policy_change': int(pol.get('months_since_policy_change', 0)),
         'sora':                   sora,
+        'project_rolling_psf_6m': project_rolling_psf,
     }
 
     try:
