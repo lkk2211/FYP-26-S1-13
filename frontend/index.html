@@ -1186,15 +1186,17 @@
 
                 <!-- Smart Search bar -->
                 <div class="bg-white dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700 p-3 flex flex-col sm:flex-row items-center gap-3 shadow-sm">
-                    <div class="relative flex flex-1 items-center gap-3 w-full px-2">
+                    <div class="flex flex-1 items-center gap-3 w-full px-2">
                         <i data-lucide="search" class="w-5 h-5 text-slate-400 shrink-0"></i>
-                        <input id="map-postal-input" type="text"
-                            placeholder="Postal code, MRT station, area name or project…"
-                            class="flex-1 bg-transparent outline-none font-medium text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 text-sm"
-                            oninput="onMapSearchInput(this.value)"
-                            onkeydown="if(event.key==='Enter') loadMap()"
-                            autocomplete="off" />
-                        <div id="map-autocomplete" class="autocomplete-dropdown" style="top:calc(100% + 10px); left:-40px; right:0;"></div>
+                        <div class="autocomplete-wrap flex-1">
+                            <input id="map-postal-input" type="text"
+                                placeholder="Postal code, MRT station, area name or project…"
+                                class="w-full bg-transparent outline-none font-medium text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 text-sm"
+                                oninput="onMapSearchInput(this.value)"
+                                onkeydown="if(event.key==='Enter') loadMap()"
+                                autocomplete="off" />
+                            <div id="map-autocomplete" class="autocomplete-dropdown"></div>
+                        </div>
                     </div>
                     <button onclick="loadMap()" class="w-full sm:w-auto px-5 py-2.5 rounded-xl font-bold text-sm shrink-0 flex items-center justify-center gap-2 btn-gradient">
                         <i data-lucide="map-pin" class="w-4 h-4"></i> Show on Map

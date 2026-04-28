@@ -552,7 +552,7 @@ async function handlePredict() {
         `).join('');
 
         togglePredictView('output');
-        renderPredictNews(postal);
+        renderPredictNews(postal, _predictTown);
 
         // Lease decay chart — prefer property-lookup remaining lease, fall back to model median
         const leaseType  = document.getElementById('input-lease-type')?.value || '';
@@ -1739,7 +1739,7 @@ async function renderHomeNews() {
 }
 
 // ── Predict Tab Neighbourhood News ───────────────────────────
-async function renderPredictNews(postal) {
+async function renderPredictNews(postal, town) {
     const section = document.getElementById('predict-news-section');
     const list    = document.getElementById('predict-news-list');
     const label   = document.getElementById('predict-news-area');
@@ -1749,11 +1749,15 @@ async function renderPredictNews(postal) {
     list.innerHTML = _newsLoadingHTML();
 
     try {
-        const res = await fetch(`/api/news?postal=${encodeURIComponent(postal)}&limit=4`);
+        // Prefer town name (from geocode) over postal sector — more accurate area mapping
+        const params = town
+            ? `neighbourhood=${encodeURIComponent(town.charAt(0) + town.slice(1).toLowerCase())}&limit=4`
+            : `postal=${encodeURIComponent(postal)}&limit=4`;
+        const res = await fetch(`/api/news?${params}`);
         if (!res.ok) throw new Error();
         const data = await res.json();
         const articles = data.articles || [];
-        if (label) label.innerText = `Latest news for ${data.area || 'this area'}`;
+        if (label) label.innerText = `Latest news for ${data.area || town || 'this area'}`;
         if (!articles.length) throw new Error();
         list.innerHTML = articles.map(_newsCardHTML).join('');
         lucide.createIcons();
