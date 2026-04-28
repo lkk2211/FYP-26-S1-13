@@ -2539,9 +2539,9 @@ def get_agents():
 
 @app.route('/api/chat', methods=['POST'])
 def chatbot():
-    """Property AI chatbot powered by Claude Haiku (Anthropic)."""
+    """Property AI chatbot powered by Groq (Llama 3)."""
     import os as _os
-    api_key = _os.environ.get('ANTHROPIC_API_KEY', '')
+    api_key = _os.environ.get('GROQ_API_KEY', '')
     if not api_key:
         return jsonify({"reply": "Chatbot is not configured (missing API key)."}), 200
 
@@ -2565,28 +2565,23 @@ def chatbot():
             "If someone asks for a specific property valuation, suggest they use the Predict tab."
         )
 
-        # Filter to only user/assistant roles for Anthropic API (no system in messages array)
-        filtered = [m for m in messages[-10:] if m.get('role') in ('user', 'assistant')]
-
         payload = _json.dumps({
-            "model": "claude-haiku-4-5-20251001",
+            "model": "llama-3.1-8b-instant",
             "max_tokens": 512,
-            "system": system_prompt,
-            "messages": filtered
+            "messages": [{"role": "system", "content": system_prompt}] + messages[-10:]
         }).encode()
 
         req = _ur.Request(
-            "https://api.anthropic.com/v1/messages",
+            "https://api.groq.com/openai/v1/chat/completions",
             data=payload,
             headers={
                 "Content-Type": "application/json",
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01"
+                "Authorization": f"Bearer {api_key}"
             }
         )
         resp   = _ur.urlopen(req, timeout=20)
         result = _json.loads(resp.read())
-        reply  = result["content"][0]["text"]
+        reply  = result["choices"][0]["message"]["content"]
         return jsonify({"reply": reply})
     except Exception as e:
         print(f"[chat] ERROR: {type(e).__name__}: {e}")
