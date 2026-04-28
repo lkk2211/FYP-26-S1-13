@@ -46,6 +46,12 @@ TEMP_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_progr
 
 # ─── Feature columns ─────────────────────────────────────────────────────────
 
+# Only train on condo/apartment types — landed properties (terrace, semi-D, bungalow)
+# price by land area and plot value, not floor area/level, and are not supported by the UI.
+CONDO_PROPERTY_TYPES = {
+    'CONDOMINIUM', 'APARTMENT', 'EXECUTIVE CONDOMINIUM', 'EXECUTIVE CONDO', 'EC',
+}
+
 CATEGORICAL_COLS = ['property_type', 'market_segment', 'type_of_sale', 'postal_district']
 NUMERICAL_COLS   = [
     'floor_area_sqft', 'floor_level_num',
@@ -388,7 +394,18 @@ def train(df_raw: pd.DataFrame):
     # Remove outliers
     df = df[(df['transacted_price'] > 100_000) & (df['floor_area_sqft'] > 100)]
     df = df[df['transacted_price'] < 200_000_000]
-    print(f'After cleaning: {len(df):,} records')
+
+    # Restrict to condo/apartment — exclude landed (terrace, semi-D, bungalow)
+    before = len(df)
+    df = df[df['property_type'].isin(CONDO_PROPERTY_TYPES)]
+    landed_removed = before - len(df)
+
+    # Cap ultra-luxury outliers (>S$10M): separate market, tiny sample, inflates MAE
+    before2 = len(df)
+    df = df[df['transacted_price'] <= 10_000_000]
+    luxury_removed = before2 - len(df)
+
+    print(f'After cleaning: {len(df):,} records ({landed_removed:,} landed + {luxury_removed:,} ultra-luxury removed)')
 
     time_idx_min = int(df['time_idx_raw'].min())
     df['time_idx'] = df['time_idx_raw'] - time_idx_min
