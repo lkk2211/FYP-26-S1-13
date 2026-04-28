@@ -3498,13 +3498,17 @@ def model_status():
         live = os.path.exists(os.path.join(_mdir, xgb_file)) and \
                os.path.exists(os.path.join(_mdir, meta_file))
         trained_at = None
+        eval_metrics = {}
         if live:
             try:
                 m = _jl.load(os.path.join(_mdir, meta_file))
                 trained_at = m.get('trained_at')
+                for k in ('eval_mae', 'eval_r2', 'eval_mape', 'eval_n_test'):
+                    if m.get(k) is not None:
+                        eval_metrics[k] = m[k]
             except Exception:
                 pass
-        return {'live': live, 'trained_at': trained_at}
+        return {'live': live, 'trained_at': trained_at, 'eval': eval_metrics}
     return jsonify({
         'hdb':     _check('xgb_pipeline.joblib',         'meta.joblib'),
         'private': _check('xgb_private_pipeline.joblib', 'meta_private.joblib'),

@@ -2768,6 +2768,18 @@ async function loadModelStatus() {
                 } else {
                     date.textContent = 'Last updated: unknown';
                 }
+                // Eval metrics (only present after a retrain with the new training script)
+                const ev = info.eval || {};
+                const metricsEl = document.getElementById(`model-${key}-metrics`);
+                if (metricsEl && (ev.eval_mape != null || ev.eval_mae != null || ev.eval_r2 != null)) {
+                    document.getElementById(`model-${key}-mape`).textContent =
+                        ev.eval_mape != null ? ev.eval_mape.toFixed(2) + '%' : '—';
+                    document.getElementById(`model-${key}-mae`).textContent =
+                        ev.eval_mae != null ? 'S$' + Math.round(ev.eval_mae).toLocaleString() : '—';
+                    document.getElementById(`model-${key}-r2`).textContent =
+                        ev.eval_r2 != null ? ev.eval_r2.toFixed(4) : '—';
+                    metricsEl.classList.remove('hidden');
+                }
             } else {
                 dot.className     = 'w-2.5 h-2.5 rounded-full bg-rose-400';
                 state.textContent = 'Not loaded';
