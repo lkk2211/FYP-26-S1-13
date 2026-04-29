@@ -285,6 +285,18 @@ async function _loadFlatSpecs() {
             if (!hasBlockData) {
                 if (sel)  sel.classList.add('hidden');
                 if (wrap) wrap.classList.remove('hidden');
+                // Show town-wide max as a reference hint
+                const townMax = data.town_max_floor;
+                const hintEl  = wrap ? wrap.querySelector('p.text-xs') : null;
+                if (hintEl && townMax) {
+                    hintEl.textContent = `No floor data for this block. Highest floor seen in this area: ${townMax}. Which level is the unit on?`;
+                }
+                // Update the Top quick-select button label with town max
+                const topBtn = wrap ? wrap.querySelector('.floor-quick-btn:last-of-type') : null;
+                if (topBtn && townMax) {
+                    topBtn.innerHTML = `Top<br><span class="font-normal text-slate-400">31–${townMax}</span>`;
+                    topBtn.onclick = () => setManualFloor(Math.round(townMax * 0.85), topBtn);
+                }
             } else {
                 if (sel)  sel.classList.remove('hidden');
                 if (wrap) wrap.classList.add('hidden');

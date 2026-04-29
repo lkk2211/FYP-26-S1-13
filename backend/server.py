@@ -3279,12 +3279,31 @@ def property_areas():
         else:
             floor_areas = _CONDO_PRESETS.get(bedrooms, _CONDO_PRESETS[3])
 
+    # When no block data found, provide town-wide max as a hint for the manual input
+    town_max_floor = None
+    if floor_data_source in ('none', 'generic') and property_type == 'HDB' and town:
+        try:
+            cur.execute(_q(
+                "SELECT MAX(CAST(TRIM(SPLIT_PART(storey_range,' TO ',2)) AS INTEGER)) "
+                "FROM resale_flat_prices WHERE UPPER(town) = ? AND storey_range LIKE '% TO %'"
+            ) if USE_POSTGRES else _q(
+                "SELECT MAX(CAST(TRIM(SUBSTR(storey_range, INSTR(storey_range,' TO ')+4)) AS INTEGER)) "
+                "FROM resale_flat_prices WHERE UPPER(town) = ? AND storey_range LIKE '% TO %'"
+            ), (town,))
+            _tmr = cur.fetchone()
+            if _tmr:
+                _v = _tmr[0] if not hasattr(_tmr, '__getitem__') else list(_tmr.values())[0]
+                if _v: town_max_floor = int(_v)
+        except Exception:
+            pass
+
     return jsonify({
         'floor_areas': floor_areas,
         'max_floor': int(max_floor) if max_floor is not None else 20,
         'storey_ranges': storey_ranges,
         'default_storey_range': default_storey_range,
         'floor_data_source': floor_data_source if property_type == 'HDB' else 'block',
+        'town_max_floor': town_max_floor,
     })
 
 
