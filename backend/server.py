@@ -1075,7 +1075,7 @@ POSTAL_DISTRICTS = {
     '55': 'Woodlands',     '56': 'Ang Mo Kio',     '57': 'Ang Mo Kio',
     '58': 'Upper Thomson', '59': 'Yio Chu Kang',   '60': 'Hougang',
     '61': 'Hougang',       '62': 'Sengkang',       '63': 'Sengkang',
-    '64': 'Punggol',       '65': 'Tampines',       '66': 'Pasir Ris',
+    '64': 'Punggol',       '65': 'Bukit Batok',    '66': 'Bukit Batok',
     '67': 'Loyang',        '68': 'Changi',         '69': 'Jurong West',
     '70': 'Jurong West',   '71': 'Boon Lay',       '72': 'Jurong East',
     '73': 'Jurong East',   '75': 'Clementi',       '76': 'West Coast',
@@ -2539,9 +2539,9 @@ def get_agents():
 
 @app.route('/api/chat', methods=['POST'])
 def chatbot():
-    """Property AI chatbot powered by Gemini 1.5 Flash (Google AI)."""
+    """Property AI chatbot powered by Claude Haiku (Anthropic)."""
     import os as _os
-    api_key = _os.environ.get('GEMINI_API_KEY', '')
+    api_key = _os.environ.get('ANTHROPIC_API_KEY', '')
     if not api_key:
         return jsonify({"reply": "Chatbot is not configured (missing API key)."}), 200
 
@@ -2565,34 +2565,35 @@ def chatbot():
             "If someone asks for a specific property valuation, suggest they use the Predict tab."
         )
 
-        # Gemini expects contents array with role "user"/"model"
+        # Anthropic API expects only user/assistant roles in messages array
         filtered = [m for m in messages[-10:] if m.get('role') in ('user', 'assistant')]
-        contents = [
-            {"role": "model" if m["role"] == "assistant" else "user",
-             "parts": [{"text": m["content"]}]}
-            for m in filtered
-        ]
 
         payload = _json.dumps({
-            "system_instruction": {"parts": [{"text": system_prompt}]},
-            "contents": contents,
-            "generationConfig": {"maxOutputTokens": 512}
+            "model": "claude-haiku-4-5-20251001",
+            "max_tokens": 512,
+            "system": system_prompt,
+            "messages": filtered
         }).encode()
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
-        req = _ur.Request(url, data=payload, headers={"Content-Type": "application/json"})
+        req = _ur.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01"
+            }
+        )
         resp   = _ur.urlopen(req, timeout=20)
         result = _json.loads(resp.read())
-        reply  = result["candidates"][0]["content"]["parts"][0]["text"]
+        reply  = result["content"][0]["text"]
         return jsonify({"reply": reply})
     except Exception as e:
         print(f"[chat] ERROR: {type(e).__name__}: {e}")
         if isinstance(e, _ue.HTTPError):
             body = e.read().decode('utf-8', 'replace')[:400]
             print(f"[chat] HTTP {e.code}: {body}")
-            if e.code == 400:
-                return jsonify({"reply": "Kai is currently unavailable — invalid request. Please try again later."}), 200
-            if e.code == 403:
+            if e.code == 401:
                 return jsonify({"reply": "Kai is currently unavailable — API authentication failed. Please try again later."}), 200
         return jsonify({"reply": "Sorry, I'm having trouble right now. Please try again shortly."}), 200
 
@@ -2699,6 +2700,20 @@ def property_lookup():
             except Exception:
                 pass
 
+        # DB fallback: if planning area API failed or returned nothing, get town from HDB records
+        if not town and is_hdb and blk_no:
+            try:
+                _dbc2 = get_db(); _dbc2_cur = _cursor(_dbc2)
+                _dbc2_cur.execute(_q(
+                    "SELECT town FROM resale_flat_prices WHERE UPPER(block) = ? AND town IS NOT NULL LIMIT 1"
+                ), (blk_no.upper(),))
+                _tr2 = _dbc2_cur.fetchone()
+                _dbc2.close()
+                if _tr2:
+                    town = str(_tr2['town'] if hasattr(_tr2, '__getitem__') else _tr2[0]).strip().upper()
+            except Exception:
+                pass
+
         if is_hdb:
             prop_type  = 'HDB'
             lease_type = '99-year Leasehold'
@@ -2749,8 +2764,9 @@ def property_lookup():
                 block_upper = blk_no.upper()
                 road_upper  = road_name.upper()
 
-                # Step 1: block + road (use first word of road to avoid too-short matches)
-                road_keyword = road_upper.split()[0] if road_upper else ''
+                # Step 1: block + road (use first two words, e.g. 'BUKIT BATOK' not just 'BUKIT')
+                _rp = road_upper.split()
+                road_keyword = ' '.join(_rp[:2]) if len(_rp) >= 2 else (_rp[0] if _rp else '')
                 srs = _q_storeys("AND UPPER(street_name) LIKE ?",
                                  (block_upper, f'%{road_keyword}%')) if road_keyword else []
 
@@ -3020,7 +3036,8 @@ def property_areas():
 
             storeys = []
             # Step 1: block + first word of road (avoids too-short / too-broad matches)
-            road_keyword = road.split()[0] if road else ''
+            _rp2 = road.split()
+            road_keyword = ' '.join(_rp2[:2]) if len(_rp2) >= 2 else (_rp2[0] if _rp2 else '')
             if block and road_keyword:
                 storeys = _fetch_storeys("AND UPPER(block) = ? AND UPPER(street_name) LIKE ?",
                                          (flat_type, block, f'%{road_keyword}%'))

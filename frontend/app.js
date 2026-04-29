@@ -494,6 +494,13 @@ async function handlePredict() {
 
         document.getElementById('output-price').innerText = `S$${data.estimated_value.toLocaleString()}`;
         document.getElementById('output-confidence').innerText = `${data.confidence}%`;
+
+        const mape = propType === 'HDB' ? 0.07 : 0.10;
+        const priceLo = Math.round(data.estimated_value * (1 - mape) / 1000) * 1000;
+        const priceHi = Math.round(data.estimated_value * (1 + mape) / 1000) * 1000;
+        const rangeEl = document.getElementById('output-price-range');
+        if (rangeEl) rangeEl.innerText = `Range: S$${priceLo.toLocaleString()} – S$${priceHi.toLocaleString()} (±${Math.round(mape * 100)}%)`;
+
         const ppsfEl = document.getElementById('output-ppsf');
         if (ppsfEl && data.ppsf) ppsfEl.innerText = `S$${data.ppsf.toLocaleString()}`;
 
