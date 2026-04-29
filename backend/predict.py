@@ -861,10 +861,12 @@ def _predict_ml(features):
     if pol_dir > 0: annual_rate += 0.003
     price_forecast = _build_forecast(estimated_value, annual_rate)
 
+    hdb_mape = float(_meta.get('eval_mape', 7.0)) if _meta else 7.0
     result = {
         "estimated_value": estimated_value,
-        "min_value":        min_value,
-        "max_value":        max_value,
+        "min_value":        int(estimated_value * (1 - hdb_mape / 100)),
+        "max_value":        int(estimated_value * (1 + hdb_mape / 100)),
+        "mape":             round(hdb_mape, 2),
         "confidence":       confidence,
         "ppsf":             ppsf,
         "market_trend":     f"+{annual_rate*100:.1f}%",
@@ -1222,10 +1224,12 @@ def _predict_private_ml(features):
     if pol_dir < 0: annual_rate -= 0.004
     price_forecast = _build_forecast(estimated_value, annual_rate)
 
+    priv_mape = float(_private_meta.get('eval_mape', 10.0)) if _private_meta else 10.0
     _private_result = {
         "estimated_value": estimated_value,
-        "min_value":  int(estimated_value * 0.91),
-        "max_value":  int(estimated_value * 1.09),
+        "min_value":  int(estimated_value * (1 - priv_mape / 100)),
+        "max_value":  int(estimated_value * (1 + priv_mape / 100)),
+        "mape":       round(priv_mape, 2),
         "confidence": confidence,
         "ppsf":       ppsf,
         "market_trend":    f"+{annual_rate*100:.1f}%",

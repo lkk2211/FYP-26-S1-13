@@ -521,11 +521,11 @@ async function handlePredict() {
         if (disclaimerEl) disclaimerEl.classList.toggle('hidden', !floorIsManual);
         document.getElementById('output-confidence').innerText = `${data.confidence}%`;
 
-        const mape = propType === 'HDB' ? 0.07 : 0.10;
-        const priceLo = Math.round(data.estimated_value * (1 - mape) / 1000) * 1000;
-        const priceHi = Math.round(data.estimated_value * (1 + mape) / 1000) * 1000;
+        const mape = data.mape || (propType === 'HDB' ? 7.0 : 10.0);
+        const priceLo = data.min_value || Math.round(data.estimated_value * (1 - mape / 100) / 1000) * 1000;
+        const priceHi = data.max_value || Math.round(data.estimated_value * (1 + mape / 100) / 1000) * 1000;
         const rangeEl = document.getElementById('output-price-range');
-        if (rangeEl) rangeEl.innerText = `Range: S$${priceLo.toLocaleString()} – S$${priceHi.toLocaleString()} (±${Math.round(mape * 100)}%)`;
+        if (rangeEl) rangeEl.innerText = `Estimated range: S$${priceLo.toLocaleString()} – S$${priceHi.toLocaleString()} (±${mape.toFixed(1)}% model MAPE)`;
 
         const ppsfEl = document.getElementById('output-ppsf');
         if (ppsfEl && data.ppsf) ppsfEl.innerText = `S$${data.ppsf.toLocaleString()}`;
