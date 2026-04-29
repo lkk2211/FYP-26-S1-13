@@ -2699,25 +2699,6 @@ def property_lookup():
             except Exception:
                 pass
 
-        # DB fallback: if planning area API failed or returned nothing, get town from HDB records
-        # Must match both block AND street name to avoid block numbers shared across towns
-        if not town and is_hdb and blk_no and road_name:
-            try:
-                _dbc2 = get_db(); _dbc2_cur = _cursor(_dbc2)
-                _rp_fb = road_name.upper().split()
-                _road_kw_fb = ' '.join(_rp_fb[:2]) if len(_rp_fb) >= 2 else (_rp_fb[0] if _rp_fb else '')
-                if _road_kw_fb:
-                    _dbc2_cur.execute(_q(
-                        "SELECT town FROM resale_flat_prices "
-                        "WHERE UPPER(block) = ? AND UPPER(street_name) LIKE ? AND town IS NOT NULL LIMIT 1"
-                    ), (blk_no.upper(), f'%{_road_kw_fb}%'))
-                    _tr2 = _dbc2_cur.fetchone()
-                    if _tr2:
-                        town = str(_tr2['town'] if hasattr(_tr2, '__getitem__') else _tr2[0]).strip().upper()
-                _dbc2.close()
-            except Exception:
-                pass
-
         if is_hdb:
             prop_type  = 'HDB'
             lease_type = '99-year Leasehold'
@@ -2747,6 +2728,25 @@ def property_lookup():
                 except Exception:
                     pass
         road_name = str(result.get('ROAD_NAME') or '').strip()
+
+        # DB fallback: if planning area API returned nothing, get town from HDB DB
+        # Must filter by block+road to avoid matching same block number across towns
+        if not town and is_hdb and blk_no and road_name:
+            try:
+                _dbc2 = get_db(); _dbc2_cur = _cursor(_dbc2)
+                _rp_fb = road_name.upper().split()
+                _road_kw_fb = ' '.join(_rp_fb[:2]) if len(_rp_fb) >= 2 else (_rp_fb[0] if _rp_fb else '')
+                if _road_kw_fb:
+                    _dbc2_cur.execute(_q(
+                        "SELECT town FROM resale_flat_prices "
+                        "WHERE UPPER(block) = ? AND UPPER(street_name) LIKE ? AND town IS NOT NULL LIMIT 1"
+                    ), (blk_no.upper(), f'%{_road_kw_fb}%'))
+                    _tr2 = _dbc2_cur.fetchone()
+                    if _tr2:
+                        town = str(_tr2['town'] if hasattr(_tr2, '__getitem__') else _tr2[0]).strip().upper()
+                _dbc2.close()
+            except Exception:
+                pass
 
         # ── Query DB for accurate floor data ─────────────────────────────
         storey_ranges = []

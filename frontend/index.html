@@ -2472,7 +2472,7 @@
     <!-- Chatbot Widget -->
     <div id="chat-widget" class="fixed bottom-6 right-6 z-[9998] flex flex-col items-end gap-3">
         <!-- Chat Panel — uses inline display style, not Tailwind flex+hidden conflict -->
-        <div id="chat-panel" style="display:none;width:340px;height:460px;flex-direction:column" class="bg-white dark:bg-slate-900 rounded-[28px] shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+        <div id="chat-panel" style="display:none;width:340px;height:460px;flex-direction:column" class="bg-white dark:bg-slate-900 rounded-[28px] shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden transition-all duration-300">
             <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-700 bg-gradient-to-r from-blue-600 to-violet-600">
                 <div class="flex items-center gap-3">
                     <div class="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center text-lg">🏡</div>
@@ -2481,9 +2481,14 @@
                         <p class="text-xs text-blue-100">Your property kaki — ask me anything!</p>
                     </div>
                 </div>
-                <button onclick="toggleChat()" class="p-1.5 hover:bg-white/20 rounded-lg transition-colors">
-                    <i data-lucide="x" class="w-4 h-4 text-white"></i>
-                </button>
+                <div class="flex items-center gap-1">
+                    <button onclick="toggleChatSize()" id="chat-expand-btn" title="Expand" class="p-1.5 hover:bg-white/20 rounded-lg transition-colors">
+                        <i data-lucide="maximize-2" class="w-4 h-4 text-white" id="chat-expand-icon"></i>
+                    </button>
+                    <button onclick="toggleChat()" class="p-1.5 hover:bg-white/20 rounded-lg transition-colors">
+                        <i data-lucide="x" class="w-4 h-4 text-white"></i>
+                    </button>
+                </div>
             </div>
             <div id="chat-messages" class="overflow-y-auto p-4 space-y-3" style="flex:1">
                 <div class="flex gap-2">

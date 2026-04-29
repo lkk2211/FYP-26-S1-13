@@ -3609,6 +3609,8 @@ function closeFeedbackModal() {
 let _chatOpen    = false;
 let _chatHistory = []; // [{role, content}]
 
+let _chatExpanded = false;
+
 function toggleChat() {
     _chatOpen = !_chatOpen;
     const panel = document.getElementById('chat-panel');
@@ -3619,6 +3621,29 @@ function toggleChat() {
         const input = document.getElementById('chat-input');
         if (input) setTimeout(() => input.focus(), 150);
     }
+}
+
+function toggleChatSize() {
+    _chatExpanded = !_chatExpanded;
+    const panel = document.getElementById('chat-panel');
+    const icon  = document.getElementById('chat-expand-icon');
+    if (panel) {
+        panel.style.width  = _chatExpanded ? '520px' : '340px';
+        panel.style.height = _chatExpanded ? '680px' : '460px';
+    }
+    if (icon) icon.setAttribute('data-lucide', _chatExpanded ? 'minimize-2' : 'maximize-2');
+    lucide.createIcons();
+}
+
+function _markdownToHtml(text) {
+    return text
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/^#{1,3} (.+)$/gm, '<strong>$1</strong>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/^[\*\-] (.+)$/gm, '• $1')
+        .replace(/\n{2,}/g, '<br><br>')
+        .replace(/\n/g, '<br>');
 }
 
 async function sendChatMessage() {
@@ -3644,7 +3669,7 @@ async function sendChatMessage() {
 
         // Replace typing indicator
         const typingEl = document.getElementById(typingId);
-        if (typingEl) typingEl.textContent = reply;
+        if (typingEl) typingEl.innerHTML = _markdownToHtml(reply);
         else appendChatMessage('assistant', reply);
 
         _chatHistory.push({ role: 'assistant', content: reply });
@@ -3666,7 +3691,8 @@ function appendChatMessage(role, text, id) {
     bubble.className = isUser
         ? 'bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm max-w-[80%] ml-auto'
         : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm max-w-[80%]';
-    bubble.textContent = text;
+    if (isUser) bubble.textContent = text;
+    else bubble.innerHTML = _markdownToHtml(text);
     if (!isUser) {
         const icon = document.createElement('div');
         icon.className = 'w-7 h-7 bg-blue-100 rounded-full flex items-center justify-center shrink-0 self-end text-sm';

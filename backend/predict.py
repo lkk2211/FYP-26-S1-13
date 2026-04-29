@@ -288,7 +288,7 @@ def _load_shap_hdb():
         }
         print("[predict] SHAP HDB explainer ready")
         return True
-    except Exception as e:
+    except BaseException as e:
         print(f"[predict] SHAP HDB not available: {e}")
         return False
 
