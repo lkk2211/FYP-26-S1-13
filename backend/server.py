@@ -3131,8 +3131,9 @@ def property_areas():
                     out.append(f'{lo:02d} TO {hi:02d}')
                 return out
 
-            # Always get true building height from ALL flat types for this block
-            # (a block's height is independent of which flat type is being queried)
+            # Get true building height from ALL flat types for this block.
+            # If the block itself has no data, try sibling blocks on the same street
+            # (e.g. Pinnacle@Duxton 1A–1G all share the same ~50-floor height).
             block_max_floor = None
             if block and town:
                 cur.execute(_q(
@@ -3143,6 +3144,20 @@ def property_areas():
                           for r in cur.fetchall()]
                 if all_ft:
                     block_max_floor = max(_top(s) for s in all_ft)
+
+            # Sibling-block fallback: same street + town, any block
+            if not block_max_floor and town and road:
+                road_kw = road.split()[0] if road else ''
+                if road_kw:
+                    cur.execute(_q(
+                        "SELECT DISTINCT storey_range FROM resale_flat_prices "
+                        "WHERE UPPER(town) = ? AND UPPER(street_name) LIKE ? "
+                        "AND storey_range LIKE '% TO %'"
+                    ), (town, f'%{road_kw}%'))
+                    sibling = [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0])
+                               for r in cur.fetchall()]
+                    if sibling:
+                        block_max_floor = max(_top(s) for s in sibling)
 
             # Step 1: block + town, specific flat type (for the actual storey range options)
             if block and town:
