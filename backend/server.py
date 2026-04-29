@@ -1052,35 +1052,67 @@ def fetch_overpass_amenities(lat, lng):
     return cats
 
 
-# Postal district → neighbourhood lookup
+# Postal sector → neighbourhood (first 2 digits of 6-digit postal code)
+# Source: URA postal district table. Used as fallback when OneMap planning area API fails.
 POSTAL_DISTRICTS = {
+    # D01: Boat Quay / Raffles Place / Marina / Cecil / People's Park
     '01': 'Raffles Place', '02': 'Tanjong Pagar', '03': 'Queenstown',
-    '04': 'Telok Blangah', '05': 'Pasir Panjang', '06': 'City Hall',
-    '07': 'Bugis',         '08': 'Little India',  '09': 'Orchard',
-    '10': 'Tanglin',       '11': 'Newton',         '12': 'Balestier',
-    '13': 'Macpherson',    '14': 'Geylang',        '15': 'Katong',
-    '16': 'Bedok',         '17': 'Changi',         '18': 'Tampines',
-    '19': 'Serangoon',     '20': 'Bishan',         '21': 'Upper Bukit Timah',
-    '22': 'Clementi',      '23': 'Bukit Panjang',  '24': 'Lim Chu Kang',
-    '25': 'Kranji',        '26': 'Mandai',         '27': 'Upper Thomson',
-    '28': 'Bishan',        '29': 'Thomson',        '30': 'Toa Payoh',
-    '31': 'Balestier',     '32': 'Boon Keng',      '33': 'Potong Pasir',
-    '34': 'Serangoon',     '35': 'Hougang',        '36': 'Punggol',
-    '37': 'Pasir Ris',     '38': 'Geylang',        '39': 'Eunos',
-    '40': 'Paya Lebar',    '41': 'Tampines',       '42': 'Bedok',
-    '43': 'Telok Blangah', '44': 'Harbourfront',   '45': 'Buona Vista',
-    '46': 'Clementi',      '47': 'West Coast',     '48': 'Pandan',
-    '49': 'Jurong West',   '50': 'Jurong',         '51': 'Jurong East',
-    '52': 'Bukit Batok',   '53': 'Bukit Panjang',  '54': 'Choa Chu Kang',
-    '55': 'Woodlands',     '56': 'Ang Mo Kio',     '57': 'Ang Mo Kio',
-    '58': 'Upper Thomson', '59': 'Yio Chu Kang',   '60': 'Hougang',
-    '61': 'Hougang',       '62': 'Sengkang',       '63': 'Sengkang',
-    '64': 'Punggol',       '65': 'Bukit Batok',    '66': 'Bukit Batok',
-    '67': 'Bukit Panjang', '68': 'Changi',         '69': 'Jurong West',
-    '70': 'Jurong West',   '71': 'Boon Lay',       '72': 'Jurong East',
-    '73': 'Jurong East',   '75': 'Clementi',       '76': 'West Coast',
-    '77': 'Queenstown',    '78': 'Toa Payoh',      '79': 'Marine Parade',
-    '80': 'Paya Lebar',    '81': 'Pasir Ris',      '82': 'Tampines',
+    '04': 'Telok Blangah', '05': 'Clementi',      '06': 'City Hall',
+    # D02: Chinatown / Tanjong Pagar / Anson
+    '07': 'Tanjong Pagar', '08': 'Chinatown',
+    # D03: Alexandra / Commonwealth / Queenstown / Tiong Bahru
+    '14': 'Queenstown',    '15': 'Queenstown',    '16': 'Queenstown',
+    # D04: Harbourfront / Telok Blangah
+    '09': 'Harbourfront',  '10': 'Harbourfront',
+    # D05: Buona Vista / West Coast / Clementi / Pasir Panjang
+    '11': 'Buona Vista',   '12': 'Buona Vista',   '13': 'Clementi',
+    # D06: City Hall / Clarke Quay / High Street
+    '17': 'City Hall',
+    # D07: Beach Road / Bugis / Rochor / Middle Road / Golden Mile
+    '18': 'Bugis',         '19': 'Bugis',
+    # D08: Farrer Park / Serangoon Road / Little India
+    '20': 'Little India',  '21': 'Little India',
+    # D09: Orchard / Cairnhill / River Valley
+    '22': 'Orchard',       '23': 'Orchard',
+    # D10: Tanglin / Ardmore / Holland / Bukit Timah
+    '24': 'Bukit Timah',   '25': 'Bukit Timah',   '26': 'Bukit Timah',   '27': 'Bukit Timah',
+    # D11: Newton / Novena / Watten Estate / Thomson
+    '28': 'Newton',        '29': 'Newton',        '30': 'Novena',
+    # D12: Balestier / Toa Payoh / Serangoon
+    '31': 'Toa Payoh',     '32': 'Toa Payoh',     '33': 'Toa Payoh',
+    # D13: Macpherson / Potong Pasir / Braddell
+    '34': 'Potong Pasir',  '35': 'Potong Pasir',  '36': 'Potong Pasir',  '37': 'Potong Pasir',
+    # D14: Kembangan / Eunos / Paya Lebar / Geylang
+    '38': 'Geylang',       '39': 'Geylang',       '40': 'Paya Lebar',    '41': 'Paya Lebar',
+    # D15: East Coast / Marine Parade / Katong / Joo Chiat / Amber Road
+    '42': 'Marine Parade', '43': 'Marine Parade', '44': 'Marine Parade', '45': 'Marine Parade',
+    # D16: Bedok / Upper East Coast / Eastwood / Kew Drive
+    '46': 'Bedok',         '47': 'Bedok',         '48': 'Bedok',
+    # D17: Changi Airport / Changi Village / Loyang
+    '49': 'Changi',        '50': 'Changi',        '81': 'Changi',
+    # D18: Pasir Ris / Tampines
+    '51': 'Pasir Ris',     '52': 'Tampines',
+    # D19: Serangoon Gardens / Hougang / Punggol / Sengkang
+    '53': 'Serangoon',     '54': 'Sengkang',      '55': 'Sengkang',      '82': 'Punggol',
+    # D20: Ang Mo Kio / Bishan / Thomson
+    '56': 'Ang Mo Kio',    '57': 'Ang Mo Kio',
+    # D21: Clementi Park / Upper Bukit Timah / Ulu Pandan
+    '58': 'Upper Bukit Timah', '59': 'Upper Bukit Timah',
+    # D22: Boon Lay / Jurong / Tuas
+    '60': 'Jurong West',   '61': 'Jurong West',   '62': 'Jurong West',
+    '63': 'Jurong West',   '64': 'Jurong West',
+    # D23: Hillview / Dairy Farm / Bukit Panjang / Choa Chu Kang
+    '65': 'Bukit Batok',   '66': 'Bukit Batok',   '67': 'Bukit Panjang', '68': 'Choa Chu Kang',
+    # D24: Lim Chu Kang / Tengah
+    '69': 'Jurong West',   '70': 'Jurong West',   '71': 'Jurong West',
+    # D25: Admiralty / Woodlands / Kranji / Woodgrove
+    '72': 'Woodlands',     '73': 'Woodlands',
+    # D26: Mandai / Upper Thomson / Springleaf
+    '77': 'Upper Thomson', '78': 'Upper Thomson',
+    # D27: Yishun / Sembawang
+    '75': 'Yishun',        '76': 'Yishun',
+    # D28: Seletar / Yio Chu Kang
+    '79': 'Yio Chu Kang',  '80': 'Yio Chu Kang',
 }
 
 
