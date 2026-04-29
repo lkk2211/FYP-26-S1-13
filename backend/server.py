@@ -3131,26 +3131,33 @@ def property_areas():
                     out.append(f'{lo:02d} TO {hi:02d}')
                 return out
 
-            # Step 1: block + town, specific flat type
+            # Always get true building height from ALL flat types for this block
+            # (a block's height is independent of which flat type is being queried)
+            block_max_floor = None
             if block and town:
-                storeys = _fetch_storeys("AND UPPER(block) = ? AND UPPER(town) = ?",
-                                         (flat_type, block, town))
-                if storeys: floor_data_source = 'block'
-
-            # Step 1b: block + town, ANY flat type — gets building height even if
-            # this flat type has no transactions (common for newer/rarer blocks)
-            if not storeys and block and town:
                 cur.execute(_q(
                     "SELECT DISTINCT storey_range FROM resale_flat_prices "
-                    "WHERE UPPER(block) = ? AND UPPER(town) = ? AND storey_range LIKE '% TO %' "
-                    "ORDER BY storey_range"
+                    "WHERE UPPER(block) = ? AND UPPER(town) = ? AND storey_range LIKE '% TO %'"
                 ), (block, town))
                 all_ft = [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0])
                           for r in cur.fetchall()]
                 if all_ft:
-                    max_floor = max(_top(s) for s in all_ft)
-                    storeys = _gen_ranges(max_floor)
+                    block_max_floor = max(_top(s) for s in all_ft)
+
+            # Step 1: block + town, specific flat type (for the actual storey range options)
+            if block and town:
+                storeys = _fetch_storeys("AND UPPER(block) = ? AND UPPER(town) = ?",
+                                         (flat_type, block, town))
+                if storeys:
                     floor_data_source = 'block'
+                    # Extend ranges to true building height if taller than flat-type transactions
+                    if block_max_floor and block_max_floor > _top(storeys[-1]):
+                        storeys = _gen_ranges(block_max_floor)
+
+            # Step 1b: no flat-type data — use all-flat-type ranges for this block
+            if not storeys and block_max_floor:
+                storeys = _gen_ranges(block_max_floor)
+                floor_data_source = 'block'
 
             # Step 2: block + road keyword (only when town unavailable)
             if not storeys and block and road:
