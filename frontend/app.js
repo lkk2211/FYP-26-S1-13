@@ -4224,23 +4224,39 @@ function renderSafeBuyPanel(estimatedValue, areaSqm, propType, segment, isFreeho
     document.getElementById('sb-income').textContent  = 'S$' + Math.round(incomeNeeded).toLocaleString();
 
     // Context text
-    const segLabel = segment === 'CCR' ? 'Core Central Region'
-                   : segment === 'RCR' ? 'Rest of Central Region' : 'Outside Central Region';
     const benchPsf = { CCR: 2800, RCR: 1900, OCR: 1350 }[segment] || 1350;
     const estPsf   = areaSqm > 0 ? Math.round(estimatedValue / (areaSqm * 10.764)) : 0;
     const psfDiff  = estPsf > 0 ? ((estPsf - benchPsf) / benchPsf * 100).toFixed(0) : null;
-    const psfNote  = psfDiff !== null
-        ? (Math.abs(psfDiff) < 5
-            ? `priced at the ${segLabel} district average (S$${benchPsf} PSF benchmark)`
-            : `priced ${Math.abs(psfDiff)}% ${+psfDiff > 0 ? 'above' : 'below'} the ${segLabel} district average (S$${benchPsf} PSF benchmark)`)
-        : '';
+
 
     const xai = document.getElementById('sb-xai');
     if (xai) {
-        const stressScenario = isFreehold
-            ? `For this freehold property, the bear-market floor of <strong>S$${bearFloor.toLocaleString()}</strong> still protects your equity if bought at the current valuation.`
-            : `Bear-market stress test (−13% correction, based on 2008 &amp; 2013 Singapore downturns): floor price is <strong>S$${bearFloor.toLocaleString()}</strong> — a S$${buffer.toLocaleString()} buffer.`;
-        xai.innerHTML = `${stressScenario}${psfNote ? ` This property is ${psfNote}.` : ''} At a 4.5% stress-test rate, the ${isHdb ? '80%' : '75%'} LTV loan requires a gross monthly income of at least <strong>S$${Math.round(incomeNeeded).toLocaleString()}</strong> to stay within TDSR limits.`;
+        // Plain-English PSF comparison
+        let psfLine = '';
+        if (psfDiff !== null) {
+            if (Math.abs(psfDiff) < 5) {
+                psfLine = `The price per sq ft is in line with the typical going rate for this area — a fair market valuation.`;
+            } else if (+psfDiff > 0) {
+                psfLine = `At S$${estPsf.toLocaleString()}/sq ft, this is priced <strong>${Math.abs(psfDiff)}% above</strong> the typical rate for this area (S$${benchPsf.toLocaleString()}/sq ft). You're paying a premium — likely due to location, view, or condition.`;
+            } else {
+                psfLine = `At S$${estPsf.toLocaleString()}/sq ft, this is priced <strong>${Math.abs(psfDiff)}% below</strong> the typical rate for this area (S$${benchPsf.toLocaleString()}/sq ft). This could represent good value — worth investigating why it's priced lower.`;
+            }
+        }
+
+        // Plain-English crash scenario
+        const crashLine = isFreehold
+            ? `Even if property prices fell by 13% (similar to past Singapore downturns in 2008 and 2013), this freehold property would still hold most of its value — freehold land tends to be more resilient.`
+            : `If the market drops 13% — like it did during the 2008 financial crisis and 2013 cooling measures — this property could fall to around <strong>S$${bearFloor.toLocaleString()}</strong>. You'd still have a <strong>S$${buffer.toLocaleString()} cushion</strong> above that worst-case level, giving you time to hold rather than sell at a loss.`;
+
+        // Plain-English income check
+        const ltvPct = isHdb ? 80 : 75;
+        const incomeLine = `To take a ${ltvPct}% bank loan on this property, banks require you to earn at least <strong>S$${Math.round(incomeNeeded).toLocaleString()}/month</strong>. This is based on MAS rules that say your total loan repayments cannot exceed 55% of your income (TDSR). The S$${Math.round(monthly).toLocaleString()}/month figure assumes a 25-year loan at a stress-tested rate of 4.5%.`;
+
+        xai.innerHTML = `<div class="space-y-3 text-sm text-slate-600">
+            <p>${crashLine}</p>
+            ${psfLine ? `<p>${psfLine}</p>` : ''}
+            <p>${incomeLine}</p>
+        </div>`;
     }
 }
 
@@ -4932,7 +4948,10 @@ function renderShapChart(contributions) {
                     callbacks: {
                         label: (ctx) => {
                             const v = ctx.parsed.x;
-                            return `  ${v > 0 ? '+' : ''}${v.toFixed(4)} (${v > 0 ? 'pushes price up' : 'pushes price down'})`;
+                            const impact = Math.abs(v * 100).toFixed(1);
+                            return v > 0
+                                ? `  ▲ Adds ~${impact}% to the price`
+                                : `  ▼ Reduces price by ~${impact}%`;
                         },
                     },
                     backgroundColor: '#0f172a', padding: 12, cornerRadius: 10,
