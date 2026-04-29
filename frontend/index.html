@@ -410,6 +410,9 @@
                                                         <select id="input-floor-range" class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium appearance-none">
                                                             <option value="10">Search address first</option>
                                                         </select>
+                                                        <input id="input-floor-manual" type="number" min="1" max="99" placeholder="Enter floor level (e.g. 25)"
+                                                            class="hidden w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium" />
+                                                        <p id="floor-no-data-hint" class="hidden text-xs text-amber-600 mt-1">No transaction records found for this block — enter floor level manually.</p>
                                                     </div>
                                                 </div>
                                             </div>
@@ -541,6 +544,10 @@
                                     <div>
                                     <span class="text-7xl font-bold tracking-tighter" id="output-price">S$465,000</span>
                                     <p class="text-sm text-slate-400 font-medium mt-2" id="output-price-range"></p>
+                                    <div id="output-floor-disclaimer" class="hidden mt-3 flex items-start gap-2 px-4 py-3 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-800">
+                                        <span>⚠️</span>
+                                        <span>No previous transactions found for this specific floor level. This estimate is based on similar transactions in the same area — treat it as a directional guide.</span>
+                                    </div>
                                     </div>
                                     <div class="flex items-center gap-2 pb-2">
                                         <div id="output-trend-badge" class="flex items-center gap-1 px-3 py-1 bg-emerald-50 text-emerald-600 rounded-lg text-sm font-bold">

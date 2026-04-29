@@ -3054,24 +3054,28 @@ def property_areas():
                 return [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0]) for r in rows]
 
             storeys = []
+            floor_data_source = 'none'
             # Step 1: block + town — most reliable; HDB block numbers are unique within a town
             if block and town:
                 storeys = _fetch_storeys("AND UPPER(block) = ? AND UPPER(town) = ?",
                                          (flat_type, block, town))
-            # Step 2: block + road keyword (only when town unavailable; DB uses heavy abbreviations
-            # like BT BATOK so this is unreliable — kept as last-resort before town-wide)
+                if storeys: floor_data_source = 'block'
+            # Step 2: block + road keyword (only when town unavailable)
             if not storeys and block and road:
                 _rp2 = road.upper().split()
                 road_keyword = _rp2[0] if _rp2 else ''
                 if road_keyword:
                     storeys = _fetch_storeys("AND UPPER(block) = ? AND UPPER(street_name) LIKE ?",
                                              (flat_type, block, f'%{road_keyword}%'))
+                    if storeys: floor_data_source = 'block'
             # Step 3: town-wide for this flat type
             if not storeys and town:
                 storeys = _fetch_storeys("AND UPPER(town) = ?", (flat_type, town))
-            # Step 4: flat-type wide across all towns (last resort)
+                if storeys: floor_data_source = 'town'
+            # Step 4: flat-type wide — no block data available, user must enter floor manually
             if not storeys:
                 storeys = _fetch_storeys("", (flat_type,))
+                if storeys: floor_data_source = 'generic'
 
             def _top(s):
                 try: return int(s.split(' TO ')[-1].strip())
@@ -3169,6 +3173,7 @@ def property_areas():
         'max_floor': int(max_floor) if max_floor is not None else 20,
         'storey_ranges': storey_ranges,
         'default_storey_range': default_storey_range,
+        'floor_data_source': floor_data_source if property_type == 'HDB' else 'block',
     })
 
 

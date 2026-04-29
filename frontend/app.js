@@ -257,7 +257,24 @@ async function _loadFlatSpecs() {
         if (!maxFloor) maxFloor = 20;
 
         // ── Floor range dropdown (HDB only) ──────────────────────
-        if (isHdb) _populateFloorRanges(storeyRanges, maxFloor, defaultRange);
+        if (isHdb) {
+            const floorDataSource = data.floor_data_source || 'block';
+            const hasBlockData = floorDataSource === 'block';
+            const sel     = document.getElementById('input-floor-range');
+            const manual  = document.getElementById('input-floor-manual');
+            const hint    = document.getElementById('floor-no-data-hint');
+            window._floorDataSource = floorDataSource;
+            if (!hasBlockData && manual && sel) {
+                sel.classList.add('hidden');
+                manual.classList.remove('hidden');
+                if (hint) hint.classList.remove('hidden');
+            } else if (sel && manual) {
+                sel.classList.remove('hidden');
+                manual.classList.add('hidden');
+                if (hint) hint.classList.add('hidden');
+                _populateFloorRanges(storeyRanges, maxFloor, defaultRange);
+            }
+        }
 
         // ── Floor slider (condo only) ─────────────────────────────
         if (!isHdb) {
@@ -465,11 +482,18 @@ async function handlePredict() {
     const propType = document.getElementById('input-property-type')?.value || 'HDB';
     const isHdb    = propType === 'HDB';
 
-    let floor, flatType, bedrooms;
+    let floor, flatType, bedrooms, floorIsManual = false;
     if (isHdb) {
-        const floorRangeSel = document.getElementById('input-floor-range');
-        const rangeVal = floorRangeSel ? floorRangeSel.value : '10';
-        floor    = _storeyRangeMidpoint(rangeVal);
+        const manualEl = document.getElementById('input-floor-manual');
+        const useManual = manualEl && !manualEl.classList.contains('hidden');
+        if (useManual) {
+            floor = parseInt(manualEl.value || '10');
+            floorIsManual = true;
+        } else {
+            const floorRangeSel = document.getElementById('input-floor-range');
+            const rangeVal = floorRangeSel ? floorRangeSel.value : '10';
+            floor = _storeyRangeMidpoint(rangeVal);
+        }
         flatType = document.getElementById('input-flat-type')?.value || '4 ROOM';
         bedrooms = {'1 ROOM':1,'2 ROOM':2,'3 ROOM':3,'4 ROOM':4,'5 ROOM':5,'EXECUTIVE':6}[flatType] || 4;
     } else {
@@ -493,6 +517,8 @@ async function handlePredict() {
         const data = await response.json();
 
         document.getElementById('output-price').innerText = `S$${data.estimated_value.toLocaleString()}`;
+        const disclaimerEl = document.getElementById('output-floor-disclaimer');
+        if (disclaimerEl) disclaimerEl.classList.toggle('hidden', !floorIsManual);
         document.getElementById('output-confidence').innerText = `${data.confidence}%`;
 
         const mape = propType === 'HDB' ? 0.07 : 0.10;
