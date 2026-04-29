@@ -4373,8 +4373,8 @@ migrate_db()
 
 # Eagerly load ML models at startup so admin panel reflects correct state immediately
 try:
-    from predict import _load_hdb_models, _load_private_models
-    _load_hdb_models()
+    from predict import _load_models, _load_private_models
+    _load_models()
     _load_private_models()
 except Exception as _e:
     print(f"[startup] Model preload skipped: {_e}")
