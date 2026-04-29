@@ -2539,9 +2539,9 @@ def get_agents():
 
 @app.route('/api/chat', methods=['POST'])
 def chatbot():
-    """Property AI chatbot powered by Gemini 2.0 Flash (Google AI)."""
+    """Property AI chatbot powered by Mistral AI (free tier)."""
     import os as _os
-    api_key = _os.environ.get('GEMINI_API_KEY', '')
+    api_key = _os.environ.get('MISTRAL_API_KEY', '')
     if not api_key:
         return jsonify({"reply": "Chatbot is not configured (missing API key)."}), 200
 
@@ -2566,23 +2566,24 @@ def chatbot():
         )
 
         filtered = [m for m in messages[-10:] if m.get('role') in ('user', 'assistant')]
-        contents = [
-            {"role": "model" if m["role"] == "assistant" else "user",
-             "parts": [{"text": m["content"]}]}
-            for m in filtered
-        ]
 
         payload = _json.dumps({
-            "system_instruction": {"parts": [{"text": system_prompt}]},
-            "contents": contents,
-            "generationConfig": {"maxOutputTokens": 512}
+            "model": "mistral-small-latest",
+            "max_tokens": 512,
+            "messages": [{"role": "system", "content": system_prompt}] + filtered
         }).encode()
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
-        req = _ur.Request(url, data=payload, headers={"Content-Type": "application/json"})
+        req = _ur.Request(
+            "https://api.mistral.ai/v1/chat/completions",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}"
+            }
+        )
         resp   = _ur.urlopen(req, timeout=20)
         result = _json.loads(resp.read())
-        reply  = result["candidates"][0]["content"]["parts"][0]["text"]
+        reply  = result["choices"][0]["message"]["content"]
         return jsonify({"reply": reply})
     except Exception as e:
         print(f"[chat] ERROR: {type(e).__name__}: {e}")
