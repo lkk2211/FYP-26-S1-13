@@ -4309,6 +4309,14 @@ def admin_audit_log():
 init_db()
 migrate_db()
 
+# Eagerly load ML models at startup so admin panel reflects correct state immediately
+try:
+    from predict import _load_hdb_models, _load_private_models
+    _load_hdb_models()
+    _load_private_models()
+except Exception as _e:
+    print(f"[startup] Model preload skipped: {_e}")
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 3000))
     app.run(host='0.0.0.0', port=port, debug=not USE_POSTGRES)
