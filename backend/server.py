@@ -3000,6 +3000,27 @@ def property_areas():
     town          = request.args.get('town', '').strip().upper()
     project_name  = request.args.get('project', '').strip().upper()
 
+    # If town missing (planning area API failed upstream), derive from DB using block + road first word
+    if not town and block and property_type == 'HDB':
+        try:
+            _tc = get_db(); _tcu = _cursor(_tc)
+            road_kw = road.split()[0] if road else ''
+            if road_kw:
+                _tcu.execute(_q(
+                    "SELECT town FROM resale_flat_prices "
+                    "WHERE UPPER(block) = ? AND UPPER(street_name) LIKE ? AND town IS NOT NULL LIMIT 1"
+                ), (block, f'%{road_kw}%'))
+            else:
+                _tcu.execute(_q(
+                    "SELECT town FROM resale_flat_prices WHERE UPPER(block) = ? AND town IS NOT NULL LIMIT 1"
+                ), (block,))
+            _tr = _tcu.fetchone()
+            _tc.close()
+            if _tr:
+                town = str(_tr['town'] if hasattr(_tr, '__getitem__') else _tr[0]).strip().upper()
+        except Exception:
+            pass
+
     # Postal sector → URA postal district mapping (first 2 postal digits)
     _SECTOR_TO_DISTRICT = {
         '01':'D01','02':'D01','03':'D01','04':'D01','05':'D01','06':'D01',
