@@ -2734,7 +2734,12 @@ def property_lookup():
         if not town and is_hdb and blk_no and road_name:
             try:
                 _dbc2 = get_db(); _dbc2_cur = _cursor(_dbc2)
-                _rp_fb = road_name.upper().split()
+                _road_norm_fb = (road_name.upper()
+                                 .replace(' ROAD',' RD').replace(' AVENUE',' AVE')
+                                 .replace(' STREET',' ST').replace(' DRIVE',' DR')
+                                 .replace(' CRESCENT',' CRES').replace(' CLOSE',' CL')
+                                 .replace(' PLACE',' PL').replace(' BOULEVARD',' BLVD'))
+                _rp_fb = _road_norm_fb.split()
                 _road_kw_fb = ' '.join(_rp_fb[:2]) if len(_rp_fb) >= 2 else (_rp_fb[0] if _rp_fb else '')
                 if _road_kw_fb:
                     _dbc2_cur.execute(_q(
@@ -2753,6 +2758,15 @@ def property_lookup():
         max_floor     = None
         project_name  = building if not is_hdb else ''
 
+        def _normalize_road(r):
+            """Normalise OneMap road names to match HDB DB abbreviations."""
+            return (r.upper()
+                    .replace(' ROAD', ' RD').replace(' AVENUE', ' AVE')
+                    .replace(' STREET', ' ST').replace(' DRIVE', ' DR')
+                    .replace(' CRESCENT', ' CRES').replace(' CLOSE', ' CL')
+                    .replace(' PLACE', ' PL').replace(' BOULEVARD', ' BLVD')
+                    .replace(' CENTRAL', ' CTRL').replace(' WALK', ' WK'))
+
         try:
             import re as _re2
             dbc = get_db(); dbc_cur = _cursor(dbc)
@@ -2766,10 +2780,10 @@ def property_lookup():
                             for r in dbc_cur.fetchall()]
 
                 block_upper = blk_no.upper()
-                road_upper  = road_name.upper()
+                road_norm   = _normalize_road(road_name)
 
-                # Step 1: block + road (use first two words, e.g. 'BUKIT BATOK' not just 'BUKIT')
-                _rp = road_upper.split()
+                # Step 1: block + road (normalised, first two words e.g. 'CANTONMENT RD')
+                _rp = road_norm.split()
                 road_keyword = ' '.join(_rp[:2]) if len(_rp) >= 2 else (_rp[0] if _rp else '')
                 srs = _q_storeys("AND UPPER(street_name) LIKE ?",
                                  (block_upper, f'%{road_keyword}%')) if road_keyword else []
@@ -3039,8 +3053,14 @@ def property_areas():
                 return [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0]) for r in rows]
 
             storeys = []
-            # Step 1: block + first word of road (avoids too-short / too-broad matches)
-            _rp2 = road.split()
+            # Step 1: block + road (normalised abbreviations, first two words)
+            _road_norm2 = (road.upper()
+                           .replace(' ROAD',' RD').replace(' AVENUE',' AVE')
+                           .replace(' STREET',' ST').replace(' DRIVE',' DR')
+                           .replace(' CRESCENT',' CRES').replace(' CLOSE',' CL')
+                           .replace(' PLACE',' PL').replace(' BOULEVARD',' BLVD')
+                           .replace(' CENTRAL',' CTRL').replace(' WALK',' WK'))
+            _rp2 = _road_norm2.split()
             road_keyword = ' '.join(_rp2[:2]) if len(_rp2) >= 2 else (_rp2[0] if _rp2 else '')
             if block and road_keyword:
                 storeys = _fetch_storeys("AND UPPER(block) = ? AND UPPER(street_name) LIKE ?",
