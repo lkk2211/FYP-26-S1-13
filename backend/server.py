@@ -1189,12 +1189,12 @@ def get_news():
 
     if postal:
         area      = postal_to_area(postal)
-        cache_key = f'postal:{postal}'
-        query     = f'singapore {area} HDB property resale BTO 2024 2025 2026'
+        cache_key = f'postal2:{postal}'
+        query     = f'"{area}" Singapore property resale 2025 2026'
         ttl_hrs   = 4
     elif neighbourhood:
-        cache_key = f'hood:{neighbourhood}'
-        query     = f'singapore {neighbourhood} HDB property resale 2024 2025 2026'
+        cache_key = f'hood2:{neighbourhood}'
+        query     = f'"{neighbourhood}" Singapore property resale 2025 2026'
         ttl_hrs   = 4
     else:
         cache_key = 'general'
@@ -3039,11 +3039,9 @@ def property_areas():
                 try: return int(s.split(' TO ')[-1].strip())
                 except: return 0
 
-            import statistics as _stats
             top_floors = [_top(s) for s in storeys]
             if top_floors:
-                # Use median top floor so a single high-rise doesn't inflate the default
-                max_floor = int(_stats.median(top_floors))
+                max_floor = max(top_floors)
 
             raw_ranges = sorted(
                 set(storeys),
