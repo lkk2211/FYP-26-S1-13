@@ -1076,7 +1076,7 @@ POSTAL_DISTRICTS = {
     '58': 'Upper Thomson', '59': 'Yio Chu Kang',   '60': 'Hougang',
     '61': 'Hougang',       '62': 'Sengkang',       '63': 'Sengkang',
     '64': 'Punggol',       '65': 'Bukit Batok',    '66': 'Bukit Batok',
-    '67': 'Loyang',        '68': 'Changi',         '69': 'Jurong West',
+    '67': 'Bukit Panjang', '68': 'Changi',         '69': 'Jurong West',
     '70': 'Jurong West',   '71': 'Boon Lay',       '72': 'Jurong East',
     '73': 'Jurong East',   '75': 'Clementi',       '76': 'West Coast',
     '77': 'Queenstown',    '78': 'Toa Payoh',      '79': 'Marine Parade',
