@@ -2539,9 +2539,9 @@ def get_agents():
 
 @app.route('/api/chat', methods=['POST'])
 def chatbot():
-    """Property AI chatbot powered by Claude Haiku (Anthropic)."""
+    """Property AI chatbot powered by Gemini 1.5 Flash (Google AI)."""
     import os as _os
-    api_key = _os.environ.get('ANTHROPIC_API_KEY', '')
+    api_key = _os.environ.get('GEMINI_API_KEY', '')
     if not api_key:
         return jsonify({"reply": "Chatbot is not configured (missing API key)."}), 200
 
@@ -2565,35 +2565,34 @@ def chatbot():
             "If someone asks for a specific property valuation, suggest they use the Predict tab."
         )
 
-        # Anthropic API expects only user/assistant roles in messages array
+        # Gemini expects contents array with role "user"/"model"
         filtered = [m for m in messages[-10:] if m.get('role') in ('user', 'assistant')]
+        contents = [
+            {"role": "model" if m["role"] == "assistant" else "user",
+             "parts": [{"text": m["content"]}]}
+            for m in filtered
+        ]
 
         payload = _json.dumps({
-            "model": "claude-haiku-4-5-20251001",
-            "max_tokens": 512,
-            "system": system_prompt,
-            "messages": filtered
+            "system_instruction": {"parts": [{"text": system_prompt}]},
+            "contents": contents,
+            "generationConfig": {"maxOutputTokens": 512}
         }).encode()
 
-        req = _ur.Request(
-            "https://api.anthropic.com/v1/messages",
-            data=payload,
-            headers={
-                "Content-Type": "application/json",
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01"
-            }
-        )
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+        req = _ur.Request(url, data=payload, headers={"Content-Type": "application/json"})
         resp   = _ur.urlopen(req, timeout=20)
         result = _json.loads(resp.read())
-        reply  = result["content"][0]["text"]
+        reply  = result["candidates"][0]["content"]["parts"][0]["text"]
         return jsonify({"reply": reply})
     except Exception as e:
         print(f"[chat] ERROR: {type(e).__name__}: {e}")
         if isinstance(e, _ue.HTTPError):
             body = e.read().decode('utf-8', 'replace')[:400]
             print(f"[chat] HTTP {e.code}: {body}")
-            if e.code == 401:
+            if e.code == 400:
+                return jsonify({"reply": "Kai is currently unavailable — invalid request. Please try again later."}), 200
+            if e.code == 403:
                 return jsonify({"reply": "Kai is currently unavailable — API authentication failed. Please try again later."}), 200
         return jsonify({"reply": "Sorry, I'm having trouble right now. Please try again shortly."}), 200
 
