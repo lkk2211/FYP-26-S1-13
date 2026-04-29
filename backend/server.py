@@ -2579,7 +2579,7 @@ def chatbot():
             "generationConfig": {"maxOutputTokens": 512}
         }).encode()
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
         req = _ur.Request(url, data=payload, headers={"Content-Type": "application/json"})
         resp   = _ur.urlopen(req, timeout=20)
         result = _json.loads(resp.read())
