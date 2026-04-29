@@ -2780,22 +2780,23 @@ def property_lookup():
                             for r in dbc_cur.fetchall()]
 
                 block_upper = blk_no.upper()
-                road_norm   = _normalize_road(road_name)
 
-                # Step 1: block + road (normalised, first two words e.g. 'CANTONMENT RD')
-                _rp = road_norm.split()
-                road_keyword = ' '.join(_rp[:2]) if len(_rp) >= 2 else (_rp[0] if _rp else '')
-                srs = _q_storeys("AND UPPER(street_name) LIKE ?",
-                                 (block_upper, f'%{road_keyword}%')) if road_keyword else []
-
-                # Step 2: block + town (skip block-only — it matches blocks from other towns)
-                if not srs and town:
+                # Step 1: block + town — most reliable; HDB block numbers unique within a town
+                srs = []
+                if town:
                     dbc_cur.execute(_q(
                         "SELECT DISTINCT storey_range FROM resale_flat_prices "
                         "WHERE UPPER(block) = ? AND UPPER(town) = ? AND storey_range LIKE '% TO %' ORDER BY storey_range"
                     ), (block_upper, town.upper()))
                     srs = [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0])
                            for r in dbc_cur.fetchall()]
+
+                # Step 2: block + road first word (only when town missing; unreliable due to DB abbreviations)
+                if not srs and road_name:
+                    road_keyword = road_name.upper().split()[0] if road_name else ''
+                    if road_keyword:
+                        srs = _q_storeys("AND UPPER(street_name) LIKE ?",
+                                         (block_upper, f'%{road_keyword}%'))
 
                 # Step 3: town-wide fallback — typical ranges for any flat in this town
                 if not srs and town:
@@ -3053,22 +3054,18 @@ def property_areas():
                 return [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0]) for r in rows]
 
             storeys = []
-            # Step 1: block + road (normalised abbreviations, first two words)
-            _road_norm2 = (road.upper()
-                           .replace(' ROAD',' RD').replace(' AVENUE',' AVE')
-                           .replace(' STREET',' ST').replace(' DRIVE',' DR')
-                           .replace(' CRESCENT',' CRES').replace(' CLOSE',' CL')
-                           .replace(' PLACE',' PL').replace(' BOULEVARD',' BLVD')
-                           .replace(' CENTRAL',' CTRL').replace(' WALK',' WK'))
-            _rp2 = _road_norm2.split()
-            road_keyword = ' '.join(_rp2[:2]) if len(_rp2) >= 2 else (_rp2[0] if _rp2 else '')
-            if block and road_keyword:
-                storeys = _fetch_storeys("AND UPPER(block) = ? AND UPPER(street_name) LIKE ?",
-                                         (flat_type, block, f'%{road_keyword}%'))
-            # Step 2: block + town (skip block-only — same block number exists in many towns)
-            if not storeys and block and town:
+            # Step 1: block + town — most reliable; HDB block numbers are unique within a town
+            if block and town:
                 storeys = _fetch_storeys("AND UPPER(block) = ? AND UPPER(town) = ?",
                                          (flat_type, block, town))
+            # Step 2: block + road keyword (only when town unavailable; DB uses heavy abbreviations
+            # like BT BATOK so this is unreliable — kept as last-resort before town-wide)
+            if not storeys and block and road:
+                _rp2 = road.upper().split()
+                road_keyword = _rp2[0] if _rp2 else ''
+                if road_keyword:
+                    storeys = _fetch_storeys("AND UPPER(block) = ? AND UPPER(street_name) LIKE ?",
+                                             (flat_type, block, f'%{road_keyword}%'))
             # Step 3: town-wide for this flat type
             if not storeys and town:
                 storeys = _fetch_storeys("AND UPPER(town) = ?", (flat_type, town))
