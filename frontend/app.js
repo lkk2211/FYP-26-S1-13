@@ -2863,7 +2863,7 @@ async function loadModelStatus() {
                 } else {
                     date.textContent = 'Last updated: unknown';
                 }
-                // Eval metrics (only present after a retrain with the new training script)
+                // Eval metrics
                 const ev = info.eval || {};
                 const metricsEl = document.getElementById(`model-${key}-metrics`);
                 if (metricsEl && (ev.eval_mape != null || ev.eval_mae != null || ev.eval_r2 != null)) {
@@ -2874,6 +2874,20 @@ async function loadModelStatus() {
                     document.getElementById(`model-${key}-r2`).textContent =
                         ev.eval_r2 != null ? ev.eval_r2.toFixed(4) : '—';
                     metricsEl.classList.remove('hidden');
+                }
+                // Loaded models badge
+                const loaded = info.loaded_models || [];
+                const modelsEl = document.getElementById(`model-${key}-loaded`);
+                if (modelsEl) {
+                    if (loaded.length > 0) {
+                        modelsEl.textContent = loaded.join(' + ').toUpperCase();
+                        modelsEl.className = loaded.length >= 3
+                            ? 'text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700'
+                            : 'text-xs font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700';
+                    } else {
+                        modelsEl.textContent = 'not loaded yet';
+                        modelsEl.className = 'text-xs text-slate-400';
+                    }
                 }
             } else {
                 dot.className     = 'w-2.5 h-2.5 rounded-full bg-rose-400';

@@ -3623,10 +3623,19 @@ def model_status():
             except Exception:
                 pass
         return {'live': live, 'trained_at': trained_at, 'eval': eval_metrics}
-    return jsonify({
-        'hdb':     _check('xgb_pipeline.joblib',         'meta.joblib'),
-        'private': _check('xgb_private_pipeline.joblib', 'meta_private.joblib'),
-    })
+    from predict import _pipelines, _private_pipelines, _meta, _private_meta
+    def _loaded_names(pipelines, meta):
+        if pipelines is None:
+            return []
+        order = (meta or {}).get('model_names', ['xgb', 'lgbm', 'cat'])
+        return order[:len(pipelines)]
+
+    hdb_info     = _check('xgb_pipeline.joblib',         'meta.joblib')
+    private_info = _check('xgb_private_pipeline.joblib', 'meta_private.joblib')
+    hdb_info['loaded_models']     = _loaded_names(_pipelines,         _meta)
+    private_info['loaded_models'] = _loaded_names(_private_pipelines, _private_meta)
+    hdb_info['load_all_enabled']  = os.environ.get('LOAD_ALL_MODELS', '0') == '1'
+    return jsonify({'hdb': hdb_info, 'private': private_info})
 
 
 _ALLOWED_MODEL_FILES = {
