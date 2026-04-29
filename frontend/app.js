@@ -2875,15 +2875,18 @@ async function loadModelStatus() {
                         ev.eval_r2 != null ? ev.eval_r2.toFixed(4) : '—';
                     metricsEl.classList.remove('hidden');
                 }
-                // Loaded models badge
+                // Loaded models + stacker badge
                 const loaded = info.loaded_models || [];
                 const modelsEl = document.getElementById(`model-${key}-loaded`);
                 if (modelsEl) {
                     if (loaded.length > 0) {
-                        modelsEl.textContent = loaded.join(' + ').toUpperCase();
+                        const stackerTag = info.stacker_active
+                            ? ' <span class="ml-1 px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 text-[10px] font-bold">+ HuberRegressor</span>'
+                            : ' <span class="ml-1 px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[10px]">mean fallback</span>';
+                        modelsEl.innerHTML = `<span class="font-bold">${loaded.join(' + ').toUpperCase()}</span>${stackerTag}`;
                         modelsEl.className = loaded.length >= 3
-                            ? 'text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700'
-                            : 'text-xs font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700';
+                            ? 'text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 flex items-center gap-1'
+                            : 'text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 flex items-center gap-1';
                     } else {
                         modelsEl.textContent = 'not loaded yet';
                         modelsEl.className = 'text-xs text-slate-400';

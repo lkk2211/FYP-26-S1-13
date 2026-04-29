@@ -3630,11 +3630,19 @@ def model_status():
         order = (meta or {}).get('model_names', ['xgb', 'lgbm', 'cat'])
         return order[:len(pipelines)]
 
+    def _stacker_active(pipelines, meta):
+        if not pipelines or not meta:
+            return False
+        coef = meta.get('stacker_coef')
+        return bool(coef and len(coef) == len(pipelines))
+
     hdb_info     = _check('xgb_pipeline.joblib',         'meta.joblib')
     private_info = _check('xgb_private_pipeline.joblib', 'meta_private.joblib')
-    hdb_info['loaded_models']     = _loaded_names(_pipelines,         _meta)
-    private_info['loaded_models'] = _loaded_names(_private_pipelines, _private_meta)
-    hdb_info['load_all_enabled']  = os.environ.get('LOAD_ALL_MODELS', '0') == '1'
+    hdb_info['loaded_models']      = _loaded_names(_pipelines,         _meta)
+    private_info['loaded_models']  = _loaded_names(_private_pipelines, _private_meta)
+    hdb_info['stacker_active']     = _stacker_active(_pipelines,         _meta)
+    private_info['stacker_active'] = _stacker_active(_private_pipelines, _private_meta)
+    hdb_info['load_all_enabled']   = os.environ.get('LOAD_ALL_MODELS', '0') == '1'
     return jsonify({'hdb': hdb_info, 'private': private_info})
 
 
