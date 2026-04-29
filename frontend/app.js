@@ -275,6 +275,10 @@ async function _loadFlatSpecs() {
         }
         if (!maxFloor) maxFloor = 20;
 
+        // Keep _cachedMaxFloor in sync — property-areas may have a better value
+        // (e.g. sibling-block fallback) than what property-lookup returned
+        if (maxFloor > (_cachedMaxFloor || 0)) _cachedMaxFloor = maxFloor;
+
         // ── Floor range dropdown (HDB only) ──────────────────────
         if (isHdb) {
             const floorDataSource = data.floor_data_source || 'block';
@@ -684,13 +688,18 @@ async function handlePredict() {
         }
 
         // What-if sliders — initialise with current prediction values
+        // Use _cachedMaxFloor (kept in sync by _loadFlatSpecs); fall back to
+        // manual floor value so the slider at least starts at the right level
+        const wiMaxFloor = _cachedMaxFloor
+            || (floorIsManual ? Math.max((body.floor || 10) + 10, 30) : null)
+            || (isHdb ? 50 : 50);
         initWhatIfSliders({
             floor:      body.floor || 10,
             lease:      data.remaining_lease_years || window._cachedRemainingLease || 65,
             basePrice:  data.estimated_value,
             isCondo:    propType.toLowerCase().includes('condo') || propType.toLowerCase().includes('private'),
             isFreehold: isFreehold,
-            maxFloor:   _cachedMaxFloor || (isHdb ? 50 : 50),
+            maxFloor:   wiMaxFloor,
         });
 
         // Save to recent searches
