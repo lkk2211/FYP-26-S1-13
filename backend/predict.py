@@ -428,7 +428,9 @@ def _load_private_models():
                     print(f"[predict] Skipping {fname}: {ex}")
 
         # Build pipeline list in training order so stacker coefficients align
-        training_order = meta.get('model_names') or ['xgb', 'lgbm', 'cat']
+        # Normalise names: private model meta stores 'xgb_private' but loaded dict uses 'xgb'
+        raw_order    = meta.get('model_names') or ['xgb', 'lgbm', 'cat']
+        training_order = [n.replace('_private', '') for n in raw_order]
         _private_pipelines = [loaded[n] for n in training_order if n in loaded]
 
         # Narrow stacker coefficients to only the models that actually loaded

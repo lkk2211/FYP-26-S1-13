@@ -3689,7 +3689,8 @@ def model_status():
     def _loaded_names(pipelines, meta):
         if pipelines is None:
             return []
-        order = (meta or {}).get('model_names', ['xgb', 'lgbm', 'cat'])
+        raw   = (meta or {}).get('model_names', ['xgb', 'lgbm', 'cat'])
+        order = [n.replace('_private', '') for n in raw]
         return order[:len(pipelines)]
 
     def _stacker_active(pipelines, meta):
