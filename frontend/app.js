@@ -178,6 +178,25 @@ const _BEDS_TO_FLAT_TYPE = {
     1: '1 ROOM', 2: '2 ROOM', 3: '3 ROOM', 4: '4 ROOM', 5: '5 ROOM', 6: 'EXECUTIVE',
 };
 
+function setManualFloor(val, btn) {
+    const el = document.getElementById('input-floor-manual');
+    if (el) el.value = val;
+    document.querySelectorAll('.floor-quick-btn').forEach(b => {
+        b.classList.remove('border-blue-500','bg-blue-50','text-blue-700');
+        b.classList.add('border-slate-200','bg-slate-50','text-slate-600');
+    });
+    if (btn) {
+        btn.classList.add('border-blue-500','bg-blue-50','text-blue-700');
+        btn.classList.remove('border-slate-200','bg-slate-50','text-slate-600');
+    }
+}
+
+function adjustManualFloor(delta) {
+    const el = document.getElementById('input-floor-manual');
+    if (!el) return;
+    el.value = Math.max(1, Math.min(99, (parseInt(el.value) || 10) + delta));
+}
+
 function _storeyRangeMidpoint(range) {
     const parts = range.split(' TO ');
     if (parts.length === 2) return Math.round((parseInt(parts[0]) + parseInt(parts[1])) / 2);
@@ -260,18 +279,15 @@ async function _loadFlatSpecs() {
         if (isHdb) {
             const floorDataSource = data.floor_data_source || 'block';
             const hasBlockData = floorDataSource === 'block';
-            const sel     = document.getElementById('input-floor-range');
-            const manual  = document.getElementById('input-floor-manual');
-            const hint    = document.getElementById('floor-no-data-hint');
+            const sel  = document.getElementById('input-floor-range');
+            const wrap = document.getElementById('floor-manual-wrap');
             window._floorDataSource = floorDataSource;
-            if (!hasBlockData && manual && sel) {
-                sel.classList.add('hidden');
-                manual.classList.remove('hidden');
-                if (hint) hint.classList.remove('hidden');
-            } else if (sel && manual) {
-                sel.classList.remove('hidden');
-                manual.classList.add('hidden');
-                if (hint) hint.classList.add('hidden');
+            if (!hasBlockData) {
+                if (sel)  sel.classList.add('hidden');
+                if (wrap) wrap.classList.remove('hidden');
+            } else {
+                if (sel)  sel.classList.remove('hidden');
+                if (wrap) wrap.classList.add('hidden');
                 _populateFloorRanges(storeyRanges, maxFloor, defaultRange);
             }
         }
@@ -377,9 +393,11 @@ async function handlePostalSearch() {
         const placeholder = document.getElementById('postal-placeholder');
         const details     = document.getElementById('postal-details');
         const landedBanner = document.getElementById('landed-rejection');
+        const postalLoadingEl = document.getElementById('postal-loading');
         placeholder.classList.add('hidden');
-        details.classList.add('hidden');          // will be revealed by property-lookup
+        details.classList.add('hidden');
         if (landedBanner) landedBanner.classList.add('hidden');
+        if (postalLoadingEl) postalLoadingEl.classList.remove('hidden');
 
         // Auto-fill property type + lease type from backend; detect landed
         fetch(`/api/property-lookup?postal=${encodeURIComponent(postal)}`)
@@ -402,9 +420,19 @@ async function handlePostalSearch() {
                     return;
                 }
 
-                // Valid HDB or Condo — show details
+                // Valid HDB or Condo — hide skeleton, show details
+                if (postalLoadingEl) postalLoadingEl.classList.add('hidden');
                 if (landedEl)  landedEl.classList.add('hidden');
                 if (detailsEl) detailsEl.classList.remove('hidden');
+
+                // Save to recent searches on property lookup (no estimate yet)
+                saveRecentSearch({
+                    postal,
+                    address: document.getElementById('display-address')?.innerText || postal,
+                    property_type: info.property_type || 'HDB',
+                    estimate: null,
+                    date: new Date().toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' })
+                });
 
                 if (info.property_type) {
                     const ptEl = document.getElementById('input-property-type');
@@ -451,8 +479,13 @@ async function handlePostalSearch() {
                 // Show/hide correct spec section, then apply cached floor data
                 _onPropertyTypeChange();
             })
-            .catch(() => { openPropertyNotFoundModal(postal); });
+            .catch(() => {
+                if (postalLoadingEl) postalLoadingEl.classList.add('hidden');
+                if (placeholder) placeholder.classList.remove('hidden');
+                openPropertyNotFoundModal(postal);
+            });
     } catch {
+        if (postalLoadingEl) postalLoadingEl.classList.add('hidden');
         errorEl.textContent = 'Unable to search. Please try again.';
         errorEl.classList.remove('hidden');
     }
@@ -500,7 +533,8 @@ async function handlePredict() {
     let floor, flatType, bedrooms, floorIsManual = false;
     if (isHdb) {
         const manualEl = document.getElementById('input-floor-manual');
-        const useManual = manualEl && !manualEl.classList.contains('hidden');
+        const wrapEl   = document.getElementById('floor-manual-wrap');
+        const useManual = wrapEl && !wrapEl.classList.contains('hidden');
         if (useManual) {
             floor = parseInt(manualEl.value || '10');
             floorIsManual = true;
