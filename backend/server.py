@@ -2813,7 +2813,14 @@ def property_lookup():
 
                 block_upper = blk_no.upper()
 
-                # Step 1: block + town — most reliable; HDB block numbers unique within a town
+                def _lk_top(s):
+                    try: return int(s.split(' TO ')[-1].strip())
+                    except: return 0
+
+                def _lk_gen(mf):
+                    return [f'{lo:02d} TO {min(lo+2,mf):02d}' for lo in range(1, mf+1, 3)]
+
+                # Step 1: block + town (any flat type) — gives building height even with few transactions
                 srs = []
                 if town:
                     dbc_cur.execute(_q(
@@ -2822,8 +2829,11 @@ def property_lookup():
                     ), (block_upper, town.upper()))
                     srs = [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0])
                            for r in dbc_cur.fetchall()]
+                    if srs:
+                        max_floor = max(_lk_top(s) for s in srs)
+                        srs = _lk_gen(max_floor)
 
-                # Step 2: block + road first word (only when town missing; unreliable due to DB abbreviations)
+                # Step 2: block + road first word (only when town missing)
                 if not srs and road_name:
                     road_keyword = road_name.upper().split()[0] if road_name else ''
                     if road_keyword:
@@ -3087,11 +3097,40 @@ def property_areas():
 
             storeys = []
             floor_data_source = 'none'
-            # Step 1: block + town — most reliable; HDB block numbers are unique within a town
+
+            def _top(s):
+                try: return int(s.split(' TO ')[-1].strip())
+                except: return 0
+
+            def _gen_ranges(mf):
+                """Generate synthetic storey ranges up to max_floor in steps of 3."""
+                out = []
+                for lo in range(1, mf + 1, 3):
+                    hi = min(lo + 2, mf)
+                    out.append(f'{lo:02d} TO {hi:02d}')
+                return out
+
+            # Step 1: block + town, specific flat type
             if block and town:
                 storeys = _fetch_storeys("AND UPPER(block) = ? AND UPPER(town) = ?",
                                          (flat_type, block, town))
                 if storeys: floor_data_source = 'block'
+
+            # Step 1b: block + town, ANY flat type — gets building height even if
+            # this flat type has no transactions (common for newer/rarer blocks)
+            if not storeys and block and town:
+                cur.execute(_q(
+                    "SELECT DISTINCT storey_range FROM resale_flat_prices "
+                    "WHERE UPPER(block) = ? AND UPPER(town) = ? AND storey_range LIKE '% TO %' "
+                    "ORDER BY storey_range"
+                ), (block, town))
+                all_ft = [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0])
+                          for r in cur.fetchall()]
+                if all_ft:
+                    max_floor = max(_top(s) for s in all_ft)
+                    storeys = _gen_ranges(max_floor)
+                    floor_data_source = 'block'
+
             # Step 2: block + road keyword (only when town unavailable)
             if not storeys and block and road:
                 _rp2 = road.upper().split()
@@ -3100,18 +3139,15 @@ def property_areas():
                     storeys = _fetch_storeys("AND UPPER(block) = ? AND UPPER(street_name) LIKE ?",
                                              (flat_type, block, f'%{road_keyword}%'))
                     if storeys: floor_data_source = 'block'
+
             # Step 3: town-wide for this flat type
             if not storeys and town:
                 storeys = _fetch_storeys("AND UPPER(town) = ?", (flat_type, town))
                 if storeys: floor_data_source = 'town'
-            # Step 4: flat-type wide — no block data available, user must enter floor manually
-            if not storeys:
-                storeys = _fetch_storeys("", (flat_type,))
-                if storeys: floor_data_source = 'generic'
 
-            def _top(s):
-                try: return int(s.split(' TO ')[-1].strip())
-                except: return 0
+            # Step 4: no data at all — user must enter floor manually
+            if not storeys:
+                floor_data_source = 'none'
 
             top_floors = [_top(s) for s in storeys]
             if top_floors:

@@ -467,6 +467,21 @@ async function handlePredict() {
     btn.innerHTML = '<i data-lucide="loader-2" class="w-6 h-6 animate-spin"></i> Calculating...';
     lucide.createIcons();
 
+    // Show skeleton immediately
+    togglePredictView('output');
+    const loadingEl  = document.getElementById('predict-loading');
+    const resultsEl  = document.getElementById('predict-results');
+    const loadingMsg = document.getElementById('predict-loading-msg');
+    if (loadingEl)  loadingEl.classList.remove('hidden');
+    if (resultsEl)  resultsEl.classList.add('hidden');
+
+    const steps = ['Analysing property…', 'Running AI model…', 'Generating insights…'];
+    let stepIdx = 0;
+    const stepTimer = setInterval(() => {
+        stepIdx = Math.min(stepIdx + 1, steps.length - 1);
+        if (loadingMsg) loadingMsg.textContent = steps[stepIdx];
+    }, 1800);
+
     // Reset dynamic sections so stale charts from prior search never linger
     ['forecast-section','shap-section','whatif-section','safe-buy-section','amenity-future-section'].forEach(id => {
         const el = document.getElementById(id);
@@ -584,7 +599,12 @@ async function handlePredict() {
             </div>
         `).join('');
 
-        togglePredictView('output');
+        // Hide skeleton, show results
+        clearInterval(stepTimer);
+        if (loadingEl) loadingEl.classList.add('hidden');
+        if (resultsEl) resultsEl.classList.remove('hidden');
+
+        // Fire non-blocking secondary calls in parallel
         renderPredictNews(postal, _predictTown);
 
         // Lease decay chart — prefer property-lookup remaining lease, fall back to model median
@@ -649,6 +669,9 @@ async function handlePredict() {
 
     } catch (e) {
         console.error(e);
+        clearInterval(stepTimer);
+        if (loadingEl) loadingEl.classList.add('hidden');
+        if (resultsEl) resultsEl.classList.remove('hidden');
         alert('Local backend not detected. Showing demo data.');
         showDemoResult();
     } finally {
