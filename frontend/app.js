@@ -241,9 +241,7 @@ async function _loadFlatSpecs() {
         const ft   = ftEl ? ftEl.value : '4 ROOM';
         urlExtra = `&flat_type=${encodeURIComponent(ft)}`;
     } else {
-        const bedsEl = document.getElementById('range-bedrooms');
-        const beds   = bedsEl ? parseInt(bedsEl.value) : 3;
-        urlExtra = `&bedrooms=${beds}`;
+        urlExtra = '';   // condo: no bedroom filter — floor area comes from project/district URA data
     }
 
     try {
@@ -547,7 +545,7 @@ async function handlePredict() {
     const propType = document.getElementById('input-property-type')?.value || 'HDB';
     const isHdb    = propType === 'HDB';
 
-    let floor, flatType, bedrooms, floorIsManual = false;
+    let floor, flatType, floorIsManual = false;
     if (isHdb) {
         const manualEl = document.getElementById('input-floor-manual');
         const wrapEl   = document.getElementById('floor-manual-wrap');
@@ -561,15 +559,13 @@ async function handlePredict() {
             floor = _storeyRangeMidpoint(rangeVal);
         }
         flatType = document.getElementById('input-flat-type')?.value || '4 ROOM';
-        bedrooms = {'1 ROOM':1,'2 ROOM':2,'3 ROOM':3,'4 ROOM':4,'5 ROOM':5,'EXECUTIVE':6}[flatType] || 4;
     } else {
         floor    = parseInt(document.getElementById('range-floor')?.value || 10);
-        bedrooms = parseInt(document.getElementById('range-bedrooms')?.value || 3);
         flatType = null;
     }
 
     try {
-        const body = { postal, area, bedrooms, floor, property_type: propType, town: _predictTown };
+        const body = { postal, area, floor, property_type: propType, town: _predictTown };
         if (flatType) body.flat_type = flatType;
         if (window._cachedRemainingLease != null) body.remaining_lease_years = window._cachedRemainingLease;
         if (_cachedMaxFloor)              body.max_floor            = _cachedMaxFloor;

@@ -3159,15 +3159,12 @@ def property_areas():
         '79':'D28','80':'D28',
     }
 
-    # Fallback condo floor areas (sqft) by bedroom count — typical Singapore condo sizes
-    _CONDO_PRESETS = {
-        1: [484, 506, 527, 560, 614, 635, 700],
-        2: [764, 807, 850, 915, 969, 1044],
-        3: [1098, 1163, 1216, 1302, 1389, 1453],
-        4: [1432, 1550, 1604, 1722, 1830, 1981],
-        5: [2000, 2153, 2400, 2583, 2800, 3000],
-        6: [2500, 3000, 3500, 4000, 4500, 5000],
-    }
+    # Fallback condo floor areas (sqft) — general range spanning studio to large units
+    # Used only when no URA transaction data is available for the project/district
+    _CONDO_FALLBACK = [
+        431, 484, 560, 614, 700, 764, 850, 915, 969,
+        1044, 1163, 1302, 1453, 1604, 1830, 2000, 2400,
+    ]
 
     _BEDS_TO_FLAT = {1:'1 ROOM',2:'2 ROOM',3:'3 ROOM',4:'4 ROOM',5:'5 ROOM',6:'EXECUTIVE'}
     flat_type_param = request.args.get('flat_type', '').strip().upper()
@@ -3412,7 +3409,7 @@ def property_areas():
             }
             floor_areas = _HDB_PRESETS_SQM.get(flat_type, [65,85,105])
         else:
-            floor_areas = _CONDO_PRESETS.get(bedrooms, _CONDO_PRESETS[3])
+            floor_areas = _CONDO_FALLBACK
 
     # When no block data found, provide town-wide max as a hint for the manual input
     town_max_floor = None
