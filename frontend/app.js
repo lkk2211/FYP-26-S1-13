@@ -3762,13 +3762,53 @@ function toggleChat() {
     _chatOpen = !_chatOpen;
     const panel = document.getElementById('chat-panel');
     const emoji = document.getElementById('chat-toggle-emoji');
+    const img   = document.getElementById('chat-toggle-img');
     if (panel) panel.style.display = _chatOpen ? 'flex' : 'none';
-    if (emoji) emoji.textContent   = _chatOpen ? '✕' : '🏡';
     if (_chatOpen) {
+        _hideChatNudge();
+        if (img)   { img.style.display = 'none'; }
+        if (emoji) { emoji.textContent = '✕'; emoji.style.display = 'flex'; }
         const input = document.getElementById('chat-input');
         if (input) setTimeout(() => input.focus(), 150);
+    } else {
+        if (img)   { img.style.display = ''; }
+        if (emoji) { emoji.style.display = 'none'; }
     }
 }
+
+const _nudgeMessages = [
+    "Need help figuring out your budget? I can crunch the numbers! 🏠",
+    "Wondering how much CPF you can use? Just ask Kai!",
+    "Curious about ABSD rates for second properties? I've got you covered.",
+    "Not sure if it's a good time to buy? Let's talk market trends.",
+    "Got a postal code? Ask me what it's worth right now!",
+    "Thinking of upgrading from HDB to condo? I can walk you through it.",
+];
+let _nudgeCount = 0;
+let _nudgeTimer = null;
+
+function _showChatNudge() {
+    if (_chatOpen || _nudgeCount >= 3) return;
+    const el   = document.getElementById('chat-nudge');
+    const text = document.getElementById('chat-nudge-text');
+    if (!el || !text) return;
+    text.textContent = _nudgeMessages[_nudgeCount % _nudgeMessages.length];
+    el.classList.remove('hidden');
+    el.style.opacity = '1';
+    _nudgeCount++;
+    setTimeout(_hideChatNudge, 6000);
+    if (_nudgeCount < 3) {
+        _nudgeTimer = setTimeout(_showChatNudge, 90000);
+    }
+}
+
+function _hideChatNudge() {
+    const el = document.getElementById('chat-nudge');
+    if (el) el.classList.add('hidden');
+}
+
+// First nudge after 10s on page load
+setTimeout(_showChatNudge, 10000);
 
 function toggleChatSize() {
     _chatExpanded = !_chatExpanded;

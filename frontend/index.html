@@ -124,9 +124,9 @@
                                         </div>
                                         <div id="hero-autocomplete" class="autocomplete-dropdown"></div>
                                     </div>
-                                    <button onclick="heroSearch()" class="hero-search-btn btn-gradient mr-1 flex items-center gap-2">
+                                    <button onclick="heroSearch()" class="group hero-search-btn btn-gradient mr-1 flex items-center gap-2">
                                         <span>Search</span>
-                                        <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                                        <i data-lucide="arrow-right" class="w-4 h-4 transition-transform group-hover:translate-x-1"></i>
                                     </button>
                                 </div>
                             </div>
@@ -191,29 +191,29 @@
 
                 <!-- Feature Grid -->
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8 animate-fade-in" style="animation-delay: 0.4s">
-                    <div class="bg-white dark:bg-slate-800/80 p-7 rounded-[28px] border border-slate-100 dark:border-slate-700/60 card-shadow card-hover cursor-pointer" onclick="showView('predict')">
+                    <div class="group bg-white dark:bg-slate-800/80 p-7 rounded-[28px] border border-slate-100 dark:border-slate-700/60 card-shadow card-hover cursor-pointer" onclick="showView('predict')">
                         <div class="w-11 h-11 bg-blue-50 dark:bg-blue-900/30 rounded-xl flex items-center justify-center mb-5">
                             <i data-lucide="zap" class="w-5 h-5 text-blue-600 dark:text-blue-400"></i>
                         </div>
                         <h3 class="text-lg font-bold mb-2 dark:text-white">Instant Valuation</h3>
                         <p class="text-slate-500 dark:text-slate-400 text-sm leading-relaxed mb-4">ML-powered valuation with XAI breakdown. Search by postal code or address.</p>
-                        <span class="text-xs font-bold text-blue-600 dark:text-blue-400 flex items-center gap-1">Try it now <i data-lucide="arrow-right" class="w-3 h-3"></i></span>
+                        <span class="text-xs font-bold text-blue-600 dark:text-blue-400 flex items-center gap-1">Try it now <i data-lucide="arrow-right" class="w-3 h-3 transition-transform group-hover:translate-x-1"></i></span>
                     </div>
-                    <div class="bg-white dark:bg-slate-800/80 p-7 rounded-[28px] border border-slate-100 dark:border-slate-700/60 card-shadow card-hover cursor-pointer" onclick="showView('map')">
+                    <div class="group bg-white dark:bg-slate-800/80 p-7 rounded-[28px] border border-slate-100 dark:border-slate-700/60 card-shadow card-hover cursor-pointer" onclick="showView('map')">
                         <div class="w-11 h-11 bg-emerald-50 dark:bg-emerald-900/30 rounded-xl flex items-center justify-center mb-5">
                             <i data-lucide="map-pin" class="w-5 h-5 text-emerald-600 dark:text-emerald-400"></i>
                         </div>
                         <h3 class="text-lg font-bold mb-2 dark:text-white">Smart Map Explorer</h3>
                         <p class="text-slate-500 dark:text-slate-400 text-sm leading-relaxed mb-4">Explore any area with live amenity data — MRT, schools, parks, hawker centres, and more.</p>
-                        <span class="text-xs font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">Open map <i data-lucide="arrow-right" class="w-3 h-3"></i></span>
+                        <span class="text-xs font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">Open map <i data-lucide="arrow-right" class="w-3 h-3 transition-transform group-hover:translate-x-1"></i></span>
                     </div>
-                    <div class="bg-white dark:bg-slate-800/80 p-7 rounded-[28px] border border-slate-100 dark:border-slate-700/60 card-shadow card-hover cursor-pointer" onclick="showView('trend')">
+                    <div class="group bg-white dark:bg-slate-800/80 p-7 rounded-[28px] border border-slate-100 dark:border-slate-700/60 card-shadow card-hover cursor-pointer" onclick="showView('trend')">
                         <div class="w-11 h-11 bg-purple-50 dark:bg-purple-900/30 rounded-xl flex items-center justify-center mb-5">
                             <i data-lucide="trending-up" class="w-5 h-5 text-purple-600 dark:text-purple-400"></i>
                         </div>
                         <h3 class="text-lg font-bold mb-2 dark:text-white">Market Trends</h3>
                         <p class="text-slate-500 dark:text-slate-400 text-sm leading-relaxed mb-4">Track price trends by neighbourhood, run ABSD simulations, and read the latest property news.</p>
-                        <span class="text-xs font-bold text-purple-600 dark:text-purple-400 flex items-center gap-1">View trends <i data-lucide="arrow-right" class="w-3 h-3"></i></span>
+                        <span class="text-xs font-bold text-purple-600 dark:text-purple-400 flex items-center gap-1">View trends <i data-lucide="arrow-right" class="w-3 h-3 transition-transform group-hover:translate-x-1"></i></span>
                     </div>
                 </div>
 
@@ -225,8 +225,8 @@
                             <p class="text-sm text-slate-500 mt-1">Stay informed with the most recent market updates</p>
                         </div>
                         <a href="https://www.edgeprop.sg/property-news" target="_blank" rel="noopener noreferrer"
-                           class="text-xs font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1">
-                            View all <i data-lucide="arrow-right" class="w-3 h-3"></i>
+                           class="group text-xs font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1">
+                            View all <i data-lucide="arrow-right" class="w-3 h-3 transition-transform group-hover:translate-x-1"></i>
                         </a>
                     </div>
                     <div id="home-news-list" class="grid grid-cols-1 md:grid-cols-2 gap-3"></div>
@@ -678,7 +678,7 @@
                                         <p class="text-xs text-slate-400">Explore nearby amenities</p>
                                     </div>
                                 </div>
-                                <i data-lucide="chevron-right" class="w-5 h-5 text-slate-300 group-hover:text-blue-600 transition-colors"></i>
+                                <i data-lucide="chevron-right" class="w-5 h-5 text-slate-300 group-hover:text-blue-600 group-hover:translate-x-0.5 transition-all"></i>
                             </button>
                         </div>
                     </div>
@@ -2557,7 +2557,10 @@
         <div id="chat-panel" style="display:none;width:340px;height:460px;flex-direction:column" class="bg-white dark:bg-slate-900 rounded-[28px] shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden transition-all duration-300">
             <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-700 bg-gradient-to-r from-blue-600 to-violet-600">
                 <div class="flex items-center gap-3">
-                    <div class="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center text-lg">🏡</div>
+                    <div class="w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center bg-white/10 shrink-0">
+                        <img src="assets/lion-chat.png" alt="Kai" class="w-full h-full object-cover" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+                        <span class="text-xl hidden items-center justify-center w-full h-full">🦁</span>
+                    </div>
                     <div>
                         <p class="text-sm font-bold text-white">Kai</p>
                         <p class="text-xs text-blue-100">Your property kaki — ask me anything!</p>
@@ -2574,7 +2577,9 @@
             </div>
             <div id="chat-messages" class="overflow-y-auto p-4 space-y-3" style="flex:1">
                 <div class="flex gap-2">
-                    <div class="w-7 h-7 bg-blue-100 rounded-full flex items-center justify-center shrink-0 text-sm">🏡</div>
+                    <div class="w-7 h-7 bg-blue-100 rounded-full overflow-hidden flex items-center justify-center shrink-0">
+                        <img src="assets/lion-chat.png" alt="" class="w-full h-full object-cover" onerror="this.outerHTML='<span class=\'text-sm\'>🦁</span>'">
+                    </div>
                     <div class="bg-slate-100 dark:bg-slate-800 rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm text-slate-700 dark:text-slate-200" style="max-width:80%">
                         Hey! I'm Kai 👋 Got questions about buying, selling, or renting in Singapore? HDB resale, condo prices, CPF, stamp duties — just ask!
                     </div>
@@ -2589,9 +2594,15 @@
                 </button>
             </div>
         </div>
+        <!-- Popup nudge bubble -->
+        <div id="chat-nudge" class="hidden absolute bottom-[72px] right-0 w-56 bg-white dark:bg-slate-800 rounded-2xl rounded-br-sm shadow-xl border border-slate-100 dark:border-slate-700 p-3 text-sm text-slate-700 dark:text-slate-200 leading-snug animate-fade-in" style="pointer-events:none">
+            <p id="chat-nudge-text"></p>
+            <div class="absolute -bottom-2 right-5 w-3 h-3 bg-white dark:bg-slate-800 border-r border-b border-slate-100 dark:border-slate-700 rotate-45"></div>
+        </div>
         <!-- Toggle Button -->
-        <button onclick="toggleChat()" id="chat-toggle-btn" class="w-14 h-14 bg-gradient-to-br from-blue-600 to-violet-600 rounded-full shadow-lg flex items-center justify-center hover:scale-110 transition-transform">
-            <span class="text-2xl" id="chat-toggle-emoji">🏡</span>
+        <button onclick="toggleChat()" id="chat-toggle-btn" class="w-16 h-16 rounded-full shadow-xl flex items-center justify-center hover:scale-110 transition-transform overflow-hidden bg-gradient-to-br from-blue-600 to-violet-600 relative">
+            <img src="assets/lion-home.png" alt="Kai" id="chat-toggle-img" class="w-full h-full object-cover" onerror="this.style.display='none';document.getElementById('chat-toggle-emoji').style.display='flex'">
+            <span class="text-2xl hidden items-center justify-center absolute inset-0" id="chat-toggle-emoji">🦁</span>
         </button>
     </div>
 
