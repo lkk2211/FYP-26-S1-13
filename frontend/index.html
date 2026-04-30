@@ -744,6 +744,10 @@
                                 <span id="wi-floor-val" class="text-sky-600 font-semibold">10</span>
                             </div>
                             <input type="range" id="wi-floor" min="1" max="50" value="10" class="w-full accent-sky-500" oninput="updateWhatIf()">
+                            <div id="wi-extrapolation-note" class="hidden mt-2 flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700">
+                                <span>⚠️</span>
+                                <span id="wi-extrapolation-text">Beyond known transaction data — estimate based on floor premium trend.</span>
+                            </div>
                         </div>
                         <div id="wi-lease-row">
                             <div class="flex justify-between text-sm mb-1">
@@ -765,6 +769,13 @@
                                 <p id="wi-delta" class="text-lg font-semibold">—</p>
                             </div>
                         </div>
+                    </div>
+
+                    <!-- Comparable floor transactions -->
+                    <div id="wi-floor-comps" class="hidden mt-6 pt-5 border-t border-slate-100 dark:border-slate-700">
+                        <p class="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Actual transactions by floor — this estate</p>
+                        <div id="wi-floor-comps-body" class="space-y-1.5"></div>
+                        <p class="text-xs text-slate-400 mt-2" id="wi-floor-comps-note"></p>
                     </div>
                 </div>
 

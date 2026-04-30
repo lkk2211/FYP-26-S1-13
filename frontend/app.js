@@ -667,6 +667,9 @@ async function handlePredict() {
 
         // Fire non-blocking secondary calls in parallel
         renderPredictNews(postal, _predictTown);
+        if (isHdb && _predictBlock && _predictTown) {
+            fetchFloorComps(_predictBlock, _predictTown, flatType || '4 ROOM', _predictRoad);
+        }
 
         // Lease decay chart — prefer property-lookup remaining lease, fall back to model median
         const leaseType  = document.getElementById('input-lease-type')?.value || '';
@@ -5027,6 +5030,37 @@ function initWhatIfSliders({ floor, lease, basePrice, isCondo, isFreehold, maxFl
     document.getElementById('whatif-result').classList.add('hidden');
 }
 
+async function fetchFloorComps(block, town, flatType, road) {
+    const section = document.getElementById('wi-floor-comps');
+    const body    = document.getElementById('wi-floor-comps-body');
+    const note    = document.getElementById('wi-floor-comps-note');
+    if (!section || !body) return;
+    try {
+        const params = new URLSearchParams({ block, town, flat_type: flatType, road: road || '' });
+        const res  = await fetch(`/api/floor-comps?${params}`);
+        const data = await res.json();
+        const comps = data.comps || [];
+        if (!comps.length) return;
+
+        section.classList.remove('hidden');
+        const maxPsf = Math.max(...comps.map(c => c.avg_psf));
+        body.innerHTML = comps.map(c => {
+            const barW = Math.round((c.avg_psf / maxPsf) * 100);
+            return `<div class="flex items-center gap-3 text-xs">
+                <span class="w-16 text-slate-500 shrink-0">${c.storey}</span>
+                <div class="flex-1 h-4 bg-slate-100 rounded-full overflow-hidden">
+                    <div class="h-full bg-sky-400 rounded-full transition-all" style="width:${barW}%"></div>
+                </div>
+                <span class="w-20 text-right font-medium text-slate-700">S$${c.avg_psf.toLocaleString()}/sqft</span>
+                <span class="w-12 text-right text-slate-400">${c.count} txn${c.count > 1 ? 's' : ''}</span>
+            </div>`;
+        }).join('');
+
+        const src = data.source === 'sibling' ? 'nearby blocks in this estate' : 'this block';
+        if (note) note.textContent = `Avg PSF by floor — data from ${src} (last 3 years). Higher floors typically transact at a premium.`;
+    } catch { /* silent */ }
+}
+
 function updateWhatIf() {
     if (!_whatIfBase) return;
 
@@ -5038,16 +5072,26 @@ function updateWhatIf() {
         document.getElementById('wi-lease-val').textContent = lease;
     }
 
-    const baseFloor = _whatIfBase.floor || 10;
-    const baseLease = _whatIfBase.lease || 65;
-    const isCondo   = _whatIfBase.isCondo;
+    // Extrapolation zone indicator
+    const noteEl = document.getElementById('wi-extrapolation-note');
+    const noteTextEl = document.getElementById('wi-extrapolation-text');
+    const maxTf = window._maxTransactedFloor;
+    if (noteEl) {
+        const isExtrap = maxTf && floor > maxTf;
+        noteEl.classList.toggle('hidden', !isExtrap);
+        if (isExtrap && noteTextEl) {
+            noteTextEl.textContent = `Beyond floor ${maxTf} — no recorded transactions at this level in this estate. Estimate is based on floor premium trend only.`;
+        }
+    }
+
+    const baseFloor  = _whatIfBase.floor || 10;
+    const baseLease  = _whatIfBase.lease || 65;
+    const isCondo    = _whatIfBase.isCondo;
     const isFreehold = _whatIfBase.isFreehold;
 
-    // Floor: ~0.6% per level for HDB, ~1.2% for condo
     const floorRate = isCondo ? 0.012 : 0.006;
     const floorAdj  = 1 + floorRate * (floor - baseFloor);
 
-    // Lease: ~0.8% per year for HDB leasehold only
     const showLease = !isCondo && !isFreehold;
     const leaseAdj  = showLease ? (1 + 0.008 * (lease - baseLease)) : 1;
 

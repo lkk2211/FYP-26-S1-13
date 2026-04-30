@@ -2986,6 +2986,88 @@ def hdb_flat_specs():
     })
 
 
+@app.route('/api/floor-comps', methods=['GET'])
+def floor_comps():
+    """Return avg PSF by storey range for a block + numeric-proximity siblings (±5)."""
+    block     = request.args.get('block', '').strip().upper()
+    town      = request.args.get('town', '').strip().upper()
+    flat_type = request.args.get('flat_type', '').strip().upper()
+    road      = request.args.get('road', '').strip().upper()
+    if not (block and town and flat_type):
+        return jsonify({'comps': [], 'source': 'none'})
+
+    try:
+        block_num = int(''.join(c for c in block if c.isdigit()) or '0')
+    except Exception:
+        block_num = 0
+
+    road_kw = road.split()[0] if road else ''
+    try:
+        conn = get_db(); cur = _cursor(conn)
+        # Fetch storey range + avg PSF for all blocks on same street/town, last 3 years
+        if road_kw:
+            cur.execute(_q(
+                "SELECT block, storey_range, "
+                "AVG(resale_price / NULLIF(floor_area_sqm * 10.764, 0)) AS avg_psf, "
+                "COUNT(*) AS cnt "
+                "FROM resale_flat_prices "
+                "WHERE UPPER(town) = ? AND UPPER(flat_type) = ? "
+                "AND UPPER(street_name) LIKE ? "
+                "AND storey_range LIKE '%% TO %%' "
+                "AND resale_price > 0 AND floor_area_sqm > 0 "
+                "GROUP BY block, storey_range ORDER BY storey_range"
+            ), (town, flat_type, f'%{road_kw}%'))
+        else:
+            cur.execute(_q(
+                "SELECT block, storey_range, "
+                "AVG(resale_price / NULLIF(floor_area_sqm * 10.764, 0)) AS avg_psf, "
+                "COUNT(*) AS cnt "
+                "FROM resale_flat_prices "
+                "WHERE UPPER(town) = ? AND UPPER(flat_type) = ? AND UPPER(block) = ? "
+                "AND storey_range LIKE '%% TO %%' "
+                "AND resale_price > 0 AND floor_area_sqm > 0 "
+                "GROUP BY block, storey_range ORDER BY storey_range"
+            ), (town, flat_type, block))
+        rows = cur.fetchall()
+        conn.close()
+
+        # Filter to ±5 numeric proximity
+        comps_by_range = {}
+        for r in rows:
+            blk_raw = str(r['block'] if hasattr(r, '__getitem__') else r[0])
+            sr      = str(r['storey_range' if hasattr(r, '__getitem__') else None] or r[1])
+            psf     = float(r['avg_psf' if hasattr(r, '__getitem__') else None] or r[2] or 0)
+            cnt     = int(r['cnt' if hasattr(r, '__getitem__') else None] or r[3] or 0)
+            try:
+                bn = int(''.join(c for c in blk_raw if c.isdigit()) or '0')
+            except Exception:
+                bn = 0
+            if block_num == 0 or abs(bn - block_num) <= 5:
+                if sr not in comps_by_range:
+                    comps_by_range[sr] = {'psf_sum': 0, 'cnt': 0}
+                comps_by_range[sr]['psf_sum'] += psf * cnt
+                comps_by_range[sr]['cnt'] += cnt
+
+        comps = []
+        for sr, v in sorted(comps_by_range.items(),
+                             key=lambda x: int(x[0].split(' TO ')[0].strip()) if ' TO ' in x[0] else 0):
+            if v['cnt'] > 0:
+                comps.append({
+                    'storey': sr.replace(' TO ', '–'),
+                    'avg_psf': round(v['psf_sum'] / v['cnt']),
+                    'count': v['cnt'],
+                })
+
+        source = 'block' if any(
+            abs(int(''.join(c for c in str(r['block'] if hasattr(r, '__getitem__') else r[0]) if c.isdigit()) or '0') - block_num) == 0
+            for r in rows
+        ) else 'sibling'
+        return jsonify({'comps': comps, 'source': source})
+    except Exception as e:
+        print(f"[floor-comps] ERROR: {e}")
+        return jsonify({'comps': [], 'source': 'error'})
+
+
 @app.route('/api/property-areas', methods=['GET'])
 def property_areas():
     """Return distinct floor areas (sqft) and max floor for a property,
