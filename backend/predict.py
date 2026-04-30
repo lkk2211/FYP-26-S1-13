@@ -756,7 +756,19 @@ def _predict_ml(features):
         except Exception:
             pass
 
-    confidence = round(max(70.0, min(95.0, base_conf + density_adj)), 1)
+    # Signal 3 — floor extrapolation penalty
+    # If the requested floor exceeds the highest transacted floor across block + nearby siblings,
+    # the model is extrapolating with no local evidence — reduce confidence accordingly
+    floor_extrapolated = False
+    extrapolation_penalty = 0.0
+    max_transacted_floor = features.get('max_transacted_floor')
+    if max_transacted_floor and float(max_transacted_floor) > 0:
+        if float(floor) > float(max_transacted_floor):
+            overshoot = float(floor) - float(max_transacted_floor)
+            extrapolation_penalty = min(8.0, overshoot * 0.5)
+            floor_extrapolated = True
+
+    confidence = round(max(70.0, min(95.0, base_conf + density_adj - extrapolation_penalty)), 1)
 
     min_value = int(estimated_value * 0.92)
     max_value = int(estimated_value * 1.08)
@@ -865,11 +877,12 @@ def _predict_ml(features):
 
     hdb_mape = float(_meta.get('eval_mape', 7.0)) if _meta else 7.0
     result = {
-        "estimated_value": estimated_value,
-        "min_value":        int(estimated_value * (1 - hdb_mape / 100)),
-        "max_value":        int(estimated_value * (1 + hdb_mape / 100)),
-        "mape":             round(hdb_mape, 2),
-        "confidence":       confidence,
+        "estimated_value":    estimated_value,
+        "min_value":          int(estimated_value * (1 - hdb_mape / 100)),
+        "max_value":          int(estimated_value * (1 + hdb_mape / 100)),
+        "mape":               round(hdb_mape, 2),
+        "confidence":         confidence,
+        "floor_extrapolated": floor_extrapolated,
         "ppsf":             ppsf,
         "market_trend":     f"+{annual_rate*100:.1f}%",
         "trend_direction":  "up" if annual_rate >= 0 else "down",

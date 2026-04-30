@@ -276,8 +276,9 @@ async function _loadFlatSpecs() {
         if (!maxFloor) maxFloor = 20;
 
         // Keep _cachedMaxFloor in sync — property-areas may have a better value
-        // (e.g. sibling-block fallback) than what property-lookup returned
         if (maxFloor > (_cachedMaxFloor || 0)) _cachedMaxFloor = maxFloor;
+        // Track highest transacted floor for confidence penalty
+        window._maxTransactedFloor = data.max_transacted_floor || null;
 
         // ── Floor range dropdown (HDB only) ──────────────────────
         if (isHdb) {
@@ -571,9 +572,10 @@ async function handlePredict() {
         const body = { postal, area, bedrooms, floor, property_type: propType, town: _predictTown };
         if (flatType) body.flat_type = flatType;
         if (window._cachedRemainingLease != null) body.remaining_lease_years = window._cachedRemainingLease;
-        if (_cachedMaxFloor)   body.max_floor = _cachedMaxFloor;
-        if (_predictBlock)     body.block     = _predictBlock;
-        if (_predictProject)   body.project   = _predictProject;
+        if (_cachedMaxFloor)              body.max_floor            = _cachedMaxFloor;
+        if (_predictBlock)                body.block                = _predictBlock;
+        if (_predictProject)              body.project              = _predictProject;
+        if (window._maxTransactedFloor)   body.max_transacted_floor = window._maxTransactedFloor;
         const response = await fetch('/api/predict', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -583,7 +585,16 @@ async function handlePredict() {
 
         document.getElementById('output-price').innerText = `S$${data.estimated_value.toLocaleString()}`;
         const disclaimerEl = document.getElementById('output-floor-disclaimer');
-        if (disclaimerEl) disclaimerEl.classList.toggle('hidden', !floorIsManual);
+        if (disclaimerEl) {
+            const showDisclaimer = floorIsManual || data.floor_extrapolated;
+            disclaimerEl.classList.toggle('hidden', !showDisclaimer);
+            if (data.floor_extrapolated && !floorIsManual) {
+                const maxTf = window._maxTransactedFloor;
+                disclaimerEl.querySelector('span:last-child').textContent =
+                    `No resale transactions found at this floor level in this estate (highest on record: floor ${maxTf}). ` +
+                    `Price is estimated using floor premium modelling — treat as a directional guide.`;
+            }
+        }
         document.getElementById('output-confidence').innerText = `${data.confidence}%`;
 
         const mape = data.mape || (propType === 'HDB' ? 7.0 : 10.0);

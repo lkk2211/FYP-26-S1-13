@@ -3131,10 +3131,15 @@ def property_areas():
                     out.append(f'{lo:02d} TO {hi:02d}')
                 return out
 
-            # Get true building height from ALL flat types for this block.
-            # If the block itself has no data, try sibling blocks on the same street
-            # (e.g. Pinnacle@Duxton 1A–1G all share the same ~50-floor height).
-            block_max_floor = None
+            # Extract numeric part of block for proximity matching (e.g. '443A' → 443)
+            try:
+                block_num = int(''.join(c for c in block if c.isdigit()) or '0')
+            except Exception:
+                block_num = 0
+
+            # Step A: get max floor from the specific block (all flat types)
+            block_max_floor     = None   # highest floor from THIS block
+            max_transacted_floor = None  # highest floor across block + nearby siblings
             if block and town:
                 cur.execute(_q(
                     "SELECT DISTINCT storey_range FROM resale_flat_prices "
@@ -3144,20 +3149,34 @@ def property_areas():
                           for r in cur.fetchall()]
                 if all_ft:
                     block_max_floor = max(_top(s) for s in all_ft)
+                    max_transacted_floor = block_max_floor
 
-            # Sibling-block fallback: same street + town, any block
-            if not block_max_floor and town and road:
-                road_kw = road.split()[0] if road else ''
-                if road_kw:
-                    cur.execute(_q(
-                        "SELECT DISTINCT storey_range FROM resale_flat_prices "
-                        "WHERE UPPER(town) = ? AND UPPER(street_name) LIKE ? "
-                        "AND storey_range LIKE '%% TO %%'"
-                    ), (town, f'%{road_kw}%'))
-                    sibling = [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0])
-                               for r in cur.fetchall()]
-                    if sibling:
-                        block_max_floor = max(_top(s) for s in sibling)
+            # Step B: numeric-proximity sibling query — blocks within ±5 on same street
+            # Finds same-estate blocks (e.g. block 20 → checks 15–25 on same road)
+            road_kw = road.split()[0] if road else ''
+            if road_kw and town:
+                cur.execute(_q(
+                    "SELECT block, storey_range FROM resale_flat_prices "
+                    "WHERE UPPER(town) = ? AND UPPER(street_name) LIKE ? "
+                    "AND storey_range LIKE '%% TO %%'"
+                ), (town, f'%{road_kw}%'))
+                all_rows = cur.fetchall()
+                sibling_ranges = []
+                for r in all_rows:
+                    blk_raw = str(r['block'] if hasattr(r, '__getitem__') else r[0])
+                    sr      = str(r['storey_range' if hasattr(r, '__getitem__') else None] or
+                                  (r[1] if not hasattr(r, '__getitem__') else r['storey_range']))
+                    try:
+                        blk_n = int(''.join(c for c in blk_raw if c.isdigit()) or '0')
+                    except Exception:
+                        blk_n = 0
+                    if block_num == 0 or abs(blk_n - block_num) <= 5:
+                        sibling_ranges.append(sr)
+                if sibling_ranges:
+                    sibling_max = max(_top(s) for s in sibling_ranges)
+                    max_transacted_floor = max(max_transacted_floor or 0, sibling_max)
+                    if not block_max_floor:
+                        block_max_floor = sibling_max
 
             # Step 1: block + town, specific flat type (for the actual storey range options)
             if block and town:
@@ -3304,6 +3323,7 @@ def property_areas():
         'default_storey_range': default_storey_range,
         'floor_data_source': floor_data_source if property_type == 'HDB' else 'block',
         'town_max_floor': town_max_floor,
+        'max_transacted_floor': int(max_transacted_floor) if max_transacted_floor else None,
     })
 
 
