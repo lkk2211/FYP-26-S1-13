@@ -323,12 +323,8 @@ body {
 }
 
 /* Market ticker slide-up animation */
-.floating-price-badge {
-    overflow: hidden;
-}
-
 .market-ticker-viewport {
-    height: 52px;
+    height: 68px;
     overflow: hidden;
     position: relative;
 }
