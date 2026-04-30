@@ -852,46 +852,56 @@ def _predict_ml(features):
     else:
         lease_advice = f"Lease of {int(remaining_lease_years)} yrs is strong — full CPF and bank financing eligibility for buyers."
 
-    # Lease summary (clean sentence form)
+    # Lease — plain language
     if remaining_lease_years < 30:
-        lease_insight = f"The remaining lease of {int(remaining_lease_years)} years is critically short — bank financing and CPF usage are severely restricted."
+        lease_insight = f"One thing to be aware of: with only {int(remaining_lease_years)} years left on the lease, bank loans and CPF usage will be heavily restricted — this significantly reduces the buyer pool."
     elif remaining_lease_years < 60:
-        lease_insight = f"With {int(remaining_lease_years)} years of lease remaining, younger buyers may face CPF usage limits, which can narrow your pool of potential buyers."
+        lease_insight = f"The lease has {int(remaining_lease_years)} years remaining. Younger buyers may not be able to use their full CPF savings on this unit, so keep that in mind when pricing."
     elif remaining_lease_years < 75:
-        lease_insight = f"The {int(remaining_lease_years)}-year lease is adequate — CPF is fully usable now, but worth monitoring as it approaches 60 years."
+        lease_insight = f"With {int(remaining_lease_years)} years left, most buyers can use CPF and get a bank loan without issue — this is still a well-positioned unit."
     else:
-        lease_insight = f"The {int(remaining_lease_years)}-year lease is strong, supporting full CPF and bank financing eligibility for most buyers."
+        lease_insight = f"The {int(remaining_lease_years)}-year lease is healthy — buyers can use CPF and apply for full bank financing with no restrictions."
 
     sora_insight = (
-        f"At SORA {sora:.2f}%, financing costs are elevated — buyers will face higher monthly repayments."
+        f"Interest rates are currently on the higher side (SORA {sora:.2f}%), which means buyers will pay more each month on their mortgage. This can affect how much they're willing to offer."
         if sora > 3.5 else
-        f"SORA at {sora:.2f}% keeps financing conditions relatively favourable for buyers."
+        f"Interest rates are moderate right now (SORA {sora:.2f}%), making it a reasonably good time for buyers to take a loan — which supports demand."
     )
     pol_insight = (
-        "Government cooling measures (ABSD, LTV rules) are currently active — factor this into pricing strategy."
+        "Do note that government cooling measures like ABSD are still in effect, which may slow demand slightly — especially from investors or second-time buyers."
         if pol_dir < 0 else
-        ("Policy conditions are supportive of the HDB resale market." if pol_dir > 0 else
-         "Policy environment is currently neutral.")
+        ("The broader property market environment looks positive, with stable demand for HDB resale flats." if pol_dir > 0 else
+         "The policy environment is broadly stable, with no major new measures expected in the near term.")
     )
 
     insight = (
-        f"The AI ensemble values this {flat_type.title()} at S${estimated_value:,} with {confidence:.0f}% confidence. "
+        f"Our model values this {flat_type.title()} at S${estimated_value:,}, with a confidence level of {confidence:.0f}%. "
         f"{psf_note} "
         f"{lease_insight} "
         f"{sora_insight} "
         f"{pol_insight}"
     )
 
+    # Lease-specific recommendation text (simpler)
+    if remaining_lease_years < 30:
+        lease_advice = f"The short lease ({int(remaining_lease_years)} yrs) will limit your buyer pool significantly — price accordingly and be prepared for a longer selling process."
+    elif remaining_lease_years < 60:
+        lease_advice = f"With {int(remaining_lease_years)} years on the lease, some younger buyers won't be able to use their full CPF. Targeting buyers who are older or have cash savings may work better."
+    elif remaining_lease_years < 75:
+        lease_advice = f"The {int(remaining_lease_years)}-year lease is workable for most buyers, but it's worth highlighting in your listing to reassure them."
+    else:
+        lease_advice = f"The {int(remaining_lease_years)}-year lease is a genuine selling point — most buyers can get full financing and use their CPF without any issues."
+
     sora_rec = (
-        "Compare fixed vs floating rate packages carefully — elevated SORA increases your monthly commitment."
+        "With rates on the higher side, buyers may be more cautious. Pricing competitively and offering flexibility can help close the deal faster."
         if sora > 3.5 else
-        "Locking in a fixed-rate package now may be worth considering while SORA remains moderate."
+        "Rates are moderate, so buyers can still get decent loan packages — a good time to transact without too much pressure on either side."
     )
     recommendation = (
-        f"Based on the model, a fair price range for this unit is S${min_value:,} – S${max_value:,}. "
+        f"We'd expect this unit to transact somewhere between S${min_value:,} and S${max_value:,}. "
         f"{lease_advice} "
         f"{sora_rec} "
-        f"Cross-check with recent {location_display} transactions on the HDB Resale Portal before making a decision."
+        f"It's always worth checking the latest {location_display} transactions on the HDB Resale Portal to fine-tune your expectations."
     )
 
     # ── 12-month price forecast ───────────────────────────────────────────────

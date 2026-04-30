@@ -635,9 +635,9 @@ async function handlePredict() {
                 : rawInsight;
             const intentRec = isSell
                 ? rawRec
-                    .replace('a fair price range for this unit is', 'a competitive listing price would be')
-                    .replace('Cross-check with recent', 'Verify against recent')
-                    .replace('before making a decision', 'before setting your asking price')
+                    .replace("We'd expect this unit to transact", "We'd price this unit")
+                    .replace('It\'s always worth checking', 'Before listing, check')
+                    .replace('to fine-tune your expectations', 'to make sure your asking price is competitive')
                 : rawRec;
             if (insightEl) insightEl.innerText = intentInsight;
             if (recEl)     recEl.innerText     = intentRec;
