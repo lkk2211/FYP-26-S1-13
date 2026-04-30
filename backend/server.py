@@ -2806,7 +2806,7 @@ def property_lookup():
                 def _q_storeys(extra, params):
                     dbc_cur.execute(_q(
                         "SELECT DISTINCT storey_range FROM resale_flat_prices "
-                        f"WHERE UPPER(block) = ? {extra} AND storey_range LIKE '% TO %' ORDER BY storey_range"
+                        f"WHERE UPPER(block) = ? {extra} AND storey_range LIKE '%% TO %%' ORDER BY storey_range"
                     ), params)
                     return [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0])
                             for r in dbc_cur.fetchall()]
@@ -2825,7 +2825,7 @@ def property_lookup():
                 if town:
                     dbc_cur.execute(_q(
                         "SELECT DISTINCT storey_range FROM resale_flat_prices "
-                        "WHERE UPPER(block) = ? AND UPPER(town) = ? AND storey_range LIKE '% TO %' ORDER BY storey_range"
+                        "WHERE UPPER(block) = ? AND UPPER(town) = ? AND storey_range LIKE '%% TO %%' ORDER BY storey_range"
                     ), (block_upper, town.upper()))
                     srs = [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0])
                            for r in dbc_cur.fetchall()]
@@ -2844,7 +2844,7 @@ def property_lookup():
                 if not srs and town:
                     dbc_cur.execute(_q(
                         "SELECT DISTINCT storey_range FROM resale_flat_prices "
-                        "WHERE UPPER(town) = ? AND storey_range LIKE '% TO %' ORDER BY storey_range"
+                        "WHERE UPPER(town) = ? AND storey_range LIKE '%% TO %%' ORDER BY storey_range"
                     ), (town.upper(),))
                     srs = [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0])
                            for r in dbc_cur.fetchall()]
@@ -3111,7 +3111,7 @@ def property_areas():
             def _fetch_storeys(extra_where, params):
                 cur.execute(_q(
                     "SELECT DISTINCT storey_range FROM resale_flat_prices "
-                    f"WHERE UPPER(flat_type) = ? {extra_where} AND storey_range LIKE '% TO %' ORDER BY storey_range"
+                    f"WHERE UPPER(flat_type) = ? {extra_where} AND storey_range LIKE '%% TO %%' ORDER BY storey_range"
                 ), params)
                 rows = cur.fetchall()
                 return [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0]) for r in rows]
@@ -3138,7 +3138,7 @@ def property_areas():
             if block and town:
                 cur.execute(_q(
                     "SELECT DISTINCT storey_range FROM resale_flat_prices "
-                    "WHERE UPPER(block) = ? AND UPPER(town) = ? AND storey_range LIKE '% TO %'"
+                    "WHERE UPPER(block) = ? AND UPPER(town) = ? AND storey_range LIKE '%% TO %%'"
                 ), (block, town))
                 all_ft = [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0])
                           for r in cur.fetchall()]
@@ -3152,7 +3152,7 @@ def property_areas():
                     cur.execute(_q(
                         "SELECT DISTINCT storey_range FROM resale_flat_prices "
                         "WHERE UPPER(town) = ? AND UPPER(street_name) LIKE ? "
-                        "AND storey_range LIKE '% TO %'"
+                        "AND storey_range LIKE '%% TO %%'"
                     ), (town, f'%{road_kw}%'))
                     sibling = [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0])
                                for r in cur.fetchall()]
@@ -3208,7 +3208,7 @@ def property_areas():
                 _mf_params = (flat_type, block, town) if town else (flat_type, block)
                 cur.execute(_q(
                     "SELECT storey_range, COUNT(*) AS cnt FROM resale_flat_prices "
-                    f"WHERE flat_type = ? {_mf_extra} AND storey_range LIKE '% TO %' "
+                    f"WHERE flat_type = ? {_mf_extra} AND storey_range LIKE '%% TO %%' "
                     "GROUP BY storey_range ORDER BY cnt DESC LIMIT 1"
                 ), _mf_params)
                 _mf_row = cur.fetchone()
@@ -3285,10 +3285,10 @@ def property_areas():
         try:
             cur.execute(_q(
                 "SELECT MAX(CAST(TRIM(SPLIT_PART(storey_range,' TO ',2)) AS INTEGER)) "
-                "FROM resale_flat_prices WHERE UPPER(town) = ? AND storey_range LIKE '% TO %'"
+                "FROM resale_flat_prices WHERE UPPER(town) = ? AND storey_range LIKE '%% TO %%'"
             ) if USE_POSTGRES else _q(
                 "SELECT MAX(CAST(TRIM(SUBSTR(storey_range, INSTR(storey_range,' TO ')+4)) AS INTEGER)) "
-                "FROM resale_flat_prices WHERE UPPER(town) = ? AND storey_range LIKE '% TO %'"
+                "FROM resale_flat_prices WHERE UPPER(town) = ? AND storey_range LIKE '%% TO %%'"
             ), (town,))
             _tmr = cur.fetchone()
             if _tmr:
