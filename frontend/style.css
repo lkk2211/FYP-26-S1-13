@@ -304,8 +304,8 @@ body {
 
 .floating-price-badge {
     position: absolute;
-    bottom: -12px;
-    left: -16px;
+    bottom: 16px;
+    left: -8px;
     background: white;
     border: 1px solid #E2E8F0;
     border-radius: 16px;
@@ -314,7 +314,7 @@ body {
     z-index: 10;
     min-width: 230px;
     width: max-content;
-    max-width: 280px;
+    max-width: 290px;
 }
 
 .dark .floating-price-badge {

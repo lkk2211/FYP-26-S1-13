@@ -2671,7 +2671,10 @@ def property_lookup():
         db_is_condo = False
         try:
             _dbc = get_db(); _dbc_cur = _cursor(_dbc)
-            if blk_no:
+            # Only check HDB DB when there is no named building — HDB blocks have no
+            # proper building name (OneMap returns NIL or empty), while condos/ECs do.
+            # Checking block number alone is unreliable: "1" exists in every town's HDB DB.
+            if blk_no and building in ('NIL', ''):
                 _dbc_cur.execute(_q(
                     "SELECT 1 FROM resale_flat_prices WHERE UPPER(block) = ? LIMIT 1"
                 ), (blk_no.upper(),))
@@ -2864,13 +2867,24 @@ def property_lookup():
                     max_floor = max(_top(s) for s in srs)
 
             elif not is_hdb and not is_landed and building not in ('NIL', ''):
-                # Condo: get floor_level from ura_transactions by project name
-                dbc_cur.execute(_q(
-                    "SELECT DISTINCT floor_level FROM ura_transactions "
-                    "WHERE UPPER(project) = ? AND floor_level IS NOT NULL AND floor_level != ''"
-                ), (building.upper(),))
-                fl_rows = [str(r['floor_level'] if hasattr(r, '__getitem__') else r[0])
-                           for r in dbc_cur.fetchall()]
+                # Condo/EC: get floor_level from ura_transactions by project name
+                # Try exact match first, then LIKE fallback for minor name differences
+                def _ura_floor_query(q_param, use_like=False):
+                    op = 'LIKE' if use_like else '='
+                    dbc_cur.execute(_q(
+                        f"SELECT DISTINCT floor_level FROM ura_transactions "
+                        f"WHERE UPPER(project) {op} ? AND floor_level IS NOT NULL AND floor_level != ''"
+                    ), (q_param,))
+                    return [str(r['floor_level'] if hasattr(r, '__getitem__') else r[0])
+                            for r in dbc_cur.fetchall()]
+
+                fl_rows = _ura_floor_query(building.upper())
+                if not fl_rows:
+                    # Fuzzy: first word of building name (handles minor suffix diffs)
+                    first_word = building.upper().split()[0] if building else ''
+                    if first_word and len(first_word) >= 4:
+                        fl_rows = _ura_floor_query(f'%{first_word}%', use_like=True)
+
                 if fl_rows:
                     def _fl_top(s):
                         nums = _re2.findall(r'\d+', s)
