@@ -852,19 +852,46 @@ def _predict_ml(features):
     else:
         lease_advice = f"Lease of {int(remaining_lease_years)} yrs is strong — full CPF and bank financing eligibility for buyers."
 
+    # Lease summary (clean sentence form)
+    if remaining_lease_years < 30:
+        lease_insight = f"The remaining lease of {int(remaining_lease_years)} years is critically short — bank financing and CPF usage are severely restricted."
+    elif remaining_lease_years < 60:
+        lease_insight = f"With {int(remaining_lease_years)} years of lease remaining, younger buyers may face CPF usage limits, which can narrow your pool of potential buyers."
+    elif remaining_lease_years < 75:
+        lease_insight = f"The {int(remaining_lease_years)}-year lease is adequate — CPF is fully usable now, but worth monitoring as it approaches 60 years."
+    else:
+        lease_insight = f"The {int(remaining_lease_years)}-year lease is strong, supporting full CPF and bank financing eligibility for most buyers."
+
+    sora_insight = (
+        f"At SORA {sora:.2f}%, financing costs are elevated — buyers will face higher monthly repayments."
+        if sora > 3.5 else
+        f"SORA at {sora:.2f}% keeps financing conditions relatively favourable for buyers."
+    )
+    pol_insight = (
+        "Government cooling measures (ABSD, LTV rules) are currently active — factor this into pricing strategy."
+        if pol_dir < 0 else
+        ("Policy conditions are supportive of the HDB resale market." if pol_dir > 0 else
+         "Policy environment is currently neutral.")
+    )
+
     insight = (
-        f"{location_display} · {flat_type.title()} · {floor_label} (Lvl {floor}) · {area_sqm:.0f} sqm · {area_label}\n"
-        f"ML ensemble estimates S${estimated_value:,} (confidence: {confidence:.0f}%). {psf_note} "
-        f"{lease_label.capitalize()} lease position: {int(remaining_lease_years)} yrs remaining. "
-        f"SORA at {sora:.2f}% is {sora_label} — {'budget for higher mortgage costs' if sora > 3.5 else 'financing conditions are relatively favourable'}. "
-        f"{'Active government cooling measures in place — ABSD and LTV rules apply.' if pol_dir < 0 else ('Policy environment is supportive of the HDB market.' if pol_dir > 0 else 'Policy environment is currently neutral.')}"
+        f"The AI ensemble values this {flat_type.title()} at S${estimated_value:,} with {confidence:.0f}% confidence. "
+        f"{psf_note} "
+        f"{lease_insight} "
+        f"{sora_insight} "
+        f"{pol_insight}"
+    )
+
+    sora_rec = (
+        "Compare fixed vs floating rate packages carefully — elevated SORA increases your monthly commitment."
+        if sora > 3.5 else
+        "Locking in a fixed-rate package now may be worth considering while SORA remains moderate."
     )
     recommendation = (
-        f"For a {flat_type.title()} at Level {floor} in {location_display} ({area_label}, {area_sqm:.0f} sqm): "
-        f"expect S${min_value:,}–S${max_value:,}. "
+        f"Based on the model, a fair price range for this unit is S${min_value:,} – S${max_value:,}. "
         f"{lease_advice} "
-        f"{'At elevated SORA, compare fixed vs floating packages before committing.' if sora > 3.5 else 'Consider locking in a fixed-rate package while SORA is still moderate.'} "
-        f"Verify with recent {location_display} transactions on the HDB Resale Portal before offering."
+        f"{sora_rec} "
+        f"Cross-check with recent {location_display} transactions on the HDB Resale Portal before making a decision."
     )
 
     # ── 12-month price forecast ───────────────────────────────────────────────

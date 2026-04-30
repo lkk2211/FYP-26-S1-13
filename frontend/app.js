@@ -629,14 +629,16 @@ async function handlePredict() {
         if (insightEl || recEl) {
             const rawInsight = data.insight || '';
             const rawRec    = data.recommendation || '';
-            const isSell = _userIntent === 'sell';
+            const isSell    = _userIntent === 'sell';
             const intentInsight = isSell
-                ? `As a seller: ${rawInsight}`
-                : `As a buyer: ${rawInsight}`;
+                ? rawInsight.replace('values this', 'values your')
+                : rawInsight;
             const intentRec = isSell
-                ? rawRec.replace(/\bOffer\b/gi, 'List at').replace(/\bbudget\b/gi, 'asking price').replace(/\b(consider|look for)\b/gi, 'highlight')
-                    .replace(/^/, 'Seller tip: ')
-                : `Buyer tip: ${rawRec}`;
+                ? rawRec
+                    .replace('a fair price range for this unit is', 'a competitive listing price would be')
+                    .replace('Cross-check with recent', 'Verify against recent')
+                    .replace('before making a decision', 'before setting your asking price')
+                : rawRec;
             if (insightEl) insightEl.innerText = intentInsight;
             if (recEl)     recEl.innerText     = intentRec;
         }
