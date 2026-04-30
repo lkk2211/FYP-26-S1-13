@@ -2671,15 +2671,15 @@ def property_lookup():
         db_is_condo = False
         try:
             _dbc = get_db(); _dbc_cur = _cursor(_dbc)
-            # Only check HDB DB when there is no named building — HDB blocks have no
-            # proper building name (OneMap returns NIL or empty), while condos/ECs do.
-            # Checking block number alone is unreliable: "1" exists in every town's HDB DB.
-            if blk_no and building in ('NIL', ''):
+            # Check HDB DB by block number (some HDBs have named buildings too, e.g. Pinnacle@Duxton)
+            if blk_no:
                 _dbc_cur.execute(_q(
                     "SELECT 1 FROM resale_flat_prices WHERE UPPER(block) = ? LIMIT 1"
                 ), (blk_no.upper(),))
                 db_is_hdb = _dbc_cur.fetchone() is not None
-            if not db_is_hdb and building not in ('NIL', ''):
+            # Check URA (condo/EC) DB by building name — takes priority over a bare block match,
+            # because named HDBs (Pinnacle, Dawson etc.) will NOT appear in ura_transactions
+            if building not in ('NIL', ''):
                 # Exclude landed types so detached/terrace houses don't trigger db_is_condo
                 _LANDED = ('Detached House', 'Semi-Detached House', 'Terrace House',
                            'Strata Detached', 'Strata Semi-Detached', 'Strata Terrace')
@@ -2693,14 +2693,17 @@ def property_lookup():
         except Exception:
             pass
 
-        # Combine DB signals with OneMap heuristic
+        # Combine DB signals with OneMap heuristic.
+        # URA (condo/EC) match takes priority over bare HDB block match:
+        # named HDBs (Pinnacle@Duxton, SkyVille@Dawson) won't appear in ura_transactions,
+        # but ECs (Blossom Residences, The Canopy) will — so a URA hit is authoritative.
         onemap_looks_hdb   = (building in ('NIL', '')) and bool(_re.match(r'^\d+[A-Z]?$', blk_no))
         onemap_looks_condo = building not in ('NIL', '')
 
-        if db_is_hdb:
-            is_hdb, is_condo, is_landed = True, False, False
-        elif db_is_condo:
+        if db_is_condo:
             is_hdb, is_condo, is_landed = False, True, False
+        elif db_is_hdb:
+            is_hdb, is_condo, is_landed = True, False, False
         elif onemap_looks_hdb:
             # Block number present but not yet in our DB (e.g. new flat) — treat as HDB
             is_hdb, is_condo, is_landed = True, False, False
