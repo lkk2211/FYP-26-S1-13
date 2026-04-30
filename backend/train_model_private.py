@@ -366,9 +366,11 @@ def engineer_features(df: pd.DataFrame, policy_df=None, sora_df=None) -> pd.Data
     else:
         df['sora'] = 3.5
 
-    # ── Project-level rolling PSF (6-month lookback, no data leakage) ───────────
-    # For each transaction: mean PSF of the same project in the prior 2 quarters.
-    # Shift(1) on the quarter index ensures current quarter is excluded → no leakage.
+    # ── Project-level rolling PSF (24-month lookback, no data leakage) ──────────
+    # For each transaction: mean PSF of the same project in the prior 8 quarters.
+    # min_periods=3 ensures at least 3 historical quarters before trusting the
+    # project average — fewer than that falls back to the district median.
+    # Shift(1) on the quarter index excludes the current quarter → no leakage.
     if 'project' in df.columns:
         df['_project_key'] = df['project'].fillna('').astype(str).str.strip().str.upper()
         df['_unit_psf']    = (df['transacted_price'] / df['floor_area_sqft'].replace(0, np.nan)).clip(200, 8000)
@@ -382,7 +384,7 @@ def engineer_features(df: pd.DataFrame, policy_df=None, sora_df=None) -> pd.Data
         )
         proj_qtr['project_rolling_psf_6m'] = (
             proj_qtr.groupby('_project_key')['_proj_qtr_psf']
-            .transform(lambda s: s.shift(1).rolling(2, min_periods=1).mean())
+            .transform(lambda s: s.shift(1).rolling(8, min_periods=3).mean())
         )
         df = df.merge(
             proj_qtr[['_project_key', '_time_key', 'project_rolling_psf_6m']],

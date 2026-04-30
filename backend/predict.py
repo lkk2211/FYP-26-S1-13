@@ -1131,7 +1131,9 @@ def _predict_private_ml(features):
     pol  = _private_meta.get('latest_policy', {})
     sora = float(_private_meta.get('latest_sora', 3.5))
 
-    # ── Project rolling PSF: avg PSF for this project in last 6 months ───────
+    # ── Project rolling PSF: avg PSF for this project in last 24 months ──────
+    # Matches training feature: 8-quarter rolling window, min 3 quarters of data.
+    # Falls back to district benchmark if fewer than 3 quarters have transactions.
     project_rolling_psf = None
     if project:
         try:
@@ -1141,9 +1143,10 @@ def _predict_private_ml(features):
                 _pc = psycopg2.connect(_DATABASE_URL)
                 _pcur = _pc.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
                 _pcur.execute(
-                    "SELECT AVG(unit_price_psf) AS avg_psf FROM ura_transactions "
+                    "SELECT AVG(unit_price_psf) AS avg_psf, COUNT(DISTINCT LEFT(sale_date,7)) AS n_months "
+                    "FROM ura_transactions "
                     "WHERE UPPER(project) = %s AND unit_price_psf BETWEEN 300 AND 8000 "
-                    "AND sale_date >= TO_CHAR(CURRENT_DATE - INTERVAL '6 months', 'YYYY-MM')",
+                    "AND sale_date >= TO_CHAR(CURRENT_DATE - INTERVAL '24 months', 'YYYY-MM')",
                     (project,)
                 )
             else:
@@ -1152,20 +1155,24 @@ def _predict_private_ml(features):
                 _pc.row_factory = _sq.Row
                 _pcur = _pc.cursor()
                 _pcur.execute(
-                    "SELECT AVG(unit_price_psf) AS avg_psf FROM ura_transactions "
+                    "SELECT AVG(unit_price_psf) AS avg_psf, COUNT(DISTINCT substr(sale_date,1,7)) AS n_months "
+                    "FROM ura_transactions "
                     "WHERE UPPER(project) = ? AND unit_price_psf BETWEEN 300 AND 8000 "
-                    "AND sale_date >= strftime('%Y-%m', date('now', '-6 months'))",
+                    "AND sale_date >= strftime('%Y-%m', date('now', '-24 months'))",
                     (project,)
                 )
             _row = _pcur.fetchone()
             if _row:
-                v = dict(_row).get('avg_psf')
-                if v:
+                row_d = dict(_row)
+                v        = row_d.get('avg_psf')
+                n_months = int(row_d.get('n_months') or 0)
+                # Require at least 3 distinct months of data — mirrors min_periods=3 in training
+                if v and n_months >= 3:
                     project_rolling_psf = float(v)
             _pc.close()
         except Exception:
             pass
-    # Fallback: segment benchmark PSF
+    # Fallback: segment benchmark PSF (used for new/rarely-transacted projects)
     if not project_rolling_psf or project_rolling_psf < 300:
         project_rolling_psf = {'CCR': 2200, 'RCR': 1550, 'OCR': 1150}.get(segment, 1200)
 
