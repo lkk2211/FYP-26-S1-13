@@ -28,7 +28,7 @@ import pandas as pd
 from datetime import datetime, timezone
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder
 from sklearn.linear_model import HuberRegressor
 from sklearn.model_selection import KFold, cross_val_predict
 from sklearn.metrics import mean_absolute_error, r2_score
@@ -412,10 +412,24 @@ def engineer_features(df: pd.DataFrame, policy_df=None, sora_df=None) -> pd.Data
 # ─── Model building ───────────────────────────────────────────────────────────
 
 def _build_pipeline(model):
+    """XGB/LGBM pipeline: OHE for categoricals."""
     preprocessor = ColumnTransformer(transformers=[
         ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), CATEGORICAL_COLS),
         ('num', 'passthrough', NUMERICAL_COLS),
     ])
+    return Pipeline(steps=[('preprocessor', preprocessor), ('model', model)])
+
+
+def _build_catboost_pipeline(model):
+    """CatBoost-specific pipeline: OrdinalEncoder so CatBoost receives integer-coded
+    categories and can apply its native ordered target encoding internally.
+    cat_features indices = 0..len(CATEGORICAL_COLS)-1 (ColumnTransformer puts cat first)."""
+    preprocessor = ColumnTransformer(transformers=[
+        ('cat', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1), CATEGORICAL_COLS),
+        ('num', 'passthrough', NUMERICAL_COLS),
+    ])
+    cat_feature_indices = list(range(len(CATEGORICAL_COLS)))
+    model.set_params(cat_features=cat_feature_indices)
     return Pipeline(steps=[('preprocessor', preprocessor), ('model', model)])
 
 
@@ -490,7 +504,7 @@ def train(df_raw: pd.DataFrame):
 
     for i, (name, model) in enumerate(model_specs.items()):
         print(f'  OOF for {name}...')
-        pipe = _build_pipeline(model)
+        pipe = _build_catboost_pipeline(model) if 'cat' in name else _build_pipeline(model)
         oof_preds[:, i] = cross_val_predict(pipe, X_train, y_train_log, cv=kf)
         gc.collect()
 
@@ -506,7 +520,7 @@ def train(df_raw: pd.DataFrame):
     trained = {}
     for name, model in model_specs.items():
         print(f'  Training {name}...')
-        pipeline = _build_pipeline(model)
+        pipeline = _build_catboost_pipeline(model) if 'cat' in name else _build_pipeline(model)
         pipeline.fit(X_train, y_train_log)
 
         # Evaluate with stacker
