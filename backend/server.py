@@ -2141,7 +2141,7 @@ def twofa_revoke_all():
 def get_users():
     conn = get_db()
     cur  = _cursor(conn)
-    cur.execute("SELECT id, full_name, email, phone, role FROM users ORDER BY id ASC")
+    cur.execute("SELECT id, full_name, email, phone, role, account_type FROM users ORDER BY id ASC")
     users = _rows(cur)
     conn.close()
     return jsonify({"users": users})
@@ -3372,20 +3372,30 @@ def property_areas():
                 raw     = _condo_query("UPPER(project) = ?", (project_name,))
                 fl_rows = _condo_floors("UPPER(project) = ?", (project_name,))
 
+            # 1b. Fuzzy fallback — first word of project name (handles minor suffix differences)
+            if (not raw or not fl_rows) and project_name:
+                first_word = project_name.split()[0] if project_name else ''
+                if first_word and len(first_word) >= 4:
+                    if not raw:
+                        raw     = _condo_query("UPPER(project) LIKE ?", (f'%{first_word}%',))
+                    if not fl_rows:
+                        fl_rows = _condo_floors("UPPER(project) LIKE ?", (f'%{first_word}%',))
+
             # 2. Fall back to postal district
             if not raw:
                 sector   = postal[:2] if len(postal) >= 2 else ''
                 district = _SECTOR_TO_DISTRICT.get(sector, '')
                 if district:
                     raw     = _condo_query("postal_district = ?", (district,))
-                    fl_rows = _condo_floors("postal_district = ?", (district,))
+                    if not fl_rows:
+                        fl_rows = _condo_floors("postal_district = ?", (district,))
 
             if raw:
                 floor_areas = sorted(set(round(v / 50.0) * 50 for v in raw))
-            tops = [_fl_top(s) for s in fl_rows]
+            tops = [_fl_top(s) for s in fl_rows if _fl_top(s) > 0]
             if tops:
-                import statistics as _stats
-                max_floor = int(_stats.median(tops))
+                # Use MAX not median — building height = highest transacted floor, not typical floor
+                max_floor = max(tops)
 
         conn.close()
     except Exception:
