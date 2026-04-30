@@ -2175,7 +2175,14 @@ def update_user_role(user_id):
     if not _row(cur):
         conn.close()
         return jsonify({"error": "User not found"}), 404
+    cur.execute(_q("SELECT email, full_name, role FROM users WHERE id = ?"), (user_id,))
+    old_user = _row(cur)
+    old_role = (old_user or {}).get('role', 'user')
     cur.execute(_q("UPDATE users SET role = ? WHERE id = ?"), (role, user_id))
+    _log_audit(conn, user_id,
+               f"Role changed by admin: {old_role} → {role}",
+               'role_change',
+               f"user={(old_user or {}).get('email','?')}")
     conn.commit()
     cur.execute(_q("SELECT id, full_name, email, phone, role FROM users WHERE id = ?"), (user_id,))
     updated = _row(cur)

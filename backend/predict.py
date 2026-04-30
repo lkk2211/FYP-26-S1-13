@@ -874,6 +874,7 @@ def _predict_ml(features):
          "The policy environment is broadly stable, with no major new measures expected in the near term.")
     )
 
+    # ── Insight: pure market analysis (what IS happening) ────────────────────
     insight = (
         f"Our model values this {flat_type.title()} at S${estimated_value:,}, with a confidence level of {confidence:.0f}%. "
         f"{psf_note} "
@@ -882,26 +883,38 @@ def _predict_ml(features):
         f"{pol_insight}"
     )
 
-    # Lease-specific recommendation text (simpler)
-    if remaining_lease_years < 30:
-        lease_advice = f"The short lease ({int(remaining_lease_years)} yrs) will limit your buyer pool significantly — price accordingly and be prepared for a longer selling process."
-    elif remaining_lease_years < 60:
-        lease_advice = f"With {int(remaining_lease_years)} years on the lease, some younger buyers won't be able to use their full CPF. Targeting buyers who are older or have cash savings may work better."
-    elif remaining_lease_years < 75:
-        lease_advice = f"The {int(remaining_lease_years)}-year lease is workable for most buyers, but it's worth highlighting in your listing to reassure them."
+    # ── Recommendation: actionable steps only (what TO DO) ───────────────────
+    # Pricing strategy based on PSF position
+    if ppsf > town_psf_bench * 1.10:
+        price_strategy = f"Since this unit is priced above the {location_display} median, make sure the condition, renovations, and floor level justify the premium — buyers will compare closely."
+    elif ppsf < town_psf_bench * 0.90:
+        price_strategy = f"At S${ppsf} PSF, there may be room to price slightly higher — check recent {location_display} transactions to see if the market supports an upward adjustment."
     else:
-        lease_advice = f"The {int(remaining_lease_years)}-year lease is a genuine selling point — most buyers can get full financing and use their CPF without any issues."
+        price_strategy = f"The asking price is well-calibrated to the {location_display} market. Focus on presentation and availability to attract offers quickly."
 
-    sora_rec = (
-        "With rates on the higher side, buyers may be more cautious. Pricing competitively and offering flexibility can help close the deal faster."
+    # Buyer profile based on lease
+    if remaining_lease_years < 30:
+        buyer_target = f"Target cash-heavy or older buyers — most younger buyers won't qualify for bank loans or full CPF usage with only {int(remaining_lease_years)} years left. Be prepared for a longer selling timeline."
+    elif remaining_lease_years < 60:
+        buyer_target = f"Prioritise buyers aged 35 and above who have built up CPF savings — younger buyers may face restrictions on how much CPF they can use on a {int(remaining_lease_years)}-year lease."
+    elif remaining_lease_years < 75:
+        buyer_target = f"The lease is workable for most buyers. Highlight it clearly in your listing to reassure those who may be concerned — it's not a dealbreaker at this length."
+    else:
+        buyer_target = f"This is an easy sell on financing — all buyers can use full CPF and apply for a bank loan. Lead with this in your listing to maximise interest."
+
+    # Timing action based on SORA
+    timing_action = (
+        "With borrowing costs elevated, act on serious offers rather than waiting for a higher bid — buyer purchasing power is constrained right now."
         if sora > 3.5 else
-        "Rates are moderate, so buyers can still get decent loan packages — a good time to transact without too much pressure on either side."
+        "Financing conditions are supportive for buyers at current rates. You can hold out for a fair offer without rushing."
     )
+
     recommendation = (
-        f"We'd expect this unit to transact somewhere between S${min_value:,} and S${max_value:,}. "
-        f"{lease_advice} "
-        f"{sora_rec} "
-        f"It's always worth checking the latest {location_display} transactions on the HDB Resale Portal to fine-tune your expectations."
+        f"We'd expect this unit to transact between S${min_value:,} and S${max_value:,}. "
+        f"{price_strategy} "
+        f"{buyer_target} "
+        f"{timing_action} "
+        f"Check the latest {location_display} transactions on the HDB Resale Portal to validate your pricing before listing."
     )
 
     # ── 12-month price forecast ───────────────────────────────────────────────
@@ -1256,17 +1269,65 @@ def _predict_private_ml(features):
     floor_label = "high-floor" if floor >= 20 else ("mid-floor" if floor >= 10 else "lower-floor")
     size_label  = "large" if area_sqft >= 1400 else ("standard" if area_sqft >= 900 else "compact")
 
-    insight = (
-        f"{location_display} · {district} · {floor_label} (Lvl {floor}) · {area_sqft:.0f} sqft\n"
-        f"ML ensemble estimates S${estimated_value:,} at S${ppsf:,} PSF (confidence: {confidence:.0f}%). "
-        f"SORA at {sora:.2f}% is {sora_label}. "
-        f"{'Cooling measures are dampening speculative activity.' if pol_dir < 0 else ('Policy conditions are supportive.' if pol_dir > 0 else 'Policy environment is neutral.')}"
+    # Condo PSF segment benchmarks (2026 approximate)
+    seg_psf_bench = {'CCR': 2400, 'RCR': 1700, 'OCR': 1350}.get(segment, 1500)
+    if ppsf > seg_psf_bench * 1.10:
+        condo_psf_note = f"At S${ppsf:,} PSF, this unit is priced above the {location_display} average — buyers will expect a compelling justification such as a high floor, recent renovation, or rare layout."
+    elif ppsf < seg_psf_bench * 0.90:
+        condo_psf_note = f"At S${ppsf:,} PSF, this unit is below the typical {location_display} range — potentially good value, but verify that the floor, condition, and remaining tenure support it."
+    else:
+        condo_psf_note = f"At S${ppsf:,} PSF, this unit is fairly priced relative to the {location_display} market."
+
+    sora_condo_insight = (
+        f"With SORA at {sora:.2f}%, borrowing costs are elevated. Buyers using bank loans will face higher monthly payments, which can compress what they're willing to offer."
+        if sora > 3.5 else
+        f"SORA at {sora:.2f}% keeps financing accessible — buyers can still get competitive loan packages, which supports demand and pricing."
     )
+    pol_condo_insight = (
+        "ABSD and other cooling measures remain in place, particularly affecting second-property buyers and foreigners — this limits the pool of potential buyers."
+        if pol_dir < 0 else
+        ("Property market policy is broadly supportive, with stable investment conditions for private residential." if pol_dir > 0 else
+         "The policy environment is neutral — no major new measures are expected to significantly shift demand in the near term.")
+    )
+
+    # ── Insight: pure market analysis ────────────────────────────────────────
+    insight = (
+        f"Our model values this {floor_label} {size_label} condo at S${estimated_value:,} (S${ppsf:,} PSF), with a confidence level of {confidence:.0f}%. "
+        f"{condo_psf_note} "
+        f"{sora_condo_insight} "
+        f"{pol_condo_insight}"
+    )
+
+    # ── Recommendation: actionable steps only ────────────────────────────────
+    priv_mape_now = float(_private_meta.get('eval_mape', 10.0)) if _private_meta else 10.0
+    priv_min = int(estimated_value * (1 - priv_mape_now / 100))
+    priv_max = int(estimated_value * (1 + priv_mape_now / 100))
+
+    if ppsf > seg_psf_bench * 1.10:
+        condo_price_strategy = f"The above-market PSF means buyers will negotiate harder — strengthen your position with recent comparable sales from URA caveats and highlight distinguishing features like view or renovations."
+    elif ppsf < seg_psf_bench * 0.90:
+        condo_price_strategy = f"There may be room to price slightly higher — pull recent URA caveat data for {district} to see if the market supports an upward revision before listing."
+    else:
+        condo_price_strategy = f"The price is well-calibrated for {district}. Prioritise speed to market — well-priced units in this segment tend to attract offers within 4–6 weeks."
+
+    condo_timing = (
+        "With elevated borrowing costs, serious buyers are stretched — act on strong offers rather than holding out for top dollar, as demand is rate-sensitive right now."
+        if sora > 3.5 else
+        "Financing is accessible at current rates. You can afford to wait for a fair offer without major pressure — but avoid overpricing, as the window can close quickly."
+    )
+
+    condo_buyer_tip = (
+        "ABSD limits the investor pool — focus marketing on owner-occupiers and HDB upgraders, who are less affected by the additional stamp duty."
+        if pol_dir < 0 else
+        "Market conditions are open to a broad buyer pool including investors and upgraders — cast a wide net in your marketing."
+    )
+
     recommendation = (
-        f"{size_label.capitalize()} {segment} unit at Level {floor}, {district}: "
-        f"expect S${int(estimated_value*0.91):,}–S${int(estimated_value*1.09):,}. "
-        f"Check URA caveat lodgements for {district} before offering. "
-        f"{'Consider negotiating on price given elevated SORA.' if sora > 3.5 else 'Financing conditions are relatively supportive at current SORA.'}"
+        f"We'd expect this unit to transact between S${priv_min:,} and S${priv_max:,}. "
+        f"{condo_price_strategy} "
+        f"{condo_timing} "
+        f"{condo_buyer_tip} "
+        f"Cross-check with URA caveat lodgements for {district} before finalising your ask."
     )
 
     # 12-month forecast (private: slightly higher baseline growth, CCR premium)

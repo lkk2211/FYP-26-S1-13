@@ -2119,13 +2119,17 @@ async function loadAuditLog() {
         }
 
         const eventColors = {
-            'register': 'bg-emerald-100 text-emerald-700',
-            'login': 'bg-blue-100 text-blue-700',
-            'admin_action': 'bg-amber-100 text-amber-700',
-            'upload': 'bg-violet-100 text-violet-700',
-            'delete': 'bg-rose-100 text-rose-700',
-            'model_upload': 'bg-sky-100 text-sky-700',
-            'retrain': 'bg-orange-100 text-orange-700',
+            'register':           'bg-emerald-100 text-emerald-700',
+            'login':              'bg-blue-100 text-blue-700',
+            'admin_action':       'bg-amber-100 text-amber-700',
+            'upload':             'bg-violet-100 text-violet-700',
+            'delete':             'bg-rose-100 text-rose-700',
+            'account_deleted':    'bg-rose-100 text-rose-700',
+            'model_upload':       'bg-sky-100 text-sky-700',
+            'retrain':            'bg-orange-100 text-orange-700',
+            'account_type_change':'bg-violet-100 text-violet-700',
+            'role_change':        'bg-amber-100 text-amber-700',
+            'security':           'bg-rose-100 text-rose-700',
         };
 
         tbody.innerHTML = logs.map(l => {
@@ -2188,8 +2192,17 @@ function renderUsers(users) {
         const acctBadge = isAgent
             ? '<span class="px-2 py-0.5 bg-violet-100 text-violet-700 rounded text-[10px] font-bold">Agent</span>'
             : '<span class="px-2 py-0.5 bg-slate-100 text-slate-500 rounded text-[10px] font-bold">Homeowner</span>';
+        const acctToggleBtn = isAgent
+            ? `<button onclick="adminToggleAccountType(${user.id},'homeowner')"
+                class="text-[10px] px-2 py-0.5 rounded border border-slate-200 text-slate-500 hover:border-rose-300 hover:text-rose-600 transition-colors" title="Downgrade to Homeowner">
+                ↓ Downgrade
+               </button>`
+            : `<button onclick="adminToggleAccountType(${user.id},'agent')"
+                class="text-[10px] px-2 py-0.5 rounded border border-slate-200 text-slate-500 hover:border-violet-300 hover:text-violet-600 transition-colors" title="Upgrade to Agent">
+                ↑ Make Agent
+               </button>`;
         return `
-            <tr class="group">
+            <tr class="group hover:bg-slate-50 transition-colors">
                 <td class="py-5 pl-4">
                     <div class="flex items-center gap-3">
                         <div class="w-8 h-8 rounded-full border-2 border-slate-900 flex items-center justify-center text-xs font-bold">${initials}</div>
@@ -2203,12 +2216,9 @@ function renderUsers(users) {
                     <span class="px-2 py-1 ${isAdmin ? 'bg-blue-600' : 'bg-emerald-500'} text-white rounded text-[10px] font-bold">${isAdmin ? 'Admin' : 'User'}</span>
                 </td>
                 <td class="py-5">
-                    <div class="flex items-center gap-2">
+                    <div class="flex items-center gap-2 flex-wrap">
                         ${acctBadge}
-                        <button onclick="adminToggleAccountType(${user.id}, '${isAgent ? 'homeowner' : 'agent'}')"
-                            class="text-[10px] text-slate-400 hover:text-slate-700 underline transition-colors" title="${isAgent ? 'Downgrade to Homeowner' : 'Upgrade to Agent'}">
-                            ${isAgent ? 'Downgrade' : 'Upgrade'}
-                        </button>
+                        ${acctToggleBtn}
                     </div>
                 </td>
                 <td class="py-5 pr-4 text-right">
