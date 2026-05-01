@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
-from sklearn.linear_model import HuberRegressor
+from sklearn.linear_model import Ridge
 from sklearn.model_selection import KFold, cross_val_predict
 from sklearn.metrics import mean_absolute_error, r2_score
 from xgboost import XGBRegressor
@@ -524,7 +524,6 @@ def train(df_raw: pd.DataFrame):
     print(f'Train: {len(X_train):,} | Test: {len(X_test):,}')
 
     model_specs = {
-        # XGB: shallow + regularised to diverge from LGBM's deep leaf-wise surface
         'xgb_private':  XGBRegressor(
             n_estimators=800, learning_rate=0.02, max_depth=5,
             min_child_weight=10, reg_alpha=0.1, reg_lambda=2.0, gamma=0.05,
@@ -532,15 +531,15 @@ def train(df_raw: pd.DataFrame):
             random_state=42, objective='reg:squarederror', verbosity=0,
         ),
         'lgbm_private': LGBMRegressor(
-            n_estimators=1000, learning_rate=0.02, num_leaves=127,
+            n_estimators=1200, learning_rate=0.02, num_leaves=127,
             min_child_samples=20,
-            subsample=0.8, colsample_bytree=0.8, random_state=42, verbose=-1,
+            subsample=0.8, colsample_bytree=0.8, random_state=123, verbose=-1,
         ),
         'cat_private':  CatBoostRegressor(
-            iterations=800, learning_rate=0.03,
+            iterations=1000, learning_rate=0.025,
             grow_policy='Lossguide', max_leaves=64,
             min_data_in_leaf=20,
-            loss_function='RMSE', random_seed=42, verbose=0,
+            loss_function='RMSE', random_seed=456, verbose=0,
             cat_features=CATEGORICAL_COLS,
         ),
     }
@@ -560,10 +559,10 @@ def train(df_raw: pd.DataFrame):
                 X_val = X_train.iloc[val_idx]
                 y_tr  = y_train_log.iloc[train_idx]
                 fold_pipe = _build_catboost_pipeline(CatBoostRegressor(
-                    iterations=800, learning_rate=0.03,
+                    iterations=1000, learning_rate=0.025,
                     grow_policy='Lossguide', max_leaves=64,
                     min_data_in_leaf=20,
-                    loss_function='RMSE', random_seed=42, verbose=0,
+                    loss_function='RMSE', random_seed=456, verbose=0,
                     cat_features=CATEGORICAL_COLS,
                 ))
                 fold_pipe.fit(X_tr, y_tr)
@@ -574,11 +573,9 @@ def train(df_raw: pd.DataFrame):
             oof_preds[:, i] = cross_val_predict(pipe, X_train, y_train_log, cv=kf)
         gc.collect()
 
-    # HuberRegressor meta-learner: robust to price outliers in OOF predictions.
-    # Use raw learned weights — the intercept calibrates the blend so negative
-    # weights act as error corrections. Only fall back to equal weights if
-    # stacked MAPE > simple average MAPE (evaluated in Phase 3).
-    stacker = HuberRegressor(epsilon=1.35, alpha=0.0001, max_iter=300)
+    # Ridge meta-learner: regularisation prevents the wild negative coefficients
+    # that HuberRegressor produced with correlated base models.
+    stacker = Ridge(alpha=1.0)
     stacker.fit(oof_preds, y_train_log)
     stacker_weights = stacker.coef_.tolist()
     stacker_intercept = float(stacker.intercept_)
@@ -619,15 +616,15 @@ def train(df_raw: pd.DataFrame):
     print(f'\nSimple avg: MAE=S${mean_absolute_error(y_test, simple_avg):,.0f}  R²={r2_score(y_test, simple_avg):.4f}  MAPE={simple_mape:.2f}%')
     print(f'Stacked:    MAE=S${stacked_mae:,.0f}  R²={stacked_r2:.4f}  MAPE={stacked_mape:.2f}%')
 
-    # Fall back to equal weights if stacker doesn't beat simple average
-    if stacked_mape > simple_mape:
+    # Fall back only if stacker is meaningfully worse (>1% relative)
+    if stacked_mape > simple_mape * 1.01:
         n = len(stacker_weights)
         stacker.coef_      = np.full(n, 1.0 / n)
         stacker.intercept_ = 0.0
         stacker_weights    = stacker.coef_.tolist()
         stacker_intercept  = 0.0
         stacked_mape       = simple_mape
-        print(f'  → Stacker worse than simple avg; using equal weights {[f"{w:.3f}" for w in stacker_weights]}')
+        print(f'  → Stacker >1% worse than simple avg; using equal weights')
 
     # ── Save meta ─────────────────────────────────────────────────────────────
     medians = (

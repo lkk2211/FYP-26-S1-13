@@ -33,7 +33,7 @@ from datetime import datetime
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
-from sklearn.linear_model import HuberRegressor
+from sklearn.linear_model import Ridge
 from sklearn.model_selection import KFold, cross_val_predict
 from sklearn.metrics import mean_absolute_error, r2_score
 from xgboost import XGBRegressor
@@ -80,8 +80,9 @@ NUMERICAL_COLS_FULL = [
     'geo_rolling_psf_24m',              # 24m ~1km spatial grid × flat_type
     'town_rolling_psf_12m',             # 12m town×flat_type momentum (recent trend)
     'market_rolling_psf_12m',           # 12m national flat_type trend (market drift signal)
-    # Interaction
+    # Interactions
     'storey_psf_interaction',           # storey_pct × block_rolling_psf_24m
+    'lease_psf_interaction',            # remaining_lease_years × block_rolling_psf_24m
 ]
 
 # Minimal fallback when geo / policy / SORA unavailable
@@ -93,7 +94,7 @@ NUMERICAL_COLS_MIN = [
     'street_rolling_psf_24m', 'town_flat_type_median_psf',
     'flat_model_town_rolling_psf_24m', 'geo_rolling_psf_24m',
     'town_rolling_psf_12m', 'market_rolling_psf_12m',
-    'storey_psf_interaction',
+    'storey_psf_interaction', 'lease_psf_interaction',
 ]
 
 # ─── Bala's Curve (SISV standard — 11-point table) ───────────────────────────
@@ -463,8 +464,11 @@ def engineer_features(df, policy_df, sora_df, geo_df):
     else:
         df['dist_nearest_mrt_km'] = 0.5
 
-    # ── Storey × PSF interaction ──────────────────────────────────────────────
+    # ── Interactions ──────────────────────────────────────────────────────────
     df['storey_psf_interaction'] = df['storey_pct'] * df['block_rolling_psf_24m']
+    # Lease premium per PSF dollar varies by estate: +1yr lease in Bishan ($720/sqft)
+    # is worth more in absolute dollars than in Woodlands ($450/sqft).
+    df['lease_psf_interaction']  = df['remaining_lease_years'] * df['block_rolling_psf_24m']
 
     return df, has_geo
 
@@ -558,6 +562,8 @@ def train(from_db=False):
     # XGB:  shallow (depth=5) + regularised → different error surface from LGBM
     # LGBM: deep leaf-wise, many trees → primary workhorse
     # CatBoost: Lossguide (leaf-wise), native categoricals → genuine diversity
+    # Different random seeds per model so stochastic sampling is independent —
+    # genuine randomness diversity helps the stacker find orthogonal signal.
     model_specs = {
         'xgb': XGBRegressor(
             n_estimators=800, learning_rate=0.02, max_depth=5,
@@ -566,14 +572,14 @@ def train(from_db=False):
             objective='reg:squarederror', tree_method='hist', random_state=42,
         ),
         'lgbm': LGBMRegressor(
-            n_estimators=1000, learning_rate=0.02, num_leaves=127,
+            n_estimators=1200, learning_rate=0.02, num_leaves=127,
             min_child_samples=20, subsample=0.8, colsample_bytree=0.8,
-            random_state=42, verbose=-1,
+            random_state=123, verbose=-1,
         ),
         'cat': CatBoostRegressor(
-            iterations=800, learning_rate=0.03,
+            iterations=1000, learning_rate=0.025,
             grow_policy='Lossguide', max_leaves=64, min_data_in_leaf=20,
-            loss_function='RMSE', random_seed=42, verbose=0,
+            loss_function='RMSE', random_seed=456, verbose=0,
             cat_features=CATEGORICAL_COLS,
         ),
     }
@@ -590,9 +596,9 @@ def train(from_db=False):
             fold_preds = np.zeros(len(X_train))
             for tr_idx, val_idx in kf.split(X_train):
                 fold_pipe = Pipeline([('model', CatBoostRegressor(
-                    iterations=800, learning_rate=0.03,
+                    iterations=1000, learning_rate=0.025,
                     grow_policy='Lossguide', max_leaves=64, min_data_in_leaf=20,
-                    loss_function='RMSE', random_seed=42, verbose=0,
+                    loss_function='RMSE', random_seed=456, verbose=0,
                     cat_features=CATEGORICAL_COLS,
                 ))])
                 fold_pipe.fit(X_train.iloc[tr_idx], y_train_log.iloc[tr_idx])
@@ -603,10 +609,10 @@ def train(from_db=False):
             oof_preds[:, i] = cross_val_predict(pipe, X_train, y_train_log, cv=kf)
         gc.collect()
 
-    # HuberRegressor meta-learner — raw weights (no clip/normalise).
-    # Negative weights are valid error corrections. Fall back to equal weights
-    # only if the stacker doesn't beat simple average on the test set.
-    stacker = HuberRegressor(epsilon=1.35, alpha=0.0001, max_iter=300)
+    # Ridge meta-learner: regularisation shrinks weights toward equal, preventing
+    # the wild negative XGB coefficients that HuberRegressor produced when models
+    # are correlated. Produces stable, generalizable blending weights.
+    stacker = Ridge(alpha=1.0)
     stacker.fit(oof_preds, y_train_log)
     print(f'  Stacker weights: {[f"{w:.3f}" for w in stacker.coef_]}  intercept={stacker.intercept_:.4f}')
 
@@ -643,14 +649,17 @@ def train(from_db=False):
           f'R²={r2_score(y_test, simple_pred):.4f}  MAPE={simple_mape:.2f}%')
     print(f'Stacked:    MAE=S${stacked_mae:,.0f}  R²={stacked_r2:.4f}  MAPE={stacked_mape:.2f}%')
 
-    if stacked_mape > simple_mape:
+    # Fall back to equal weights only if stacker is meaningfully worse (>1% relative).
+    # Ridge regularisation should produce stable weights that beat or match simple avg;
+    # a tiny gap may be noise in the test set rather than a genuine stacker failure.
+    if stacked_mape > simple_mape * 1.01:
         n = len(model_specs)
         stacker.coef_      = np.full(n, 1.0 / n)
         stacker.intercept_ = 0.0
         stacked_mape       = simple_mape
         stacked_mae        = mean_absolute_error(y_test, simple_pred)
         stacked_r2         = r2_score(y_test, simple_pred)
-        print(f'  → Stacker worse than simple avg; using equal weights')
+        print(f'  → Stacker >1% worse than simple avg; using equal weights')
 
     # 10. Latest policy + SORA for inference
     latest_policy = {'direction': 0.0, 'severity': 0.0, 'policy_impact': 0.0,

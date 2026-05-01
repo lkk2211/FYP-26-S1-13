@@ -879,6 +879,7 @@ def _predict_ml(features):
         'dist_nearest_mrt_km':       dist_mrt,
         'lease_commence_date':               lease_commence_date,
         'storey_psf_interaction':            storey_pct * block_rolling_psf_24m,
+        'lease_psf_interaction':             remaining_lease_years * block_rolling_psf_24m,
         'block_rolling_psf_24m':             block_rolling_psf_24m,
         'block_median_psf_alltime':          block_median_psf_alltime,
         'street_rolling_psf_24m':            street_rolling_psf_24m,
