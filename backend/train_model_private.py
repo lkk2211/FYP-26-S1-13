@@ -572,8 +572,19 @@ def train(df_raw: pd.DataFrame):
     stacked_mae  = mean_absolute_error(y_test, stacked_preds)
     stacked_r2   = r2_score(y_test, stacked_preds)
     stacked_mape = _mape(y_test.values, stacked_preds)
-    print(f'\nSimple avg: MAE=S${mean_absolute_error(y_test, simple_avg):,.0f}  R²={r2_score(y_test, simple_avg):.4f}  MAPE={_mape(y_test.values, simple_avg):.2f}%')
+    simple_mape  = _mape(y_test.values, simple_avg)
+    print(f'\nSimple avg: MAE=S${mean_absolute_error(y_test, simple_avg):,.0f}  R²={r2_score(y_test, simple_avg):.4f}  MAPE={simple_mape:.2f}%')
     print(f'Stacked:    MAE=S${stacked_mae:,.0f}  R²={stacked_r2:.4f}  MAPE={stacked_mape:.2f}%')
+
+    # Fall back to equal weights if stacker doesn't beat simple average
+    if stacked_mape > simple_mape:
+        n = len(stacker_weights)
+        stacker.coef_      = np.full(n, 1.0 / n)
+        stacker.intercept_ = 0.0
+        stacker_weights    = stacker.coef_.tolist()
+        stacker_intercept  = 0.0
+        stacked_mape       = simple_mape
+        print(f'  → Stacker worse than simple avg; using equal weights {[f"{w:.3f}" for w in stacker_weights]}')
 
     # ── Save meta ─────────────────────────────────────────────────────────────
     medians = (

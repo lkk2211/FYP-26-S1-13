@@ -19,8 +19,11 @@ Usage:
 import os
 import re
 import sys
+import warnings
 import joblib
 import requests
+
+warnings.filterwarnings('ignore', message='X does not have valid feature names')
 import numpy as np
 import pandas as pd
 from datetime import datetime
@@ -530,9 +533,18 @@ def train(from_db=False):
         oof_preds[:, i] = cross_val_predict(pipe, X_train, y_train_log, cv=kf)
         gc.collect()
 
-    # HuberRegressor meta-learner: robust to price outliers in OOF predictions
+    # HuberRegressor meta-learner: robust to price outliers in OOF predictions.
+    # Clip negatives, renormalise to sum=1, zero intercept so predictions stay
+    # in the correct log-price range. Fall back to equal weights if stacked
+    # MAPE turns out worse than simple average (evaluated in Phase 3).
     stacker = HuberRegressor(epsilon=1.35, alpha=0.0001, max_iter=300)
     stacker.fit(oof_preds, y_train_log)
+    coef = np.maximum(stacker.coef_, 0)
+    coef_sum = coef.sum()
+    if coef_sum > 0:
+        coef = coef / coef_sum
+    stacker.coef_      = coef
+    stacker.intercept_ = 0.0
     stacker_weights   = stacker.coef_.tolist()
     stacker_intercept = float(stacker.intercept_)
     print(f"  Stacker weights: {[f'{w:.3f}' for w in stacker_weights]}  intercept={stacker_intercept:.4f}")
@@ -566,8 +578,19 @@ def train(from_db=False):
     stacked_mae  = mean_absolute_error(y_test, stacked_preds)
     stacked_r2   = r2_score(y_test, stacked_preds)
     stacked_mape = _mape(y_test.values, stacked_preds)
-    print(f"Simple avg: MAE=S${mean_absolute_error(y_test, simple_avg):,.0f}  R²={r2_score(y_test, simple_avg):.4f}  MAPE={_mape(y_test.values, simple_avg):.2f}%")
+    simple_mape  = _mape(y_test.values, simple_avg)
+    print(f"Simple avg: MAE=S${mean_absolute_error(y_test, simple_avg):,.0f}  R²={r2_score(y_test, simple_avg):.4f}  MAPE={simple_mape:.2f}%")
     print(f"Stacked:    MAE=S${stacked_mae:,.0f}  R²={stacked_r2:.4f}  MAPE={stacked_mape:.2f}%")
+
+    # Fall back to equal weights if stacker doesn't beat simple average
+    if stacked_mape > simple_mape:
+        n = len(stacker_weights)
+        stacker.coef_      = np.full(n, 1.0 / n)
+        stacker.intercept_ = 0.0
+        stacker_weights    = stacker.coef_.tolist()
+        stacker_intercept  = 0.0
+        stacked_mape       = simple_mape
+        print(f"  → Stacker worse than simple avg; using equal weights {[f'{w:.3f}' for w in stacker_weights]}")
 
     # 6. Meta: store medians + latest policy/SORA for inference
     # (medians already computed above before df_feat was freed)
