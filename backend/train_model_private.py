@@ -524,19 +524,11 @@ def train(df_raw: pd.DataFrame):
         gc.collect()
 
     # HuberRegressor meta-learner: robust to price outliers in OOF predictions.
-    # Clip any negative weights to zero after fitting — a base model should only
-    # contribute positively to the blend, never subtract from it.
+    # Use raw learned weights — the intercept calibrates the blend so negative
+    # weights act as error corrections. Only fall back to equal weights if
+    # stacked MAPE > simple average MAPE (evaluated in Phase 3).
     stacker = HuberRegressor(epsilon=1.35, alpha=0.0001, max_iter=300)
     stacker.fit(oof_preds, y_train_log)
-    # Clip negatives then renormalise to sum=1 and zero the intercept.
-    # Without renormalisation, a clipped model leaves the remaining weights
-    # summing to >1, which inflates log-space predictions and explodes after exp().
-    coef = np.maximum(stacker.coef_, 0)
-    coef_sum = coef.sum()
-    if coef_sum > 0:
-        coef = coef / coef_sum
-    stacker.coef_ = coef
-    stacker.intercept_ = 0.0
     stacker_weights = stacker.coef_.tolist()
     stacker_intercept = float(stacker.intercept_)
     print(f'  Stacker weights: {[f"{w:.3f}" for w in stacker_weights]}  intercept={stacker_intercept:.4f}')

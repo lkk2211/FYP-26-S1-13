@@ -581,17 +581,11 @@ def train(from_db=False):
         gc.collect()
 
     # HuberRegressor meta-learner: robust to price outliers in OOF predictions.
-    # Clip negatives, renormalise to sum=1, zero intercept so predictions stay
-    # in the correct log-price range. Fall back to equal weights if stacked
-    # MAPE turns out worse than simple average (evaluated in Phase 3).
+    # Use raw learned weights including negative ones — the intercept calibrates the
+    # sum so negative weights act as corrections, not errors. Only fall back to
+    # equal weights (evaluated in Phase 3) if stacked MAPE > simple average MAPE.
     stacker = HuberRegressor(epsilon=1.35, alpha=0.0001, max_iter=300)
     stacker.fit(oof_preds, y_train_log)
-    coef = np.maximum(stacker.coef_, 0)
-    coef_sum = coef.sum()
-    if coef_sum > 0:
-        coef = coef / coef_sum
-    stacker.coef_      = coef
-    stacker.intercept_ = 0.0
     stacker_weights   = stacker.coef_.tolist()
     stacker_intercept = float(stacker.intercept_)
     print(f"  Stacker weights: {[f'{w:.3f}' for w in stacker_weights]}  intercept={stacker_intercept:.4f}")
