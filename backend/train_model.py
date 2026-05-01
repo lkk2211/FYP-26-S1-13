@@ -41,8 +41,8 @@ from catboost import CatBoostRegressor
 MODELS_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
 TEMP_PATH   = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_progress.csv')
 RESOURCE_ID = 'f1765b54-a209-4718-8d38-a39237f502b3'
-MIN_YEAR              = 2000   # use all DB data; 700k records from 2000–2026
-SUPPLEMENT_MIN_YEAR   = 2000   # API supplement only fires if DB starts after this
+MIN_YEAR              = 2015   # SORA starts 2017 but 2015–2016 filled with median (~1.8%, stable)
+SUPPLEMENT_MIN_YEAR   = 2015   # API supplement only fires if DB starts after this
 
 CATEGORICAL_COLS = ["town", "flat_type", "flat_model"]
 # Full feature set — lat/lon + policy + SORA + 4 new accuracy features
