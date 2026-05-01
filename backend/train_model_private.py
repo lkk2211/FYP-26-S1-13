@@ -504,10 +504,29 @@ def train(df_raw: pd.DataFrame):
     kf = KFold(n_splits=5, shuffle=True, random_state=42)
     oof_preds = np.zeros((len(X_train), len(model_specs)))
 
+    X_train_arr = X_train.values  # numpy array — avoids LGBM feature-name warning
+
     for i, (name, model) in enumerate(model_specs.items()):
         print(f'  OOF for {name}...')
-        pipe = _build_catboost_pipeline(model) if 'cat' in name else _build_pipeline(model)
-        oof_preds[:, i] = cross_val_predict(pipe, X_train, y_train_log, cv=kf)
+        is_cat = 'cat' in name
+        if is_cat:
+            # CatBoost doesn't support sklearn.clone() with cat_features — run OOF manually
+            fold_preds = np.zeros(len(X_train))
+            for train_idx, val_idx in kf.split(X_train_arr):
+                X_tr, X_val = X_train_arr[train_idx], X_train_arr[val_idx]
+                y_tr = y_train_log.iloc[train_idx]
+                # Fresh pipeline per fold to avoid state leakage
+                fold_pipe = _build_catboost_pipeline(CatBoostRegressor(
+                    iterations=200, learning_rate=0.05, depth=6,
+                    loss_function='RMSE', random_seed=42, verbose=0,
+                    cat_features=list(range(len(CATEGORICAL_COLS))),
+                ))
+                fold_pipe.fit(X_tr, y_tr)
+                fold_preds[val_idx] = fold_pipe.predict(X_val)
+            oof_preds[:, i] = fold_preds
+        else:
+            pipe = _build_pipeline(model)
+            oof_preds[:, i] = cross_val_predict(pipe, X_train_arr, y_train_log, cv=kf)
         gc.collect()
 
     # HuberRegressor meta-learner: robust to price outliers in OOF predictions
@@ -519,14 +538,15 @@ def train(df_raw: pd.DataFrame):
 
     # ── Phase 2: Train final base models on full training data ───────────────
     print('\nPhase 2: Training final base models on full training set...')
+    X_test_arr = X_test.values
     trained = {}
     for name, model in model_specs.items():
         print(f'  Training {name}...')
         pipeline = _build_catboost_pipeline(model) if 'cat' in name else _build_pipeline(model)
-        pipeline.fit(X_train, y_train_log)
+        pipeline.fit(X_train_arr, y_train_log)
 
         # Evaluate with stacker
-        test_pred_log = pipeline.predict(X_test)
+        test_pred_log = pipeline.predict(X_test_arr)
         preds_exp = np.exp(test_pred_log)
         mae = mean_absolute_error(y_test, preds_exp)
         r2  = r2_score(y_test, preds_exp)
@@ -536,7 +556,7 @@ def train(df_raw: pd.DataFrame):
         gc.collect()
 
     # ── Phase 3: Evaluate stacked ensemble ───────────────────────────────────
-    test_log_preds = np.column_stack([p.predict(X_test) for p in trained.values()])
+    test_log_preds = np.column_stack([p.predict(X_test_arr) for p in trained.values()])
     stacked_log = stacker.predict(test_log_preds)
     stacked_preds = np.exp(stacked_log)
     simple_avg    = np.exp(np.mean(test_log_preds, axis=1))
