@@ -41,7 +41,8 @@ from catboost import CatBoostRegressor
 MODELS_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
 TEMP_PATH   = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_progress.csv')
 RESOURCE_ID = 'f1765b54-a209-4718-8d38-a39237f502b3'
-MIN_YEAR    = 2015
+MIN_YEAR              = 2010   # DB filter; pre-DB years supplemented from API when available
+SUPPLEMENT_MIN_YEAR   = 2010   # earliest year to pull from data.gov.sg API supplement
 
 CATEGORICAL_COLS = ["town", "flat_type", "flat_model"]
 # Full feature set — lat/lon + policy + SORA + 4 new accuracy features
@@ -63,6 +64,8 @@ NUMERICAL_COLS_FULL = [
     "lat",
     "lon",
     "dist_nearest_mrt_km",           # haversine distance to nearest MRT station
+    "lease_commence_date",                # direct era signal: 1970s/80s/90s/2000s flat design & mkt psych
+    "storey_psf_interaction",             # storey_pct × block_rolling_psf_24m: floor premium × local price
     "block_rolling_psf_24m",              # 24-month lagged block-level median PSF
     "block_median_psf_alltime",           # all-time block median PSF (stable anchor)
     "street_rolling_psf_24m",             # 24-month street×flat_type median PSF
@@ -83,6 +86,8 @@ NUMERICAL_COLS_MIN = [
     "remaining_lease_years",
     "flat_age_years",
     "bala_fraction",
+    "lease_commence_date",
+    "storey_psf_interaction",
     "block_rolling_psf_24m",
     "block_median_psf_alltime",
     "street_rolling_psf_24m",
@@ -424,6 +429,18 @@ def engineer_features(df, policy_df, sora_df, geo_df):
     df_s['sin_month'] = np.sin(2 * np.pi * month_num / 12)
     df_s['cos_month'] = np.cos(2 * np.pi * month_num / 12)
 
+    # lease_commence_date as raw numeric — top feature in published HDB ML research.
+    # Captures era-specific effects: design generation, build quality, market psychology
+    # of 1970s/80s/90s/2000s HDB stock, beyond what remaining_lease or flat_age encode.
+    df_s['lease_commence_date'] = pd.to_numeric(df_s['lease_commence_date'], errors='coerce').fillna(
+        df_s['year'] - df_s['flat_age_years'].fillna(34)
+    )
+
+    # storey_psf_interaction: floor premium × local PSF level.
+    # High storey in a premium estate (high block_rolling_psf) commands a larger absolute
+    # dollar premium than high storey in a cheap estate — tree splits miss this without it.
+    df_s['storey_psf_interaction'] = df_s['storey_pct'] * df_s['block_rolling_psf_24m']
+
     # geo_rolling_psf_24m computed after geocoding merge (lat/lon not yet available here)
     df_s['geo_rolling_psf_24m'] = df_s['street_rolling_psf_24m']  # placeholder; updated below
 
@@ -543,6 +560,26 @@ def train(from_db=False):
         df = download_hdb_data()
     print(f"Raw records: {len(df):,}")
 
+    # Supplement DB data with pre-DB historical records from data.gov.sg API.
+    # Enabled when SUPPLEMENT_API=1 env var is set.  DB data typically starts 2021+;
+    # pre-2015 data covers older leases (1966–2000 commencement) needed to learn
+    # the full lease_commence_date → price relationship.
+    if os.environ.get('SUPPLEMENT_API', '0') == '1':
+        try:
+            df['_month_year'] = pd.to_datetime(df['month'].astype(str).str[:7] + '-01', errors='coerce').dt.year
+            db_min_year = int(df['_month_year'].min()) if not df['_month_year'].isna().all() else 2025
+            df.drop(columns=['_month_year'], inplace=True)
+            if db_min_year > SUPPLEMENT_MIN_YEAR:
+                print(f"  DB starts {db_min_year}; downloading pre-{db_min_year} records from data.gov.sg...")
+                api_all = download_hdb_data()
+                api_all['_year'] = pd.to_datetime(api_all['month'].astype(str).str[:7] + '-01', errors='coerce').dt.year
+                api_pre = api_all[(api_all['_year'] >= SUPPLEMENT_MIN_YEAR) & (api_all['_year'] < db_min_year)].drop(columns=['_year'])
+                if len(api_pre) > 0:
+                    df = pd.concat([df, api_pre], ignore_index=True)
+                    print(f"  +{len(api_pre):,} API records → {len(df):,} total")
+        except Exception as _se:
+            print(f"  API supplement failed (non-critical): {_se}")
+
     # 2. Load supplementary datasets
     print("Loading policy, SORA, and geocoding data from database...")
     policy_df = load_policy_from_db()
@@ -613,8 +650,8 @@ def train(from_db=False):
                                min_child_samples=20,
                                subsample=0.8, colsample_bytree=0.8, random_state=42,
                                verbose=-1),
-        # CatBoost: leaf-wise growth (Lossguide), increased to 1000 iterations.
-        'cat':  CatBoostRegressor(iterations=1000, learning_rate=0.03,
+        # CatBoost: leaf-wise growth (Lossguide). Best individual model — more iterations.
+        'cat':  CatBoostRegressor(iterations=1200, learning_rate=0.025,
                                    grow_policy='Lossguide', max_leaves=64,
                                    min_data_in_leaf=20,
                                    loss_function='RMSE', random_seed=42, verbose=0,
@@ -646,7 +683,7 @@ def train(from_db=False):
                 X_val = X_train.iloc[val_idx]
                 y_tr  = y_train_log.iloc[train_idx]
                 fold_pipe = Pipeline(steps=[('model', CatBoostRegressor(
-                    iterations=1000, learning_rate=0.03,
+                    iterations=1200, learning_rate=0.025,
                     grow_policy='Lossguide', max_leaves=64,
                     min_data_in_leaf=20,
                     loss_function='RMSE', random_seed=42, verbose=0,

@@ -39,6 +39,7 @@ jobs:
         if: inputs.model_type == 'hdb' || inputs.model_type == 'both'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SUPPLEMENT_API: '1'
         run: python backend/train_model.py
 
       - name: Upload HDB models to Render

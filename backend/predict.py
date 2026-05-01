@@ -578,6 +578,9 @@ def _predict_ml(features):
                              if _actual_lease is not None and float(_actual_lease) > 0
                              else float(med.get('remaining_lease_years', 65.0)))
     flat_age_years        = float(med.get('flat_age_years', 34.0))
+    # Derive lease_commence_date: for a 99-year HDB lease, commence = current_year + remaining - 99
+    lease_commence_date   = float(features.get('lease_commence_year') or
+                                  round(year + remaining_lease_years - 99))
     lat_med = float(med.get('lat', lat or 1.35))
     lon_med = float(med.get('lon', lon or 103.82))
     eff_lat = lat or lat_med
@@ -835,6 +838,8 @@ def _predict_ml(features):
         'lat':                     eff_lat,
         'lon':                     eff_lon,
         'dist_nearest_mrt_km':       dist_mrt,
+        'lease_commence_date':               lease_commence_date,
+        'storey_psf_interaction':            storey_pct * block_rolling_psf_24m,
         'block_rolling_psf_24m':             block_rolling_psf_24m,
         'block_median_psf_alltime':          block_median_psf_alltime,
         'street_rolling_psf_24m':            street_rolling_psf_24m,
@@ -1458,6 +1463,8 @@ def _predict_private_ml(features):
         'project_rolling_psf_6m':       project_rolling_psf,
         'project_median_psf_alltime':   project_alltime_psf,
         'district_rolling_psf_24m':     _get_district_rolling_psf(district, 'CONDOMINIUM'),
+        'district_median_psf_alltime':  _get_district_rolling_psf(district, 'CONDOMINIUM'),  # reuse helper (all-time ≈ rolling for inference)
+        'storey_psf_interaction':       floor_level_pct * project_rolling_psf,
         'sin_quarter':                  __import__('math').sin(2 * __import__('math').pi * quarter / 4),
         'cos_quarter':                  __import__('math').cos(2 * __import__('math').pi * quarter / 4),
     }

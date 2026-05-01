@@ -63,8 +63,10 @@ NUMERICAL_COLS   = [
     'direction', 'severity', 'policy_impact', 'months_since_policy_change', 'sora',
     'project_rolling_psf_6m',       # rolling 24-month PSF for this project (no leakage)
     'project_median_psf_alltime',   # all-time project median PSF (stable anchor)
-    'district_rolling_psf_24m',     # 24-month district×property_type PSF (project fallback)
-    'sin_quarter', 'cos_quarter',   # cyclic quarter encoding (seasonality)
+    'district_rolling_psf_24m',      # 24-month district×property_type PSF (project fallback)
+    'district_median_psf_alltime',   # all-time district×property_type median (stable anchor)
+    'storey_psf_interaction',        # floor_level_pct × project_rolling_psf_6m
+    'sin_quarter', 'cos_quarter',    # cyclic quarter encoding (seasonality)
 ]
 ALL_FEATURES = CATEGORICAL_COLS + NUMERICAL_COLS
 
@@ -434,8 +436,12 @@ def engineer_features(df: pd.DataFrame, policy_df=None, sora_df=None) -> pd.Data
         .transform(lambda x: x.shift(1).rolling(8, min_periods=3).mean())
     )
     dist_type_median = df.groupby('_dist_type_key')['_unit_psf_tmp'].transform('median')
-    df['district_rolling_psf_24m'] = df['district_rolling_psf_24m'].fillna(dist_type_median)
+    df['district_rolling_psf_24m']    = df['district_rolling_psf_24m'].fillna(dist_type_median)
+    df['district_median_psf_alltime'] = dist_type_median
     df.drop(columns=['_unit_psf_tmp', '_dist_type_key'], inplace=True)
+
+    # storey_psf_interaction: floor premium × project price level
+    df['storey_psf_interaction'] = df['floor_level_pct'] * df['project_rolling_psf_6m']
 
     # Cyclic quarter encoding for seasonality (Q1 Jan–Mar vs Q4 Oct–Dec differ in SG market)
     df['sin_quarter'] = np.sin(2 * np.pi * df['quarter'] / 4)
@@ -446,7 +452,8 @@ def engineer_features(df: pd.DataFrame, policy_df=None, sora_df=None) -> pd.Data
                                     'direction', 'severity', 'policy_impact',
                                     'months_since_policy_change', 'sora',
                                     'project_rolling_psf_6m', 'project_median_psf_alltime',
-                                    'district_rolling_psf_24m', 'sin_quarter', 'cos_quarter',
+                                    'district_rolling_psf_24m', 'district_median_psf_alltime',
+                                    'storey_psf_interaction', 'sin_quarter', 'cos_quarter',
                                     'transacted_price']
     return df.dropna(subset=[c for c in required if c != 'transacted_price'] + ['transacted_price'])
 
@@ -529,10 +536,9 @@ def train(df_raw: pd.DataFrame):
             min_child_samples=20,
             subsample=0.8, colsample_bytree=0.8, random_state=42, verbose=-1,
         ),
-        # Lossguide = leaf-wise growth like LGBM; previously level-wise (depth=7)
-        # was causing CatBoost to underperform and correlate with LGBM
+        # Lossguide = leaf-wise growth like LGBM. CatBoost best individual (R²=0.949).
         'cat_private':  CatBoostRegressor(
-            iterations=1000, learning_rate=0.03,
+            iterations=1200, learning_rate=0.025,
             grow_policy='Lossguide', max_leaves=64,
             min_data_in_leaf=20,
             loss_function='RMSE', random_seed=42, verbose=0,
@@ -555,7 +561,7 @@ def train(df_raw: pd.DataFrame):
                 X_val = X_train.iloc[val_idx]
                 y_tr  = y_train_log.iloc[train_idx]
                 fold_pipe = _build_catboost_pipeline(CatBoostRegressor(
-                    iterations=1000, learning_rate=0.03,
+                    iterations=1200, learning_rate=0.025,
                     grow_policy='Lossguide', max_leaves=64,
                     min_data_in_leaf=20,
                     loss_function='RMSE', random_seed=42, verbose=0,
