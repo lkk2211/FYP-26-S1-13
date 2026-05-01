@@ -150,7 +150,9 @@ def _run_upload_thread(job_id, file_bytes, filename, tx_type):
 
         is_excel = filename.endswith('.xlsx') or filename.endswith('.xls')
 
-        if USE_POSTGRES and tx_type in ('hdb', 'geocoded', 'policy', 'sora') and not is_excel:
+        # SORA excluded from ELT path — the SQL DATE conversion in process_uploaded_data()
+        # doesn't reliably handle all date formats. Python _norm_date() is more robust.
+        if USE_POSTGRES and tx_type in ('hdb', 'geocoded', 'policy') and not is_excel:
             # ── ELT: stream CSV → staging → RPC ──────────────────────────────
             if tx_type == 'hdb':
                 stage_sql = "INSERT INTO stage_resale (month, town, flat_type, block, street_name, storey_range, floor_area_sqm, flat_model, lease_commence_date, remaining_lease, resale_price) VALUES %s"
@@ -3532,7 +3534,8 @@ def upload_transactions():
 
     # ── ELT path: hand off to background thread, return immediately ───────────
     # Avoids gunicorn worker timeout on large files (227k+ rows).
-    if USE_POSTGRES and tx_type in ('hdb', 'geocoded', 'policy', 'sora') and not is_excel:
+    # SORA excluded — uses Python direct INSERT for reliable date parsing.
+    if USE_POSTGRES and tx_type in ('hdb', 'geocoded', 'policy') and not is_excel:
         with _upload_lock:
             _upload_jobs[batch_id] = {'state': 'processing', 'message': 'Queued…', 'inserted': 0, 'total_rows': 0}
         threading.Thread(target=_run_upload_thread,
