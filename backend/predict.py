@@ -735,6 +735,85 @@ def _predict_ml(features):
     if town_flat_type_median_psf is None or town_flat_type_median_psf <= 0:
         town_flat_type_median_psf = block_rolling_psf_24m
 
+    # Flat model × town rolling PSF (DBSS, Maisonette, premium premiums)
+    flat_model = str(features.get('flat_model', '')).strip().upper()
+    flat_model_town_rolling_psf_24m = None
+    if flat_model and town:
+        try:
+            DATABASE_URL = os.environ.get('DATABASE_URL', '')
+            if DATABASE_URL:
+                import psycopg2, psycopg2.extras
+                _cfm = psycopg2.connect(DATABASE_URL)
+                _cfmcur = _cfm.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+                _cfmcur.execute(
+                    "SELECT AVG(CAST(resale_price AS REAL) / (CAST(floor_area_sqm AS REAL) * 10.764)) AS psf "
+                    "FROM resale_flat_prices "
+                    "WHERE UPPER(town) = %s AND UPPER(flat_model) = %s "
+                    "AND month >= (CURRENT_DATE - INTERVAL '25 months') "
+                    "AND month < (CURRENT_DATE - INTERVAL '1 month')",
+                    (town, flat_model)
+                )
+            else:
+                import sqlite3
+                _cfm = sqlite3.connect(os.path.join(os.path.dirname(__file__), 'propaisg.db'))
+                _cfm.row_factory = sqlite3.Row
+                _cfmcur = _cfm.cursor()
+                _cfmcur.execute(
+                    "SELECT AVG(CAST(resale_price AS REAL) / (CAST(floor_area_sqm AS REAL) * 10.764)) AS psf "
+                    "FROM resale_flat_prices "
+                    "WHERE UPPER(town) = ? AND UPPER(flat_model) = ? "
+                    "AND month >= date('now', '-25 months') AND month < date('now', '-1 months')",
+                    (town, flat_model)
+                )
+            rfm = _cfmcur.fetchone()
+            if rfm:
+                vfm = dict(rfm).get('psf')
+                if vfm:
+                    flat_model_town_rolling_psf_24m = float(vfm)
+            _cfm.close()
+        except Exception:
+            pass
+    if flat_model_town_rolling_psf_24m is None or flat_model_town_rolling_psf_24m <= 0:
+        flat_model_town_rolling_psf_24m = town_flat_type_median_psf
+
+    # Geo-grid rolling PSF (~1km × 1km bin × flat_type)
+    geo_rolling_psf_24m = None
+    if eff_lat and eff_lon:
+        try:
+            lat_bin = round(eff_lat, 2)
+            lon_bin = round(eff_lon, 2)
+            DATABASE_URL = os.environ.get('DATABASE_URL', '')
+            if DATABASE_URL:
+                import psycopg2, psycopg2.extras
+                _cg = psycopg2.connect(DATABASE_URL)
+                _cgcur = _cg.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+                _cgcur.execute(
+                    "SELECT AVG(CAST(resale_price AS REAL) / (CAST(floor_area_sqm AS REAL) * 10.764)) AS psf "
+                    "FROM resale_flat_prices r "
+                    "JOIN geocoded_addresses g ON UPPER(CONCAT(r.block,' ',r.street_name)) = UPPER(g.search_text) "
+                    "WHERE ROUND(CAST(g.lat AS NUMERIC), 2) = %s AND ROUND(CAST(g.lon AS NUMERIC), 2) = %s "
+                    "AND UPPER(r.flat_type) = %s "
+                    "AND r.month >= (CURRENT_DATE - INTERVAL '25 months') "
+                    "AND r.month < (CURRENT_DATE - INTERVAL '1 month')",
+                    (lat_bin, lon_bin, flat_type)
+                )
+                rg = _cgcur.fetchone()
+                if rg:
+                    vg = dict(rg).get('psf')
+                    if vg:
+                        geo_rolling_psf_24m = float(vg)
+                _cg.close()
+        except Exception:
+            pass
+    if geo_rolling_psf_24m is None or geo_rolling_psf_24m <= 0:
+        geo_rolling_psf_24m = street_rolling_psf_24m
+
+    # Cyclic month encoding
+    import math as _math
+    _cur_month = datetime.now().month
+    sin_month = _math.sin(2 * _math.pi * _cur_month / 12)
+    cos_month = _math.cos(2 * _math.pi * _cur_month / 12)
+
     # Build feature row using exactly the columns the model was trained on
     num_cols = _meta.get('numerical_cols', [])
     feat = {
@@ -756,10 +835,14 @@ def _predict_ml(features):
         'lat':                     eff_lat,
         'lon':                     eff_lon,
         'dist_nearest_mrt_km':       dist_mrt,
-        'block_rolling_psf_24m':      block_rolling_psf_24m,
-        'block_median_psf_alltime':   block_median_psf_alltime,
-        'street_rolling_psf_24m':     street_rolling_psf_24m,
-        'town_flat_type_median_psf':  town_flat_type_median_psf,
+        'block_rolling_psf_24m':             block_rolling_psf_24m,
+        'block_median_psf_alltime':          block_median_psf_alltime,
+        'street_rolling_psf_24m':            street_rolling_psf_24m,
+        'town_flat_type_median_psf':         town_flat_type_median_psf,
+        'flat_model_town_rolling_psf_24m':   flat_model_town_rolling_psf_24m,
+        'geo_rolling_psf_24m':               geo_rolling_psf_24m,
+        'sin_month':                         sin_month,
+        'cos_month':                         cos_month,
     }
     row = pd.DataFrame([{k: feat[k] for k in (_meta.get('categorical_cols', ['town','flat_type','flat_model']) + num_cols) if k in feat}])
 

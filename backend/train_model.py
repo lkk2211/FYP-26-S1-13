@@ -63,10 +63,14 @@ NUMERICAL_COLS_FULL = [
     "lat",
     "lon",
     "dist_nearest_mrt_km",           # haversine distance to nearest MRT station
-    "block_rolling_psf_24m",         # 24-month lagged block-level median PSF
-    "block_median_psf_alltime",      # all-time block median PSF (stable anchor)
-    "street_rolling_psf_24m",        # 24-month street×flat_type median PSF (block fallback)
-    "town_flat_type_median_psf",     # all-time town×flat_type median PSF (broadest anchor)
+    "block_rolling_psf_24m",              # 24-month lagged block-level median PSF
+    "block_median_psf_alltime",           # all-time block median PSF (stable anchor)
+    "street_rolling_psf_24m",             # 24-month street×flat_type median PSF
+    "town_flat_type_median_psf",          # all-time town×flat_type median PSF
+    "flat_model_town_rolling_psf_24m",    # 24-month town×flat_model PSF (DBSS, Maisonette etc.)
+    "geo_rolling_psf_24m",                # 24-month ~1km grid × flat_type PSF (spatial anchor)
+    "sin_month",                          # cyclic month encoding (seasonality)
+    "cos_month",                          # cyclic month encoding (seasonality)
 ]
 # Minimal fallback (no geo, no policy, no SORA)
 NUMERICAL_COLS_MIN = [
@@ -83,6 +87,10 @@ NUMERICAL_COLS_MIN = [
     "block_median_psf_alltime",
     "street_rolling_psf_24m",
     "town_flat_type_median_psf",
+    "flat_model_town_rolling_psf_24m",
+    "geo_rolling_psf_24m",
+    "sin_month",
+    "cos_month",
 ]
 
 # ─── Bala's Curve (SISV standard — 11-point table) ───────────────────────────
@@ -402,6 +410,23 @@ def engineer_features(df, policy_df, sora_df, geo_df):
     df_s['town_flat_type_median_psf'] = town_ft_psf
     df_s.drop(columns=['_street_type_key'], inplace=True)
 
+    # Flat model × town rolling PSF (24-month) — captures DBSS, Maisonette, premium premiums
+    df_s['_fm_town_key'] = df_s['town'].astype(str) + '_' + df_s['flat_model'].astype(str)
+    df_s['flat_model_town_rolling_psf_24m'] = (
+        df_s.groupby('_fm_town_key')['psf']
+        .transform(lambda x: x.shift(1).rolling(24, min_periods=3).median())
+    )
+    df_s['flat_model_town_rolling_psf_24m'] = df_s['flat_model_town_rolling_psf_24m'].fillna(town_ft_psf)
+    df_s.drop(columns=['_fm_town_key'], inplace=True)
+
+    # Cyclic month encoding for within-year seasonality (Q4 Oct–Dec is typically busier)
+    month_num = df_s['month'].dt.month
+    df_s['sin_month'] = np.sin(2 * np.pi * month_num / 12)
+    df_s['cos_month'] = np.cos(2 * np.pi * month_num / 12)
+
+    # geo_rolling_psf_24m computed after geocoding merge (lat/lon not yet available here)
+    df_s['geo_rolling_psf_24m'] = df_s['street_rolling_psf_24m']  # placeholder; updated below
+
     df = df_s.sort_index()   # restore original row order
 
     # ── Policy merge (merge_asof backward) ──────────────────────────────────
@@ -456,6 +481,22 @@ def engineer_features(df, policy_df, sora_df, geo_df):
     if not has_geo:
         df['lat'] = 0.0
         df['lon'] = 0.0
+
+    # ── Geo-grid rolling PSF — update now that lat/lon are available ────────────
+    if has_geo and 'lat' in df.columns and 'lon' in df.columns:
+        df = df.sort_values(['lat', 'lon', 'month'])
+        df['_geo_cell'] = (
+            df['lat'].round(2).astype(str) + '_' +
+            df['lon'].round(2).astype(str) + '_' +
+            df['flat_type'].astype(str)
+        )
+        df['geo_rolling_psf_24m'] = (
+            df.groupby('_geo_cell')['psf']
+            .transform(lambda x: x.shift(1).rolling(24, min_periods=3).median())
+        )
+        df['geo_rolling_psf_24m'] = df['geo_rolling_psf_24m'].fillna(df['street_rolling_psf_24m'])
+        df.drop(columns=['_geo_cell'], inplace=True)
+    # (else: already set to street_rolling_psf_24m as placeholder above)
 
     # ── [NEW] Distance to nearest MRT (requires lat/lon) ─────────────────────
     if has_geo:
@@ -561,17 +602,19 @@ def train(from_db=False):
     ])
 
     model_specs = {
-        'xgb':  XGBRegressor(n_estimators=800, learning_rate=0.03, max_depth=7,
-                              min_child_weight=5,
+        # XGB: shallow trees + strong regularisation → different bias/variance regime from LGBM.
+        # depth=5 forces wider splits (less overfit on leaf patterns), reg_alpha/lambda/gamma
+        # penalise complex trees so XGB learns a smoother, more global surface.
+        'xgb':  XGBRegressor(n_estimators=1000, learning_rate=0.02, max_depth=5,
+                              min_child_weight=10, reg_alpha=0.1, reg_lambda=2.0, gamma=0.05,
                               subsample=0.8, colsample_bytree=0.8, random_state=42,
                               objective='reg:squarederror', tree_method='hist'),
         'lgbm': LGBMRegressor(n_estimators=1200, learning_rate=0.02, num_leaves=127,
                                min_child_samples=20,
                                subsample=0.8, colsample_bytree=0.8, random_state=42,
                                verbose=-1),
-        # grow_policy='Lossguide' = leaf-wise (same as LightGBM) instead of level-wise.
-        # max_leaves mirrors LightGBM num_leaves so CatBoost is architecturally comparable.
-        'cat':  CatBoostRegressor(iterations=800, learning_rate=0.03,
+        # CatBoost: leaf-wise growth (Lossguide), increased to 1000 iterations.
+        'cat':  CatBoostRegressor(iterations=1000, learning_rate=0.03,
                                    grow_policy='Lossguide', max_leaves=64,
                                    min_data_in_leaf=20,
                                    loss_function='RMSE', random_seed=42, verbose=0,
@@ -603,7 +646,7 @@ def train(from_db=False):
                 X_val = X_train.iloc[val_idx]
                 y_tr  = y_train_log.iloc[train_idx]
                 fold_pipe = Pipeline(steps=[('model', CatBoostRegressor(
-                    iterations=800, learning_rate=0.03,
+                    iterations=1000, learning_rate=0.03,
                     grow_policy='Lossguide', max_leaves=64,
                     min_data_in_leaf=20,
                     loss_function='RMSE', random_seed=42, verbose=0,
