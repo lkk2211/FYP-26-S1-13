@@ -3342,19 +3342,6 @@ function loadProfileForm() {
     phoneInput.value = currentUser.phone || '';
 
     // Agent fields
-    const agentFields = document.getElementById('agent-fields');
-    if (agentFields) {
-        const isAgent = (currentUser.account_type === 'agent');
-        agentFields.classList.toggle('hidden', !isAgent);
-        if (isAgent) {
-            const ceaEl = document.getElementById('profile-cea');
-            const waEl  = document.getElementById('profile-whatsapp');
-            const bioEl = document.getElementById('profile-bio');
-            if (ceaEl) ceaEl.value = currentUser.cea_number || '';
-            if (waEl)  waEl.value  = currentUser.whatsapp   || '';
-            if (bioEl) bioEl.value = currentUser.bio        || '';
-        }
-    }
     // Account type display
     const isAgent = currentUser.account_type === 'agent';
     const homeEl  = document.getElementById('acct-type-homeowner');
@@ -3389,10 +3376,6 @@ async function saveProfile() {
     const phone        = (document.getElementById('profile-phone')?.value       || '').trim();
     const cur_password = (document.getElementById('profile-cur-password')?.value || '').trim();
     const new_password = (document.getElementById('profile-new-password')?.value || '').trim();
-    const cea_number   = (document.getElementById('profile-cea')?.value         || '').trim();
-    const whatsapp     = (document.getElementById('profile-whatsapp')?.value    || '').trim();
-    const bio          = (document.getElementById('profile-bio')?.value         || '').trim();
-
     if (new_password && !cur_password) {
         showToast('Enter your current password to set a new one.', true);
         return;
@@ -3403,7 +3386,7 @@ async function saveProfile() {
     }
 
     const full_name = `${firstName} ${lastName}`.trim();
-    const payload   = { full_name, email, phone, cea_number, whatsapp, bio };
+    const payload   = { full_name, email, phone };
     if (new_password) {
         payload.current_password = cur_password;
         payload.new_password = new_password;
@@ -4017,38 +4000,6 @@ function calcAffordability() {
     document.getElementById('affordability-result').classList.remove('hidden');
 }
 
-// ── Guides — Agent Listings ───────────────────────────────────
-async function loadAgents() {
-    try {
-        const res    = await fetch('/api/agents');
-        const data   = await res.json();
-        const agents = data.agents || [];
-        const list   = document.getElementById('agents-list');
-        const empty  = document.getElementById('agents-empty');
-        const loading = document.getElementById('agents-loading');
-        if (loading) loading.classList.add('hidden');
-        if (!agents.length) { if (empty) empty.classList.remove('hidden'); return; }
-        if (list) {
-            list.classList.remove('hidden');
-            list.innerHTML = agents.map(a => `
-                <div class="snap-start shrink-0 w-56 bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-100 dark:border-slate-700 card-shadow flex flex-col items-center text-center gap-3">
-                    <div class="w-16 h-16 bg-gradient-to-br from-blue-400 to-violet-500 rounded-full flex items-center justify-center text-2xl font-black text-white">
-                        ${(a.full_name || 'A')[0].toUpperCase()}
-                    </div>
-                    <div>
-                        <p class="font-bold text-slate-900 dark:text-white text-sm">${a.full_name || ''}</p>
-                        <p class="text-xs text-slate-400 mt-0.5">${a.cea_number ? 'CEA: ' + a.cea_number : 'Property Agent'}</p>
-                        ${a.bio ? `<p class="text-xs text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">${a.bio}</p>` : ''}
-                    </div>
-                    ${a.whatsapp ? `<a href="https://wa.me/${a.whatsapp.replace(/[^0-9]/g,'')}" target="_blank" class="w-full py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M11.5 0C5.149 0 0 5.149 0 11.5c0 2.107.573 4.077 1.567 5.765L0 23l5.898-1.543A11.454 11.454 0 0011.5 23C17.851 23 23 17.851 23 11.5S17.851 0 11.5 0zm0 21.1a9.593 9.593 0 01-4.9-1.345l-.351-.208-3.624.949.967-3.533-.228-.363A9.564 9.564 0 011.9 11.5C1.9 6.198 6.198 1.9 11.5 1.9S21.1 6.198 21.1 11.5 16.802 21.1 11.5 21.1z"/></svg>
-                        WhatsApp
-                    </a>` : `<p class="text-xs text-slate-400">No contact listed</p>`}
-                </div>
-            `).join('');
-        }
-    } catch { /* silent */ }
-}
 
 // ── Recently Searched ─────────────────────────────────────────
 const _RECENT_KEY = 'propai_recent_searches';

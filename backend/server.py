@@ -1804,7 +1804,7 @@ def register():
 
     _log_audit(conn, user_id, f"New registration: {email}", 'register', f"name={full_name}, type={account_type}")
 
-    cur.execute(_q("SELECT id, full_name, email, phone, role, account_type, cea_number, whatsapp, bio FROM users WHERE id = ?"), (user_id,))
+    cur.execute(_q("SELECT id, full_name, email, phone, role, account_type FROM users WHERE id = ?"), (user_id,))
     user = _row(cur)
     conn.close()
     user_dict = dict(user)
@@ -1839,9 +1839,6 @@ def login():
         "email": user["email"], "phone": user["phone"],
         "role": user["role"], "is_admin": user["role"] == "admin",
         "account_type": user.get("account_type", "homeowner"),
-        "cea_number": user.get("cea_number", ""),
-        "whatsapp": user.get("whatsapp", ""),
-        "bio": user.get("bio", ""),
         "totp_enabled": bool(user.get("totp_enabled")),
     }
 
@@ -1979,9 +1976,6 @@ def twofa_verify():
         "email": user["email"], "phone": user["phone"],
         "role": user["role"], "is_admin": user["role"] == "admin",
         "account_type": user.get("account_type", "homeowner"),
-        "cea_number": user.get("cea_number", ""),
-        "whatsapp": user.get("whatsapp", ""),
-        "bio": user.get("bio", ""),
         "totp_enabled": True,
         "token": _make_temp_token(user["id"], ttl=_SESSION_TTL),
     }
@@ -2235,9 +2229,6 @@ def update_profile(user_id):
     email        = data.get('email', '').strip().lower()
     phone        = data.get('phone', '').strip()
     account_type = data.get('account_type', '').strip()
-    cea_number   = data.get('cea_number', '').strip()
-    whatsapp     = data.get('whatsapp', '').strip()
-    bio          = data.get('bio', '').strip()
     new_password = data.get('new_password', '').strip()
     cur_password = data.get('current_password', '').strip()
     totp_code    = str(data.get('totp_code', '')).strip()
@@ -2293,21 +2284,12 @@ def update_profile(user_id):
         old_account_type = (_old or {}).get('account_type')
         set_clause += ", account_type = ?"
         params.append(account_type)
-    if cea_number is not None:
-        set_clause += ", cea_number = ?"
-        params.append(cea_number)
-    if whatsapp is not None:
-        set_clause += ", whatsapp = ?"
-        params.append(whatsapp)
-    if bio is not None:
-        set_clause += ", bio = ?"
-        params.append(bio)
     params.append(user_id)
     cur.execute(_q(f"UPDATE users SET {set_clause} WHERE id = ?"), params)
     if old_account_type and account_type and old_account_type != account_type:
         _log_audit(conn, user_id, f"Account type changed: {old_account_type} → {account_type}", 'account_type_change', f"user_id={user_id}")
     conn.commit()
-    cur.execute(_q("SELECT id, full_name, email, phone, role, account_type, cea_number, whatsapp, bio FROM users WHERE id = ?"), (user_id,))
+    cur.execute(_q("SELECT id, full_name, email, phone, role, account_type FROM users WHERE id = ?"), (user_id,))
     user = _row(cur)
     conn.close()
 
@@ -2561,19 +2543,6 @@ def gap_analysis():
         except Exception: pass
         return jsonify({"error": str(e)}), 500
 
-
-@app.route('/api/agents', methods=['GET'])
-def get_agents():
-    """Return all users registered as property agents."""
-    conn = get_db()
-    cur  = _cursor(conn)
-    cur.execute(_q(
-        "SELECT id, full_name, email, phone, cea_number, whatsapp, bio FROM users "
-        "WHERE account_type = ? ORDER BY full_name"
-    ), ('agent',))
-    agents = _rows(cur)
-    conn.close()
-    return jsonify({"agents": agents})
 
 
 @app.route('/api/chat', methods=['POST'])
