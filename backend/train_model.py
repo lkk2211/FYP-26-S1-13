@@ -245,11 +245,14 @@ def load_policy_from_db():
 
 def load_sora_from_db():
     try:
-        rows = _query("SELECT publication_date, compound_sora_3m FROM sora_rates WHERE publication_date IS NOT NULL")
+        # Filter on compound_sora_3m (not publication_date) — the date column
+        # may be NULL if the TEXT→DATE conversion in process_uploaded_data failed,
+        # but the rate value itself is still valid.
+        rows = _query("SELECT publication_date, compound_sora_3m FROM sora_rates WHERE compound_sora_3m IS NOT NULL")
         if not rows:
             # Fallback: try stage_sora table (data uploaded but not yet processed)
             try:
-                rows = _query("SELECT publication_date, compound_sora_3m FROM stage_sora WHERE publication_date IS NOT NULL")
+                rows = _query("SELECT publication_date, compound_sora_3m FROM stage_sora WHERE compound_sora_3m IS NOT NULL")
             except Exception:
                 pass
         if not rows:

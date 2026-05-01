@@ -170,7 +170,7 @@ def load_policy_from_db():
 
 def load_sora_from_db():
     try:
-        rows = _query("SELECT publication_date, compound_sora_3m FROM sora_rates WHERE publication_date IS NOT NULL")
+        rows = _query("SELECT publication_date, compound_sora_3m FROM sora_rates WHERE compound_sora_3m IS NOT NULL")
         if not rows:
             return None
         df = pd.DataFrame(rows)
