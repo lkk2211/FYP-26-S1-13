@@ -3876,6 +3876,26 @@ def upload_model_file():
     return jsonify({'message': f'{filename} uploaded and model cache reloaded.'})
 
 
+@app.route('/api/admin/reload-models', methods=['POST'])
+def reload_models():
+    """Force an immediate in-process reload of all model files from disk.
+    Called by the training workflow after all .joblib files are uploaded."""
+    expected = os.environ.get('MODEL_UPLOAD_SECRET', '')
+    if expected:
+        provided = request.headers.get('X-Upload-Secret', '')
+        if provided and provided != expected:
+            return jsonify({'error': 'Invalid upload secret'}), 401
+    try:
+        from predict import _load_models, _load_private_models
+        _predict_module.reset_model_cache()
+        hdb_ok     = _load_models()
+        private_ok = _load_private_models()
+        return jsonify({'hdb': hdb_ok, 'private': private_ok,
+                        'message': 'Models reloaded from disk.'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/admin/sync-ura', methods=['POST'])
 def sync_ura():
     """Fetch latest URA private property transactions and insert new records into ura_transactions."""
