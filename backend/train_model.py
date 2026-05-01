@@ -56,15 +56,17 @@ NUMERICAL_COLS_FULL = [
     "quarter",
     "time_idx",
     "storey_mid",
-    "storey_pct",               # floor level as % of building height
+    "storey_pct",                    # floor level as % of building height
     "remaining_lease_years",
     "flat_age_years",
-    "bala_fraction",            # SISV non-linear lease decay (Bala's Curve)
+    "bala_fraction",                 # SISV non-linear lease decay (Bala's Curve)
     "lat",
     "lon",
-    "dist_nearest_mrt_km",      # haversine distance to nearest MRT station
-    "block_rolling_psf_24m",    # 24-month lagged block-level median PSF
-    "block_median_psf_alltime", # all-time block median PSF (stable anchor)
+    "dist_nearest_mrt_km",           # haversine distance to nearest MRT station
+    "block_rolling_psf_24m",         # 24-month lagged block-level median PSF
+    "block_median_psf_alltime",      # all-time block median PSF (stable anchor)
+    "street_rolling_psf_24m",        # 24-month street×flat_type median PSF (block fallback)
+    "town_flat_type_median_psf",     # all-time town×flat_type median PSF (broadest anchor)
 ]
 # Minimal fallback (no geo, no policy, no SORA)
 NUMERICAL_COLS_MIN = [
@@ -79,6 +81,8 @@ NUMERICAL_COLS_MIN = [
     "bala_fraction",
     "block_rolling_psf_24m",
     "block_median_psf_alltime",
+    "street_rolling_psf_24m",
+    "town_flat_type_median_psf",
 ]
 
 # ─── Bala's Curve (SISV standard — 11-point table) ───────────────────────────
@@ -381,6 +385,23 @@ def engineer_features(df, policy_df, sora_df, geo_df):
     ft_psf_median = df_s.groupby('flat_type')['psf'].transform('median')
     df_s['block_rolling_psf_24m']    = df_s['block_rolling_psf_24m'].fillna(ft_psf_median)
     df_s['block_median_psf_alltime'] = df_s['block_median_psf_alltime'].fillna(ft_psf_median)
+
+    # Street × flat_type rolling PSF (24-month) — hierarchical between block and town.
+    # When a block has few transactions, this gives a tighter signal than flat_type median.
+    df_s['_street_type_key'] = (
+        df_s['street_name'].fillna('').astype(str).str.strip().str.upper()
+        + '_' + df_s['flat_type'].astype(str)
+    )
+    df_s['street_rolling_psf_24m'] = (
+        df_s.groupby('_street_type_key')['psf']
+        .transform(lambda x: x.shift(1).rolling(24, min_periods=3).median())
+    )
+    # Town × flat_type all-time median — stable broad anchor (no shift needed; not used as leaky signal)
+    town_ft_psf = df_s.groupby(['town', 'flat_type'])['psf'].transform('median')
+    df_s['street_rolling_psf_24m']   = df_s['street_rolling_psf_24m'].fillna(town_ft_psf)
+    df_s['town_flat_type_median_psf'] = town_ft_psf
+    df_s.drop(columns=['_street_type_key'], inplace=True)
+
     df = df_s.sort_index()   # restore original row order
 
     # ── Policy merge (merge_asof backward) ──────────────────────────────────
@@ -544,11 +565,14 @@ def train(from_db=False):
                               min_child_weight=5,
                               subsample=0.8, colsample_bytree=0.8, random_state=42,
                               objective='reg:squarederror', tree_method='hist'),
-        'lgbm': LGBMRegressor(n_estimators=800, learning_rate=0.03, num_leaves=127,
+        'lgbm': LGBMRegressor(n_estimators=1200, learning_rate=0.02, num_leaves=127,
                                min_child_samples=20,
                                subsample=0.8, colsample_bytree=0.8, random_state=42,
                                verbose=-1),
-        'cat':  CatBoostRegressor(iterations=800, learning_rate=0.03, depth=7,
+        # grow_policy='Lossguide' = leaf-wise (same as LightGBM) instead of level-wise.
+        # max_leaves mirrors LightGBM num_leaves so CatBoost is architecturally comparable.
+        'cat':  CatBoostRegressor(iterations=800, learning_rate=0.03,
+                                   grow_policy='Lossguide', max_leaves=64,
                                    min_data_in_leaf=20,
                                    loss_function='RMSE', random_seed=42, verbose=0,
                                    cat_features=CATEGORICAL_COLS),
@@ -579,7 +603,8 @@ def train(from_db=False):
                 X_val = X_train.iloc[val_idx]
                 y_tr  = y_train_log.iloc[train_idx]
                 fold_pipe = Pipeline(steps=[('model', CatBoostRegressor(
-                    iterations=800, learning_rate=0.03, depth=7,
+                    iterations=800, learning_rate=0.03,
+                    grow_policy='Lossguide', max_leaves=64,
                     min_data_in_leaf=20,
                     loss_function='RMSE', random_seed=42, verbose=0,
                     cat_features=CATEGORICAL_COLS,

@@ -570,6 +570,7 @@ async function handlePredict() {
         if (window._cachedRemainingLease != null) body.remaining_lease_years = window._cachedRemainingLease;
         if (_cachedMaxFloor)              body.max_floor            = _cachedMaxFloor;
         if (_predictBlock)                body.block                = _predictBlock;
+        if (_predictRoad)                 body.street_name          = _predictRoad;
         if (_predictProject)              body.project              = _predictProject;
         if (window._maxTransactedFloor)   body.max_transacted_floor = window._maxTransactedFloor;
         const response = await fetch('/api/predict', {
