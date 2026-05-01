@@ -481,16 +481,16 @@ def train(df_raw: pd.DataFrame):
 
     model_specs = {
         'xgb_private':  XGBRegressor(
-            n_estimators=200, learning_rate=0.05, max_depth=6,
+            n_estimators=800, learning_rate=0.03, max_depth=6,
             subsample=0.8, colsample_bytree=0.8, tree_method='hist',
             random_state=42, objective='reg:squarederror', verbosity=0,
         ),
         'lgbm_private': LGBMRegressor(
-            n_estimators=200, learning_rate=0.05, num_leaves=31,
+            n_estimators=800, learning_rate=0.03, num_leaves=63,
             subsample=0.8, colsample_bytree=0.8, random_state=42, verbose=-1,
         ),
         'cat_private':  CatBoostRegressor(
-            iterations=200, learning_rate=0.05, depth=6,
+            iterations=800, learning_rate=0.03, depth=6,
             loss_function='RMSE', random_seed=42, verbose=0,
             cat_features=CATEGORICAL_COLS,
         ),
@@ -511,7 +511,7 @@ def train(df_raw: pd.DataFrame):
                 X_val = X_train.iloc[val_idx]
                 y_tr  = y_train_log.iloc[train_idx]
                 fold_pipe = _build_catboost_pipeline(CatBoostRegressor(
-                    iterations=200, learning_rate=0.05, depth=6,
+                    iterations=800, learning_rate=0.03, depth=6,
                     loss_function='RMSE', random_seed=42, verbose=0,
                     cat_features=CATEGORICAL_COLS,
                 ))

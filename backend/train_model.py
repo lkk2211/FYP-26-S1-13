@@ -532,13 +532,13 @@ def train(from_db=False):
     ])
 
     model_specs = {
-        'xgb':  XGBRegressor(n_estimators=200, learning_rate=0.05, max_depth=5,
+        'xgb':  XGBRegressor(n_estimators=800, learning_rate=0.03, max_depth=6,
                               subsample=0.8, colsample_bytree=0.8, random_state=42,
                               objective='reg:squarederror', tree_method='hist'),
-        'lgbm': LGBMRegressor(n_estimators=200, learning_rate=0.05, num_leaves=31,
+        'lgbm': LGBMRegressor(n_estimators=800, learning_rate=0.03, num_leaves=63,
                                subsample=0.8, colsample_bytree=0.8, random_state=42,
                                verbose=-1),
-        'cat':  CatBoostRegressor(iterations=200, learning_rate=0.05, depth=5,
+        'cat':  CatBoostRegressor(iterations=800, learning_rate=0.03, depth=6,
                                    loss_function='RMSE', random_seed=42, verbose=0,
                                    cat_features=CATEGORICAL_COLS),
     }
@@ -568,7 +568,7 @@ def train(from_db=False):
                 X_val = X_train.iloc[val_idx]
                 y_tr  = y_train_log.iloc[train_idx]
                 fold_pipe = Pipeline(steps=[('model', CatBoostRegressor(
-                    iterations=200, learning_rate=0.05, depth=5,
+                    iterations=800, learning_rate=0.03, depth=6,
                     loss_function='RMSE', random_seed=42, verbose=0,
                     cat_features=CATEGORICAL_COLS,
                 ))])
