@@ -425,13 +425,12 @@ def _build_pipeline(model):
 def _build_catboost_pipeline(model):
     """CatBoost-specific pipeline: OrdinalEncoder so CatBoost receives integer-coded
     categories and can apply its native ordered target encoding internally.
-    cat_features indices = 0..len(CATEGORICAL_COLS)-1 (ColumnTransformer puts cat first)."""
+    cat_features must be set in the CatBoostRegressor constructor (not via set_params)
+    so sklearn.clone() can reproduce it during cross_val_predict."""
     preprocessor = ColumnTransformer(transformers=[
         ('cat', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1), CATEGORICAL_COLS),
         ('num', 'passthrough', NUMERICAL_COLS),
     ])
-    cat_feature_indices = list(range(len(CATEGORICAL_COLS)))
-    model.set_params(cat_features=cat_feature_indices)
     return Pipeline(steps=[('preprocessor', preprocessor), ('model', model)])
 
 
@@ -496,6 +495,7 @@ def train(df_raw: pd.DataFrame):
         'cat_private':  CatBoostRegressor(
             iterations=200, learning_rate=0.05, depth=6,
             loss_function='RMSE', random_seed=42, verbose=0,
+            cat_features=list(range(len(CATEGORICAL_COLS))),
         ),
     }
 
