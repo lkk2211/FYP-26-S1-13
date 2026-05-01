@@ -57,11 +57,12 @@ CONDO_PROPERTY_TYPES = {
 
 CATEGORICAL_COLS = ['property_type', 'market_segment', 'type_of_sale', 'postal_district']
 NUMERICAL_COLS   = [
-    'floor_area_sqft', 'floor_level_num',
+    'floor_area_sqft', 'floor_level_num', 'floor_level_pct',
     'tenure_remaining_years', 'is_strata',
     'year', 'quarter', 'time_idx',
     'direction', 'severity', 'policy_impact', 'months_since_policy_change', 'sora',
-    'project_rolling_psf_6m',   # avg PSF for this project in prior 6 months (no leakage)
+    'project_rolling_psf_6m',      # rolling 24-month PSF for this project (no leakage)
+    'project_median_psf_alltime',  # all-time project median PSF (stable anchor)
 ]
 ALL_FEATURES = CATEGORICAL_COLS + NUMERICAL_COLS
 
@@ -369,11 +370,10 @@ def engineer_features(df: pd.DataFrame, policy_df=None, sora_df=None) -> pd.Data
     else:
         df['sora'] = 3.5
 
-    # ── Project-level rolling PSF (24-month lookback, no data leakage) ──────────
-    # For each transaction: mean PSF of the same project in the prior 8 quarters.
-    # min_periods=3 ensures at least 3 historical quarters before trusting the
-    # project average — fewer than that falls back to the district median.
-    # Shift(1) on the quarter index excludes the current quarter → no leakage.
+    # ── Project-level PSF features (no data leakage via shift(1)) ───────────────
+    # project_rolling_psf_6m: rolling 8-quarter (24m) mean PSF for this project
+    # project_median_psf_alltime: expanding median PSF — stable all-time anchor
+    # floor_level_pct: floor / project_max_floor — normalises premium across heights
     if 'project' in df.columns:
         df['_project_key'] = df['project'].fillna('').astype(str).str.strip().str.upper()
         df['_unit_psf']    = (df['transacted_price'] / df['floor_area_sqft'].replace(0, np.nan)).clip(200, 8000)
@@ -389,28 +389,45 @@ def engineer_features(df: pd.DataFrame, policy_df=None, sora_df=None) -> pd.Data
             proj_qtr.groupby('_project_key')['_proj_qtr_psf']
             .transform(lambda s: s.shift(1).rolling(8, min_periods=3).mean())
         )
+        proj_qtr['project_median_psf_alltime'] = (
+            proj_qtr.groupby('_project_key')['_proj_qtr_psf']
+            .transform(lambda s: s.shift(1).expanding(min_periods=1).median())
+        )
         df = df.merge(
-            proj_qtr[['_project_key', '_time_key', 'project_rolling_psf_6m']],
-            left_on=['_project_key', '_time_key'], right_on=['_project_key', '_time_key'],
+            proj_qtr[['_project_key', '_time_key', 'project_rolling_psf_6m', 'project_median_psf_alltime']],
+            on=['_project_key', '_time_key'],
             how='left',
         )
         # Fallback for new projects with no prior history: use district median PSF
         dist_psf = df.groupby('postal_district')['_unit_psf'].median()
+        global_median = df['_unit_psf'].median()
         df['project_rolling_psf_6m'] = df['project_rolling_psf_6m'].fillna(
             df['postal_district'].map(dist_psf)
-        ).fillna(df['_unit_psf'].median())
+        ).fillna(global_median)
+        df['project_median_psf_alltime'] = df['project_median_psf_alltime'].fillna(
+            df['postal_district'].map(dist_psf)
+        ).fillna(global_median)
+
+        # floor_level_pct: normalise floor level by max floor in the project
+        proj_max_floor = df.groupby('_project_key')['floor_level_num'].transform('max')
+        df['floor_level_pct'] = (df['floor_level_num'] / proj_max_floor.where(proj_max_floor > 0, 1)).clip(0.0, 1.0)
+
         df.drop(columns=['_project_key', '_unit_psf', '_time_key'], inplace=True)
     else:
         # No project column: fall back to district PSF estimate
         df['_unit_psf'] = (df['transacted_price'] / df['floor_area_sqft'].replace(0, np.nan)).clip(200, 8000)
         dist_psf = df.groupby('postal_district')['_unit_psf'].median()
-        df['project_rolling_psf_6m'] = df['postal_district'].map(dist_psf).fillna(df['_unit_psf'].median())
+        df['project_rolling_psf_6m']      = df['postal_district'].map(dist_psf).fillna(df['_unit_psf'].median())
+        df['project_median_psf_alltime']  = df['project_rolling_psf_6m']
+        df['floor_level_pct']             = (df['floor_level_num'] / 20.0).clip(0.0, 1.0)
         df.drop(columns=['_unit_psf'], inplace=True)
 
-    required = CATEGORICAL_COLS + ['floor_area_sqft', 'floor_level_num', 'tenure_remaining_years',
-                                    'is_strata', 'year', 'quarter', 'direction', 'severity',
-                                    'policy_impact', 'months_since_policy_change', 'sora',
-                                    'project_rolling_psf_6m', 'transacted_price']
+    required = CATEGORICAL_COLS + ['floor_area_sqft', 'floor_level_num', 'floor_level_pct',
+                                    'tenure_remaining_years', 'is_strata', 'year', 'quarter',
+                                    'direction', 'severity', 'policy_impact',
+                                    'months_since_policy_change', 'sora',
+                                    'project_rolling_psf_6m', 'project_median_psf_alltime',
+                                    'transacted_price']
     return df.dropna(subset=[c for c in required if c != 'transacted_price'] + ['transacted_price'])
 
 
@@ -481,16 +498,19 @@ def train(df_raw: pd.DataFrame):
 
     model_specs = {
         'xgb_private':  XGBRegressor(
-            n_estimators=800, learning_rate=0.03, max_depth=6,
+            n_estimators=800, learning_rate=0.03, max_depth=7,
+            min_child_weight=5,
             subsample=0.8, colsample_bytree=0.8, tree_method='hist',
             random_state=42, objective='reg:squarederror', verbosity=0,
         ),
         'lgbm_private': LGBMRegressor(
-            n_estimators=800, learning_rate=0.03, num_leaves=63,
+            n_estimators=800, learning_rate=0.03, num_leaves=127,
+            min_child_samples=20,
             subsample=0.8, colsample_bytree=0.8, random_state=42, verbose=-1,
         ),
         'cat_private':  CatBoostRegressor(
-            iterations=800, learning_rate=0.03, depth=6,
+            iterations=800, learning_rate=0.03, depth=7,
+            min_data_in_leaf=20,
             loss_function='RMSE', random_seed=42, verbose=0,
             cat_features=CATEGORICAL_COLS,
         ),
@@ -511,7 +531,8 @@ def train(df_raw: pd.DataFrame):
                 X_val = X_train.iloc[val_idx]
                 y_tr  = y_train_log.iloc[train_idx]
                 fold_pipe = _build_catboost_pipeline(CatBoostRegressor(
-                    iterations=800, learning_rate=0.03, depth=6,
+                    iterations=800, learning_rate=0.03, depth=7,
+                    min_data_in_leaf=20,
                     loss_function='RMSE', random_seed=42, verbose=0,
                     cat_features=CATEGORICAL_COLS,
                 ))

@@ -56,14 +56,15 @@ NUMERICAL_COLS_FULL = [
     "quarter",
     "time_idx",
     "storey_mid",
-    "storey_pct",            # [NEW] floor level as % of building height
+    "storey_pct",               # floor level as % of building height
     "remaining_lease_years",
     "flat_age_years",
-    "bala_fraction",         # [NEW] SISV non-linear lease decay (Bala's Curve)
+    "bala_fraction",            # SISV non-linear lease decay (Bala's Curve)
     "lat",
     "lon",
-    "dist_nearest_mrt_km",   # [NEW] haversine distance to nearest MRT station
-    "block_rolling_psf_6m",  # [NEW] 6-month lagged block-level median PSF
+    "dist_nearest_mrt_km",      # haversine distance to nearest MRT station
+    "block_rolling_psf_24m",    # 24-month lagged block-level median PSF
+    "block_median_psf_alltime", # all-time block median PSF (stable anchor)
 ]
 # Minimal fallback (no geo, no policy, no SORA)
 NUMERICAL_COLS_MIN = [
@@ -76,7 +77,8 @@ NUMERICAL_COLS_MIN = [
     "remaining_lease_years",
     "flat_age_years",
     "bala_fraction",
-    "block_rolling_psf_6m",
+    "block_rolling_psf_24m",
+    "block_median_psf_alltime",
 ]
 
 # ─── Bala's Curve (SISV standard — 11-point table) ───────────────────────────
@@ -362,17 +364,23 @@ def engineer_features(df, policy_df, sora_df, geo_df):
     df['max_storey_in_block'] = block_max.where(block_max > 0, ft_max).fillna(10.0)
     df['storey_pct'] = (df['storey_mid'] / df['max_storey_in_block']).clip(0.0, 1.0)
 
-    # ── [NEW] Block-level 6-month lagged rolling median PSF ───────────────────
-    # Shift by 1 month to prevent data leakage; fill missing with flat_type median
+    # Block-level rolling PSF (24-month window, shift 1 to prevent leakage)
+    # and all-time block median as a stable anchor alongside rolling estimate.
     df['psf'] = df['resale_price'] / (df['floor_area_sqm'].replace(0, np.nan) * 10.764)
     df_s = df.sort_values(['block_key', 'month'])
-    df_s['block_rolling_psf_6m'] = (
+    df_s['block_rolling_psf_24m'] = (
         df_s.groupby('block_key')['psf']
-        .transform(lambda x: x.shift(1).rolling(6, min_periods=1).median())
+        .transform(lambda x: x.shift(1).rolling(24, min_periods=3).median())
     )
-    # Fill NaN (first transactions in a block) with flat_type median PSF
+    # All-time block median (shift 1 so current sale excluded)
+    df_s['block_median_psf_alltime'] = (
+        df_s.groupby('block_key')['psf']
+        .transform(lambda x: x.shift(1).expanding(min_periods=1).median())
+    )
+    # Fill NaN (first few transactions in a block) with flat_type median PSF
     ft_psf_median = df_s.groupby('flat_type')['psf'].transform('median')
-    df_s['block_rolling_psf_6m'] = df_s['block_rolling_psf_6m'].fillna(ft_psf_median)
+    df_s['block_rolling_psf_24m']    = df_s['block_rolling_psf_24m'].fillna(ft_psf_median)
+    df_s['block_median_psf_alltime'] = df_s['block_median_psf_alltime'].fillna(ft_psf_median)
     df = df_s.sort_index()   # restore original row order
 
     # ── Policy merge (merge_asof backward) ──────────────────────────────────
@@ -532,13 +540,16 @@ def train(from_db=False):
     ])
 
     model_specs = {
-        'xgb':  XGBRegressor(n_estimators=800, learning_rate=0.03, max_depth=6,
+        'xgb':  XGBRegressor(n_estimators=800, learning_rate=0.03, max_depth=7,
+                              min_child_weight=5,
                               subsample=0.8, colsample_bytree=0.8, random_state=42,
                               objective='reg:squarederror', tree_method='hist'),
-        'lgbm': LGBMRegressor(n_estimators=800, learning_rate=0.03, num_leaves=63,
+        'lgbm': LGBMRegressor(n_estimators=800, learning_rate=0.03, num_leaves=127,
+                               min_child_samples=20,
                                subsample=0.8, colsample_bytree=0.8, random_state=42,
                                verbose=-1),
-        'cat':  CatBoostRegressor(iterations=800, learning_rate=0.03, depth=6,
+        'cat':  CatBoostRegressor(iterations=800, learning_rate=0.03, depth=7,
+                                   min_data_in_leaf=20,
                                    loss_function='RMSE', random_seed=42, verbose=0,
                                    cat_features=CATEGORICAL_COLS),
     }
@@ -568,7 +579,8 @@ def train(from_db=False):
                 X_val = X_train.iloc[val_idx]
                 y_tr  = y_train_log.iloc[train_idx]
                 fold_pipe = Pipeline(steps=[('model', CatBoostRegressor(
-                    iterations=800, learning_rate=0.03, depth=6,
+                    iterations=800, learning_rate=0.03, depth=7,
+                    min_data_in_leaf=20,
                     loss_function='RMSE', random_seed=42, verbose=0,
                     cat_features=CATEGORICAL_COLS,
                 ))])

@@ -602,8 +602,10 @@ def _predict_ml(features):
         # Approximate: assume typical HDB = 12 floors, condo = 20
         storey_pct = min(float(floor) / 12.0, 1.0)
 
-    # 4. Block-level 6-month rolling median PSF — query DB for recent block txns
-    block_rolling_psf = None
+    # 4. Block-level rolling PSF — query DB for recent block transactions.
+    # Two signals: 24-month rolling median and all-time median (stable anchor).
+    block_rolling_psf_24m    = None
+    block_median_psf_alltime = None
     blk = str(features.get('block', '')).strip()
     if blk:
         try:
@@ -619,25 +621,47 @@ def _predict_ml(features):
                 _c.row_factory = sqlite3.Row
                 _cur = _c.cursor()
                 ph = '?'
-            _cur.execute(
-                f"SELECT AVG(CAST(resale_price AS REAL) / (CAST(floor_area_sqm AS REAL) * 10.764)) "
-                f"AS median_psf FROM resale_flat_prices "
-                f"WHERE UPPER(block) = {ph} AND UPPER(flat_type) = {ph} "
-                f"AND month >= date('now', '-7 months') AND month < date('now', '-1 month')",
-                (blk.upper(), flat_type)
-            )
+            # 24-month rolling: last 25 months excluding current
+            if DATABASE_URL:
+                _cur.execute(
+                    "SELECT AVG(CAST(resale_price AS REAL) / (CAST(floor_area_sqm AS REAL) * 10.764)) "
+                    "AS median_psf FROM resale_flat_prices "
+                    "WHERE UPPER(block) = %s AND UPPER(flat_type) = %s "
+                    "AND month >= (CURRENT_DATE - INTERVAL '25 months') "
+                    "AND month < (CURRENT_DATE - INTERVAL '1 month')",
+                    (blk.upper(), flat_type)
+                )
+            else:
+                _cur.execute(
+                    "SELECT AVG(CAST(resale_price AS REAL) / (CAST(floor_area_sqm AS REAL) * 10.764)) "
+                    "AS median_psf FROM resale_flat_prices "
+                    "WHERE UPPER(block) = ? AND UPPER(flat_type) = ? "
+                    "AND month >= date('now', '-25 months') "
+                    "AND month < date('now', '-1 months')",
+                    (blk.upper(), flat_type)
+                )
             row_psf = _cur.fetchone()
             if row_psf:
                 v = dict(row_psf).get('median_psf')
                 if v:
-                    block_rolling_psf = float(v)
+                    block_rolling_psf_24m = float(v)
+            # All-time median
+            _cur.execute(
+                f"SELECT AVG(CAST(resale_price AS REAL) / (CAST(floor_area_sqm AS REAL) * 10.764)) "
+                f"AS median_psf FROM resale_flat_prices "
+                f"WHERE UPPER(block) = {ph} AND UPPER(flat_type) = {ph}",
+                (blk.upper(), flat_type)
+            )
+            row_alltime = _cur.fetchone()
+            if row_alltime:
+                v2 = dict(row_alltime).get('median_psf')
+                if v2:
+                    block_median_psf_alltime = float(v2)
             _c.close()
         except Exception:
             pass
-    # Fall back to estimated PSF from this prediction
-    if block_rolling_psf is None or block_rolling_psf <= 0:
-        area_sqft = area_sqm * 10.764
-        # Use town PSF benchmarks from the existing insight logic
+    # Fall back to town PSF benchmarks when block history is unavailable
+    if block_rolling_psf_24m is None or block_rolling_psf_24m <= 0:
         _town_psf_bench = {
             'BISHAN': 750, 'TOA PAYOH': 700, 'QUEENSTOWN': 730, 'BUKIT MERAH': 680,
             'KALLANG/WHAMPOA': 670, 'MARINE PARADE': 700, 'ANG MO KIO': 600,
@@ -645,7 +669,9 @@ def _predict_ml(features):
             'SENGKANG': 500, 'PUNGGOL': 490, 'WOODLANDS': 465, 'YISHUN': 460,
             'JURONG WEST': 470, 'CHOA CHU KANG': 480, 'BUKIT PANJANG': 490,
         }
-        block_rolling_psf = float(_town_psf_bench.get(town, 520))
+        block_rolling_psf_24m = float(_town_psf_bench.get(town, 520))
+    if block_median_psf_alltime is None or block_median_psf_alltime <= 0:
+        block_median_psf_alltime = block_rolling_psf_24m
 
     # Build feature row using exactly the columns the model was trained on
     num_cols = _meta.get('numerical_cols', [])
@@ -667,8 +693,9 @@ def _predict_ml(features):
         'sora':                    sora,
         'lat':                     eff_lat,
         'lon':                     eff_lon,
-        'dist_nearest_mrt_km':     dist_mrt,
-        'block_rolling_psf_6m':    block_rolling_psf,
+        'dist_nearest_mrt_km':       dist_mrt,
+        'block_rolling_psf_24m':     block_rolling_psf_24m,
+        'block_median_psf_alltime':  block_median_psf_alltime,
     }
     row = pd.DataFrame([{k: feat[k] for k in (_meta.get('categorical_cols', ['town','flat_type','flat_model']) + num_cols) if k in feat}])
 
@@ -1131,10 +1158,12 @@ def _predict_private_ml(features):
     pol  = _private_meta.get('latest_policy', {})
     sora = float(_private_meta.get('latest_sora', 3.5))
 
-    # ── Project rolling PSF: avg PSF for this project in last 24 months ──────
-    # Matches training feature: 8-quarter rolling window, min 3 quarters of data.
-    # Falls back to district benchmark if fewer than 3 quarters have transactions.
-    project_rolling_psf = None
+    # ── Project rolling PSF and all-time median PSF ───────────────────────────
+    # project_rolling_psf_6m: 8-quarter (24m) rolling mean, min 3 months data
+    # project_median_psf_alltime: all-time median — stable anchor for the project
+    project_rolling_psf    = None
+    project_alltime_psf    = None
+    _seg_benchmark = {'CCR': 2200, 'RCR': 1550, 'OCR': 1150}.get(segment, 1200)
     if project:
         try:
             _DATABASE_URL = os.environ.get('DATABASE_URL', '')
@@ -1142,6 +1171,7 @@ def _predict_private_ml(features):
                 import psycopg2, psycopg2.extras
                 _pc = psycopg2.connect(_DATABASE_URL)
                 _pcur = _pc.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+                # 24-month rolling
                 _pcur.execute(
                     "SELECT AVG(unit_price_psf) AS avg_psf, COUNT(DISTINCT LEFT(sale_date,7)) AS n_months "
                     "FROM ura_transactions "
@@ -1149,6 +1179,25 @@ def _predict_private_ml(features):
                     "AND sale_date >= TO_CHAR(CURRENT_DATE - INTERVAL '24 months', 'YYYY-MM')",
                     (project,)
                 )
+                _row = _pcur.fetchone()
+                if _row:
+                    row_d    = dict(_row)
+                    v        = row_d.get('avg_psf')
+                    n_months = int(row_d.get('n_months') or 0)
+                    if v and n_months >= 3:
+                        project_rolling_psf = float(v)
+                # All-time median
+                _pcur.execute(
+                    "SELECT AVG(unit_price_psf) AS avg_psf "
+                    "FROM ura_transactions "
+                    "WHERE UPPER(project) = %s AND unit_price_psf BETWEEN 300 AND 8000",
+                    (project,)
+                )
+                _row2 = _pcur.fetchone()
+                if _row2:
+                    v2 = dict(_row2).get('avg_psf')
+                    if v2:
+                        project_alltime_psf = float(v2)
             else:
                 import sqlite3 as _sq
                 _pc = _sq.connect(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'propaisg.db'))
@@ -1161,20 +1210,53 @@ def _predict_private_ml(features):
                     "AND sale_date >= strftime('%Y-%m', date('now', '-24 months'))",
                     (project,)
                 )
-            _row = _pcur.fetchone()
-            if _row:
-                row_d = dict(_row)
-                v        = row_d.get('avg_psf')
-                n_months = int(row_d.get('n_months') or 0)
-                # Require at least 3 distinct months of data — mirrors min_periods=3 in training
-                if v and n_months >= 3:
-                    project_rolling_psf = float(v)
+                _row = _pcur.fetchone()
+                if _row:
+                    row_d    = dict(_row)
+                    v        = row_d.get('avg_psf')
+                    n_months = int(row_d.get('n_months') or 0)
+                    if v and n_months >= 3:
+                        project_rolling_psf = float(v)
+                _pcur.execute(
+                    "SELECT AVG(unit_price_psf) AS avg_psf FROM ura_transactions "
+                    "WHERE UPPER(project) = ? AND unit_price_psf BETWEEN 300 AND 8000",
+                    (project,)
+                )
+                _row2 = _pcur.fetchone()
+                if _row2:
+                    v2 = dict(_row2).get('avg_psf')
+                    if v2:
+                        project_alltime_psf = float(v2)
             _pc.close()
         except Exception:
             pass
-    # Fallback: segment benchmark PSF (used for new/rarely-transacted projects)
     if not project_rolling_psf or project_rolling_psf < 300:
-        project_rolling_psf = {'CCR': 2200, 'RCR': 1550, 'OCR': 1150}.get(segment, 1200)
+        project_rolling_psf = _seg_benchmark
+    if not project_alltime_psf or project_alltime_psf < 300:
+        project_alltime_psf = project_rolling_psf
+
+    # floor_level_pct: normalise floor by max known floor in this project
+    floor_level_pct = 0.5   # default: mid-floor
+    if project:
+        try:
+            _DATABASE_URL = os.environ.get('DATABASE_URL', '')
+            if _DATABASE_URL:
+                import psycopg2
+                _pc2 = psycopg2.connect(_DATABASE_URL)
+                _pc2cur = _pc2.cursor()
+                _pc2cur.execute(
+                    "SELECT MAX(CAST(SPLIT_PART(floor_level, '-', 2) AS INTEGER)) "
+                    "FROM ura_transactions WHERE UPPER(project) = %s AND floor_level ~ '^[0-9]'",
+                    (project,)
+                )
+                max_r = _pc2cur.fetchone()
+                _pc2.close()
+                if max_r and max_r[0]:
+                    max_fl = int(max_r[0])
+                    if max_fl > 0:
+                        floor_level_pct = min(float(floor) / max_fl, 1.0)
+        except Exception:
+            pass
 
     num_cols = _private_meta.get('numerical_cols', [])
     cat_cols = _private_meta.get('categorical_cols', ['property_type','market_segment','type_of_sale','postal_district'])
@@ -1184,19 +1266,21 @@ def _predict_private_ml(features):
         'market_segment':         segment,
         'type_of_sale':           'Resale',
         'postal_district':        district,
-        'floor_area_sqft':        area_sqft,
-        'floor_level_num':        float(floor),
-        'tenure_remaining_years': 75.0,   # typical resale condo median remaining lease
-        'is_strata':              1.0,
-        'year':                   year,
-        'quarter':                quarter,
-        'time_idx':               time_idx,
-        'direction':              float(pol.get('direction', 0)),
-        'severity':               float(pol.get('severity', 0)),
-        'policy_impact':          float(pol.get('policy_impact', 0)),
-        'months_since_policy_change': int(pol.get('months_since_policy_change', 0)),
-        'sora':                   sora,
-        'project_rolling_psf_6m': project_rolling_psf,
+        'floor_area_sqft':              area_sqft,
+        'floor_level_num':              float(floor),
+        'floor_level_pct':              floor_level_pct,
+        'tenure_remaining_years':       75.0,
+        'is_strata':                    1.0,
+        'year':                         year,
+        'quarter':                      quarter,
+        'time_idx':                     time_idx,
+        'direction':                    float(pol.get('direction', 0)),
+        'severity':                     float(pol.get('severity', 0)),
+        'policy_impact':                float(pol.get('policy_impact', 0)),
+        'months_since_policy_change':   int(pol.get('months_since_policy_change', 0)),
+        'sora':                         sora,
+        'project_rolling_psf_6m':       project_rolling_psf,
+        'project_median_psf_alltime':   project_alltime_psf,
     }
 
     try:
