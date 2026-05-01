@@ -38,7 +38,7 @@ from catboost import CatBoostRegressor
 MODELS_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
 TEMP_PATH   = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_progress.csv')
 RESOURCE_ID = 'f1765b54-a209-4718-8d38-a39237f502b3'
-MIN_YEAR    = 2018
+MIN_YEAR    = 2015
 
 CATEGORICAL_COLS = ["town", "flat_type", "flat_model"]
 # Full feature set — lat/lon + policy + SORA + 4 new accuracy features
