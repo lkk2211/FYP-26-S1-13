@@ -3175,6 +3175,7 @@ def property_areas():
     storey_ranges        = []
     default_storey_range = None   # most frequent range for this block — pre-selects in UI
     floor_data_source    = 'block'  # must be initialised here — condo path never sets it
+    max_transacted_floor = None   # HDB-only but referenced in return for all property types
 
     try:
         conn = get_db()
