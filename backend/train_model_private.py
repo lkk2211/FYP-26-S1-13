@@ -28,7 +28,7 @@ import pandas as pd
 from datetime import datetime, timezone
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder
+from sklearn.preprocessing import OneHotEncoder
 from sklearn.linear_model import HuberRegressor
 from sklearn.model_selection import KFold, cross_val_predict
 from sklearn.metrics import mean_absolute_error, r2_score
@@ -423,15 +423,9 @@ def _build_pipeline(model):
 
 
 def _build_catboost_pipeline(model):
-    """CatBoost-specific pipeline: OrdinalEncoder so CatBoost receives integer-coded
-    categories and can apply its native ordered target encoding internally.
-    cat_features must be set in the CatBoostRegressor constructor (not via set_params)
-    so sklearn.clone() can reproduce it during cross_val_predict."""
-    preprocessor = ColumnTransformer(transformers=[
-        ('cat', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1), CATEGORICAL_COLS),
-        ('num', 'passthrough', NUMERICAL_COLS),
-    ])
-    return Pipeline(steps=[('preprocessor', preprocessor), ('model', model)])
+    """No preprocessing for CatBoost — it handles string categoricals natively.
+    Pass the raw DataFrame directly; cat_features references column names."""
+    return Pipeline(steps=[('model', model)])
 
 
 # ─── Training ────────────────────────────────────────────────────────────────
@@ -495,7 +489,7 @@ def train(df_raw: pd.DataFrame):
         'cat_private':  CatBoostRegressor(
             iterations=200, learning_rate=0.05, depth=6,
             loss_function='RMSE', random_seed=42, verbose=0,
-            cat_features=list(range(len(CATEGORICAL_COLS))),
+            cat_features=CATEGORICAL_COLS,
         ),
     }
 
@@ -516,7 +510,7 @@ def train(df_raw: pd.DataFrame):
                 fold_pipe = _build_catboost_pipeline(CatBoostRegressor(
                     iterations=200, learning_rate=0.05, depth=6,
                     loss_function='RMSE', random_seed=42, verbose=0,
-                    cat_features=list(range(len(CATEGORICAL_COLS))),
+                    cat_features=CATEGORICAL_COLS,
                 ))
                 fold_pipe.fit(X_tr, y_tr)
                 fold_preds[val_idx] = fold_pipe.predict(X_val)
