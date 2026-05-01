@@ -6,14 +6,19 @@ Your home IP is not blocked by URA's bot protection; Render's data centre IP is.
 Usage:
     DATABASE_URL="postgresql://..." URA_ACCESS_KEY="your_key" python sync_ura_local.py
 
+    # Full refresh — truncates ALL existing ura_transactions first, then re-inserts.
+    # Use this when the stored data is known to be wrong (e.g. after fixing area units).
+    DATABASE_URL="..." URA_ACCESS_KEY="..." python sync_ura_local.py --full-refresh
+
 Or export the vars in your shell then run:
-    python sync_ura_local.py
+    python sync_ura_local.py [--full-refresh]
 """
-import os, json, time, urllib.request, urllib.error, psycopg2, psycopg2.extras
+import os, sys, json, time, urllib.request, urllib.error, psycopg2, psycopg2.extras
 from datetime import datetime
 
 DATABASE_URL   = os.environ.get('DATABASE_URL', '')
 URA_ACCESS_KEY = os.environ.get('URA_ACCESS_KEY', '')
+FULL_REFRESH   = '--full-refresh' in sys.argv
 URA_BASE       = 'https://eservice.ura.gov.sg/uraDataService'
 TYPE_MAP       = {'1': 'New Sale', '2': 'Sub Sale', '3': 'Resale'}
 
@@ -191,8 +196,19 @@ print(f'Connecting to Supabase…')
 conn = psycopg2.connect(DATABASE_URL)
 cur  = conn.cursor()
 
-# -- Transactions: incremental upsert (skip existing project+sale_date+floor_level)
-print(f'Upserting {len(rows):,} transaction records (incremental)…')
+if FULL_REFRESH:
+    print('⚠️  --full-refresh: truncating ura_transactions and ura_rental_medians…')
+    cur.execute("TRUNCATE TABLE ura_transactions RESTART IDENTITY CASCADE")
+    try:
+        cur.execute("TRUNCATE TABLE ura_rental_medians RESTART IDENTITY CASCADE")
+    except Exception:
+        pass   # table may not exist yet
+    conn.commit()
+    print('   Tables cleared.')
+
+# -- Transactions: insert all (full-refresh) or skip existing (incremental)
+mode = 'full refresh' if FULL_REFRESH else 'incremental'
+print(f'Inserting {len(rows):,} transaction records ({mode})…')
 psycopg2.extras.execute_values(cur, """
     INSERT INTO ura_transactions
         (project, street, property_type, market_segment,
@@ -204,7 +220,7 @@ psycopg2.extras.execute_values(cur, """
 """, rows, page_size=1000)
 tx_inserted = cur.rowcount
 conn.commit()
-print(f'  {tx_inserted:,} new rows inserted ({len(rows) - tx_inserted:,} already existed)')
+print(f'  {tx_inserted:,} rows inserted ({len(rows) - tx_inserted:,} skipped as duplicates)')
 
 # -- Rental medians (best-effort — skip if table missing)
 if rental_rows:
