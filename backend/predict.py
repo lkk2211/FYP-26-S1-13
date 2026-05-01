@@ -1281,6 +1281,35 @@ _PSF_BOUNDS = {
 }
 
 
+def _get_district_rolling_psf(district: str, property_type: str) -> float:
+    """24-month rolling avg PSF for a district×property_type. Fallback to segment benchmark."""
+    seg_benchmark = {'D01':2200,'D02':2200,'D04':2200,'D09':2200,'D10':2200,'D11':2200}
+    default = seg_benchmark.get(district, 1200)
+    try:
+        DATABASE_URL = os.environ.get('DATABASE_URL', '')
+        if not DATABASE_URL:
+            return default
+        import psycopg2, psycopg2.extras
+        _cd = psycopg2.connect(DATABASE_URL)
+        _cdcur = _cd.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        _cdcur.execute(
+            "SELECT AVG(unit_price_psf) AS avg_psf FROM ura_transactions "
+            "WHERE postal_district = %s AND UPPER(property_type) = %s "
+            "AND unit_price_psf BETWEEN 300 AND 8000 "
+            "AND sale_date >= TO_CHAR(CURRENT_DATE - INTERVAL '24 months', 'YYYY-MM')",
+            (district, property_type.upper())
+        )
+        r = _cdcur.fetchone()
+        _cd.close()
+        if r:
+            v = dict(r).get('avg_psf')
+            if v and float(v) > 300:
+                return float(v)
+    except Exception:
+        pass
+    return default
+
+
 def _predict_private_ml(features):
     postal    = str(features.get('postal', '')).strip().zfill(6)
     area_sqft = float(features.get('area', 1000))
@@ -1428,6 +1457,9 @@ def _predict_private_ml(features):
         'sora':                         sora,
         'project_rolling_psf_6m':       project_rolling_psf,
         'project_median_psf_alltime':   project_alltime_psf,
+        'district_rolling_psf_24m':     _get_district_rolling_psf(district, 'CONDOMINIUM'),
+        'sin_quarter':                  __import__('math').sin(2 * __import__('math').pi * quarter / 4),
+        'cos_quarter':                  __import__('math').cos(2 * __import__('math').pi * quarter / 4),
     }
 
     try:

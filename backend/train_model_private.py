@@ -61,8 +61,10 @@ NUMERICAL_COLS   = [
     'tenure_remaining_years', 'is_strata',
     'year', 'quarter', 'time_idx',
     'direction', 'severity', 'policy_impact', 'months_since_policy_change', 'sora',
-    'project_rolling_psf_6m',      # rolling 24-month PSF for this project (no leakage)
-    'project_median_psf_alltime',  # all-time project median PSF (stable anchor)
+    'project_rolling_psf_6m',       # rolling 24-month PSF for this project (no leakage)
+    'project_median_psf_alltime',   # all-time project median PSF (stable anchor)
+    'district_rolling_psf_24m',     # 24-month district×property_type PSF (project fallback)
+    'sin_quarter', 'cos_quarter',   # cyclic quarter encoding (seasonality)
 ]
 ALL_FEATURES = CATEGORICAL_COLS + NUMERICAL_COLS
 
@@ -422,11 +424,29 @@ def engineer_features(df: pd.DataFrame, policy_df=None, sora_df=None) -> pd.Data
         df['floor_level_pct']             = (df['floor_level_num'] / 20.0).clip(0.0, 1.0)
         df.drop(columns=['_unit_psf'], inplace=True)
 
+    # District × property_type 24-month rolling PSF — fills gap for new/thin projects.
+    # Sorted by district + time for correct rolling direction.
+    df['_unit_psf_tmp'] = (df['transacted_price'] / df['floor_area_sqft'].replace(0, np.nan)).clip(200, 8000)
+    df['_dist_type_key'] = df['postal_district'].astype(str) + '_' + df['property_type'].astype(str)
+    df = df.sort_values(['_dist_type_key', 'month'])
+    df['district_rolling_psf_24m'] = (
+        df.groupby('_dist_type_key')['_unit_psf_tmp']
+        .transform(lambda x: x.shift(1).rolling(8, min_periods=3).mean())
+    )
+    dist_type_median = df.groupby('_dist_type_key')['_unit_psf_tmp'].transform('median')
+    df['district_rolling_psf_24m'] = df['district_rolling_psf_24m'].fillna(dist_type_median)
+    df.drop(columns=['_unit_psf_tmp', '_dist_type_key'], inplace=True)
+
+    # Cyclic quarter encoding for seasonality (Q1 Jan–Mar vs Q4 Oct–Dec differ in SG market)
+    df['sin_quarter'] = np.sin(2 * np.pi * df['quarter'] / 4)
+    df['cos_quarter'] = np.cos(2 * np.pi * df['quarter'] / 4)
+
     required = CATEGORICAL_COLS + ['floor_area_sqft', 'floor_level_num', 'floor_level_pct',
                                     'tenure_remaining_years', 'is_strata', 'year', 'quarter',
                                     'direction', 'severity', 'policy_impact',
                                     'months_since_policy_change', 'sora',
                                     'project_rolling_psf_6m', 'project_median_psf_alltime',
+                                    'district_rolling_psf_24m', 'sin_quarter', 'cos_quarter',
                                     'transacted_price']
     return df.dropna(subset=[c for c in required if c != 'transacted_price'] + ['transacted_price'])
 
@@ -497,19 +517,23 @@ def train(df_raw: pd.DataFrame):
     print(f'Train: {len(X_train):,} | Test: {len(X_test):,}')
 
     model_specs = {
+        # XGB: shallow + regularised to diverge from LGBM's deep leaf-wise surface
         'xgb_private':  XGBRegressor(
-            n_estimators=800, learning_rate=0.03, max_depth=7,
-            min_child_weight=5,
+            n_estimators=1000, learning_rate=0.02, max_depth=5,
+            min_child_weight=10, reg_alpha=0.1, reg_lambda=2.0, gamma=0.05,
             subsample=0.8, colsample_bytree=0.8, tree_method='hist',
             random_state=42, objective='reg:squarederror', verbosity=0,
         ),
         'lgbm_private': LGBMRegressor(
-            n_estimators=800, learning_rate=0.03, num_leaves=127,
+            n_estimators=1200, learning_rate=0.02, num_leaves=127,
             min_child_samples=20,
             subsample=0.8, colsample_bytree=0.8, random_state=42, verbose=-1,
         ),
+        # Lossguide = leaf-wise growth like LGBM; previously level-wise (depth=7)
+        # was causing CatBoost to underperform and correlate with LGBM
         'cat_private':  CatBoostRegressor(
-            iterations=800, learning_rate=0.03, depth=7,
+            iterations=1000, learning_rate=0.03,
+            grow_policy='Lossguide', max_leaves=64,
             min_data_in_leaf=20,
             loss_function='RMSE', random_seed=42, verbose=0,
             cat_features=CATEGORICAL_COLS,
@@ -531,7 +555,8 @@ def train(df_raw: pd.DataFrame):
                 X_val = X_train.iloc[val_idx]
                 y_tr  = y_train_log.iloc[train_idx]
                 fold_pipe = _build_catboost_pipeline(CatBoostRegressor(
-                    iterations=800, learning_rate=0.03, depth=7,
+                    iterations=1000, learning_rate=0.03,
+                    grow_policy='Lossguide', max_leaves=64,
                     min_data_in_leaf=20,
                     loss_function='RMSE', random_seed=42, verbose=0,
                     cat_features=CATEGORICAL_COLS,
