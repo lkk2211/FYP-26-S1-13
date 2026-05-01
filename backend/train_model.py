@@ -19,11 +19,8 @@ Usage:
 import os
 import re
 import sys
-import warnings
 import joblib
 import requests
-
-warnings.filterwarnings('ignore', message='X does not have valid feature names')
 import numpy as np
 import pandas as pd
 from datetime import datetime
@@ -41,8 +38,7 @@ from catboost import CatBoostRegressor
 MODELS_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
 TEMP_PATH   = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_progress.csv')
 RESOURCE_ID = 'f1765b54-a209-4718-8d38-a39237f502b3'
-MIN_YEAR              = 2015   # SORA starts 2017 but 2015–2016 filled with median (~1.8%, stable)
-SUPPLEMENT_MIN_YEAR   = 2015   # API supplement only fires if DB starts after this
+MIN_YEAR    = 2021
 
 CATEGORICAL_COLS = ["town", "flat_type", "flat_model"]
 # Full feature set — lat/lon + policy + SORA + 4 new accuracy features
@@ -57,23 +53,14 @@ NUMERICAL_COLS_FULL = [
     "quarter",
     "time_idx",
     "storey_mid",
-    "storey_pct",                    # floor level as % of building height
+    "storey_pct",            # [NEW] floor level as % of building height
     "remaining_lease_years",
     "flat_age_years",
-    "bala_fraction",                 # SISV non-linear lease decay (Bala's Curve)
+    "bala_fraction",         # [NEW] SISV non-linear lease decay (Bala's Curve)
     "lat",
     "lon",
-    "dist_nearest_mrt_km",           # haversine distance to nearest MRT station
-    "lease_commence_date",                # direct era signal: 1970s/80s/90s/2000s flat design & mkt psych
-    "storey_psf_interaction",             # storey_pct × block_rolling_psf_24m: floor premium × local price
-    "block_rolling_psf_24m",              # 24-month lagged block-level median PSF
-    "block_median_psf_alltime",           # all-time block median PSF (stable anchor)
-    "street_rolling_psf_24m",             # 24-month street×flat_type median PSF
-    "town_flat_type_median_psf",          # all-time town×flat_type median PSF
-    "flat_model_town_rolling_psf_24m",    # 24-month town×flat_model PSF (DBSS, Maisonette etc.)
-    "geo_rolling_psf_24m",                # 24-month ~1km grid × flat_type PSF (spatial anchor)
-    "sin_month",                          # cyclic month encoding (seasonality)
-    "cos_month",                          # cyclic month encoding (seasonality)
+    "dist_nearest_mrt_km",   # [NEW] haversine distance to nearest MRT station
+    "block_rolling_psf_6m",  # [NEW] 6-month lagged block-level median PSF
 ]
 # Minimal fallback (no geo, no policy, no SORA)
 NUMERICAL_COLS_MIN = [
@@ -86,16 +73,7 @@ NUMERICAL_COLS_MIN = [
     "remaining_lease_years",
     "flat_age_years",
     "bala_fraction",
-    "lease_commence_date",
-    "storey_psf_interaction",
-    "block_rolling_psf_24m",
-    "block_median_psf_alltime",
-    "street_rolling_psf_24m",
-    "town_flat_type_median_psf",
-    "flat_model_town_rolling_psf_24m",
-    "geo_rolling_psf_24m",
-    "sin_month",
-    "cos_month",
+    "block_rolling_psf_6m",
 ]
 
 # ─── Bala's Curve (SISV standard — 11-point table) ───────────────────────────
@@ -264,44 +242,15 @@ def load_policy_from_db():
 
 def load_sora_from_db():
     try:
-        # Filter on compound_sora_3m (not publication_date) — the date column
-        # may be NULL if the TEXT→DATE conversion in process_uploaded_data failed,
-        # but the rate value itself is still valid.
-        rows = _query("SELECT publication_date, compound_sora_3m FROM sora_rates WHERE compound_sora_3m IS NOT NULL")
+        rows = _query("SELECT publication_date, compound_sora_3m FROM sora_rates WHERE publication_date IS NOT NULL")
         if not rows:
-            # Fallback: try stage_sora table (data uploaded but not yet processed)
-            try:
-                rows = _query("SELECT publication_date, compound_sora_3m FROM stage_sora WHERE compound_sora_3m IS NOT NULL")
-            except Exception:
-                pass
-        if not rows:
-            print("  sora_rates: no records found in sora_rates or stage_sora")
             return None
         df = pd.DataFrame(rows)
-        df['date']    = pd.to_datetime(df['publication_date'], errors='coerce')
-        df['sora_3m'] = pd.to_numeric(df['compound_sora_3m'].astype(str), errors='coerce')
-        before = len(df)
-        n_bad_date = int(df['date'].isna().sum())
-        n_bad_sora = int(df['sora_3m'].isna().sum())
-        print(f"  sora_rates: {before} fetched — bad dates={n_bad_date}, bad sora={n_bad_sora}")
-        # Only require sora value to be valid; missing dates get imputed below
-        df = df.dropna(subset=['sora_3m'])
-        if df.empty:
-            print(f"  sora_rates: all {before} rows dropped — compound_sora_3m unreadable")
-            return None
-        # Impute missing publication_date by spacing rows from earliest known date
-        if df['date'].isna().any():
-            known = df['date'].dropna()
-            base  = known.min() if not known.empty else pd.Timestamp('2019-01-01')
-            df = df.copy()
-            df['date'] = df['date'].fillna(
-                pd.Series([base + pd.DateOffset(months=i)
-                           for i in range(len(df))], index=df.index)
-            )
+        df['date'] = pd.to_datetime(df['publication_date'], errors='coerce')
+        df['sora_3m'] = pd.to_numeric(df['compound_sora_3m'], errors='coerce')
+        df = df.dropna(subset=['date', 'sora_3m'])
         df['month'] = df['date'].dt.to_period('M').dt.to_timestamp().astype('datetime64[s]')
-        result = df.groupby('month', as_index=False)['sora_3m'].mean().rename(columns={'sora_3m': 'sora'})
-        print(f"  sora_rates: {len(result)} monthly rows loaded (range {df['date'].min().year}–{df['date'].max().year})")
-        return result
+        return df.groupby('month', as_index=False)['sora_3m'].mean().rename(columns={'sora_3m': 'sora'})
     except Exception as e:
         print(f"  sora_rates load error: {e}")
         return None
@@ -381,69 +330,17 @@ def engineer_features(df, policy_df, sora_df, geo_df):
     df['max_storey_in_block'] = block_max.where(block_max > 0, ft_max).fillna(10.0)
     df['storey_pct'] = (df['storey_mid'] / df['max_storey_in_block']).clip(0.0, 1.0)
 
-    # Block-level rolling PSF (24-month window, shift 1 to prevent leakage)
-    # and all-time block median as a stable anchor alongside rolling estimate.
+    # ── [NEW] Block-level 6-month lagged rolling median PSF ───────────────────
+    # Shift by 1 month to prevent data leakage; fill missing with flat_type median
     df['psf'] = df['resale_price'] / (df['floor_area_sqm'].replace(0, np.nan) * 10.764)
     df_s = df.sort_values(['block_key', 'month'])
-    df_s['block_rolling_psf_24m'] = (
+    df_s['block_rolling_psf_6m'] = (
         df_s.groupby('block_key')['psf']
-        .transform(lambda x: x.shift(1).rolling(24, min_periods=3).median())
+        .transform(lambda x: x.shift(1).rolling(6, min_periods=1).median())
     )
-    # All-time block median (shift 1 so current sale excluded)
-    df_s['block_median_psf_alltime'] = (
-        df_s.groupby('block_key')['psf']
-        .transform(lambda x: x.shift(1).expanding(min_periods=1).median())
-    )
-    # Fill NaN (first few transactions in a block) with flat_type median PSF
+    # Fill NaN (first transactions in a block) with flat_type median PSF
     ft_psf_median = df_s.groupby('flat_type')['psf'].transform('median')
-    df_s['block_rolling_psf_24m']    = df_s['block_rolling_psf_24m'].fillna(ft_psf_median)
-    df_s['block_median_psf_alltime'] = df_s['block_median_psf_alltime'].fillna(ft_psf_median)
-
-    # Street × flat_type rolling PSF (24-month) — hierarchical between block and town.
-    # When a block has few transactions, this gives a tighter signal than flat_type median.
-    df_s['_street_type_key'] = (
-        df_s['street_name'].fillna('').astype(str).str.strip().str.upper()
-        + '_' + df_s['flat_type'].astype(str)
-    )
-    df_s['street_rolling_psf_24m'] = (
-        df_s.groupby('_street_type_key')['psf']
-        .transform(lambda x: x.shift(1).rolling(24, min_periods=3).median())
-    )
-    # Town × flat_type all-time median — stable broad anchor (no shift needed; not used as leaky signal)
-    town_ft_psf = df_s.groupby(['town', 'flat_type'])['psf'].transform('median')
-    df_s['street_rolling_psf_24m']   = df_s['street_rolling_psf_24m'].fillna(town_ft_psf)
-    df_s['town_flat_type_median_psf'] = town_ft_psf
-    df_s.drop(columns=['_street_type_key'], inplace=True)
-
-    # Flat model × town rolling PSF (24-month) — captures DBSS, Maisonette, premium premiums
-    df_s['_fm_town_key'] = df_s['town'].astype(str) + '_' + df_s['flat_model'].astype(str)
-    df_s['flat_model_town_rolling_psf_24m'] = (
-        df_s.groupby('_fm_town_key')['psf']
-        .transform(lambda x: x.shift(1).rolling(24, min_periods=3).median())
-    )
-    df_s['flat_model_town_rolling_psf_24m'] = df_s['flat_model_town_rolling_psf_24m'].fillna(town_ft_psf)
-    df_s.drop(columns=['_fm_town_key'], inplace=True)
-
-    # Cyclic month encoding for within-year seasonality (Q4 Oct–Dec is typically busier)
-    month_num = df_s['month'].dt.month
-    df_s['sin_month'] = np.sin(2 * np.pi * month_num / 12)
-    df_s['cos_month'] = np.cos(2 * np.pi * month_num / 12)
-
-    # lease_commence_date as raw numeric — top feature in published HDB ML research.
-    # Captures era-specific effects: design generation, build quality, market psychology
-    # of 1970s/80s/90s/2000s HDB stock, beyond what remaining_lease or flat_age encode.
-    df_s['lease_commence_date'] = pd.to_numeric(df_s['lease_commence_date'], errors='coerce').fillna(
-        df_s['year'] - df_s['flat_age_years'].fillna(34)
-    )
-
-    # storey_psf_interaction: floor premium × local PSF level.
-    # High storey in a premium estate (high block_rolling_psf) commands a larger absolute
-    # dollar premium than high storey in a cheap estate — tree splits miss this without it.
-    df_s['storey_psf_interaction'] = df_s['storey_pct'] * df_s['block_rolling_psf_24m']
-
-    # geo_rolling_psf_24m computed after geocoding merge (lat/lon not yet available here)
-    df_s['geo_rolling_psf_24m'] = df_s['street_rolling_psf_24m']  # placeholder; updated below
-
+    df_s['block_rolling_psf_6m'] = df_s['block_rolling_psf_6m'].fillna(ft_psf_median)
     df = df_s.sort_index()   # restore original row order
 
     # ── Policy merge (merge_asof backward) ──────────────────────────────────
@@ -499,22 +396,6 @@ def engineer_features(df, policy_df, sora_df, geo_df):
         df['lat'] = 0.0
         df['lon'] = 0.0
 
-    # ── Geo-grid rolling PSF — update now that lat/lon are available ────────────
-    if has_geo and 'lat' in df.columns and 'lon' in df.columns:
-        df = df.sort_values(['lat', 'lon', 'month'])
-        df['_geo_cell'] = (
-            df['lat'].round(2).astype(str) + '_' +
-            df['lon'].round(2).astype(str) + '_' +
-            df['flat_type'].astype(str)
-        )
-        df['geo_rolling_psf_24m'] = (
-            df.groupby('_geo_cell')['psf']
-            .transform(lambda x: x.shift(1).rolling(24, min_periods=3).median())
-        )
-        df['geo_rolling_psf_24m'] = df['geo_rolling_psf_24m'].fillna(df['street_rolling_psf_24m'])
-        df.drop(columns=['_geo_cell'], inplace=True)
-    # (else: already set to street_rolling_psf_24m as placeholder above)
-
     # ── [NEW] Distance to nearest MRT (requires lat/lon) ─────────────────────
     if has_geo:
         print("  Computing MRT distances (vectorised)...")
@@ -559,26 +440,6 @@ def train(from_db=False):
         print("Downloading HDB resale data from data.gov.sg...")
         df = download_hdb_data()
     print(f"Raw records: {len(df):,}")
-
-    # Supplement DB data with pre-DB historical records from data.gov.sg API.
-    # Enabled when SUPPLEMENT_API=1 env var is set.  DB data typically starts 2021+;
-    # pre-2015 data covers older leases (1966–2000 commencement) needed to learn
-    # the full lease_commence_date → price relationship.
-    if os.environ.get('SUPPLEMENT_API', '0') == '1':
-        try:
-            df['_month_year'] = pd.to_datetime(df['month'].astype(str).str[:7] + '-01', errors='coerce').dt.year
-            db_min_year = int(df['_month_year'].min()) if not df['_month_year'].isna().all() else 2025
-            df.drop(columns=['_month_year'], inplace=True)
-            if db_min_year > SUPPLEMENT_MIN_YEAR:
-                print(f"  DB starts {db_min_year}; downloading pre-{db_min_year} records from data.gov.sg...")
-                api_all = download_hdb_data()
-                api_all['_year'] = pd.to_datetime(api_all['month'].astype(str).str[:7] + '-01', errors='coerce').dt.year
-                api_pre = api_all[(api_all['_year'] >= SUPPLEMENT_MIN_YEAR) & (api_all['_year'] < db_min_year)].drop(columns=['_year'])
-                if len(api_pre) > 0:
-                    df = pd.concat([df, api_pre], ignore_index=True)
-                    print(f"  +{len(api_pre):,} API records → {len(df):,} total")
-        except Exception as _se:
-            print(f"  API supplement failed (non-critical): {_se}")
 
     # 2. Load supplementary datasets
     print("Loading policy, SORA, and geocoding data from database...")
@@ -639,23 +500,14 @@ def train(from_db=False):
     ])
 
     model_specs = {
-        # XGB: shallow trees + strong regularisation → different bias/variance regime from LGBM.
-        # depth=5 forces wider splits (less overfit on leaf patterns), reg_alpha/lambda/gamma
-        # penalise complex trees so XGB learns a smoother, more global surface.
-        'xgb':  XGBRegressor(n_estimators=800, learning_rate=0.02, max_depth=5,
-                              min_child_weight=10, reg_alpha=0.1, reg_lambda=2.0, gamma=0.05,
+        'xgb':  XGBRegressor(n_estimators=200, learning_rate=0.05, max_depth=5,
                               subsample=0.8, colsample_bytree=0.8, random_state=42,
                               objective='reg:squarederror', tree_method='hist'),
-        'lgbm': LGBMRegressor(n_estimators=1000, learning_rate=0.02, num_leaves=127,
-                               min_child_samples=20,
+        'lgbm': LGBMRegressor(n_estimators=200, learning_rate=0.05, num_leaves=31,
                                subsample=0.8, colsample_bytree=0.8, random_state=42,
                                verbose=-1),
-        # CatBoost is slowest on large datasets — 800 iterations sufficient with 700k rows
-        'cat':  CatBoostRegressor(iterations=800, learning_rate=0.03,
-                                   grow_policy='Lossguide', max_leaves=64,
-                                   min_data_in_leaf=20,
-                                   loss_function='RMSE', random_seed=42, verbose=0,
-                                   cat_features=CATEGORICAL_COLS),
+        'cat':  CatBoostRegressor(iterations=200, learning_rate=0.05, depth=5,
+                                   loss_function='RMSE', random_seed=42, verbose=0),
     }
 
     # Compute medians for inference meta before freeing the df
@@ -669,38 +521,16 @@ def train(from_db=False):
 
     # ── Phase 1: OOF predictions for HuberRegressor meta-learner ────────────
     print("Phase 1: Generating out-of-fold predictions for stacker...")
-    kf = KFold(n_splits=3, shuffle=True, random_state=42)
+    kf = KFold(n_splits=5, shuffle=True, random_state=42)
     oof_preds = np.zeros((len(X_train), len(model_specs)))
 
     for i, (name, model) in enumerate(model_specs.items()):
         print(f"  OOF {name}...")
-        if name == 'cat':
-            # CatBoost handles string categoricals natively — no OHE preprocessing.
-            # Must use manual fold loop because sklearn.clone() fails with cat_features.
-            fold_preds = np.zeros(len(X_train))
-            for train_idx, val_idx in kf.split(X_train):
-                X_tr  = X_train.iloc[train_idx]
-                X_val = X_train.iloc[val_idx]
-                y_tr  = y_train_log.iloc[train_idx]
-                fold_pipe = Pipeline(steps=[('model', CatBoostRegressor(
-                    iterations=800, learning_rate=0.03,
-                    grow_policy='Lossguide', max_leaves=64,
-                    min_data_in_leaf=20,
-                    loss_function='RMSE', random_seed=42, verbose=0,
-                    cat_features=CATEGORICAL_COLS,
-                ))])
-                fold_pipe.fit(X_tr, y_tr)
-                fold_preds[val_idx] = fold_pipe.predict(X_val)
-            oof_preds[:, i] = fold_preds
-        else:
-            pipe = Pipeline(steps=[('preprocessor', preprocessor), ('model', model)])
-            oof_preds[:, i] = cross_val_predict(pipe, X_train, y_train_log, cv=kf)
+        pipe = Pipeline(steps=[('preprocessor', preprocessor), ('model', model)])
+        oof_preds[:, i] = cross_val_predict(pipe, X_train, y_train_log, cv=kf)
         gc.collect()
 
-    # HuberRegressor meta-learner: robust to price outliers in OOF predictions.
-    # Use raw learned weights including negative ones — the intercept calibrates the
-    # sum so negative weights act as corrections, not errors. Only fall back to
-    # equal weights (evaluated in Phase 3) if stacked MAPE > simple average MAPE.
+    # HuberRegressor meta-learner: robust to price outliers in OOF predictions
     stacker = HuberRegressor(epsilon=1.35, alpha=0.0001, max_iter=300)
     stacker.fit(oof_preds, y_train_log)
     stacker_weights   = stacker.coef_.tolist()
@@ -712,8 +542,7 @@ def train(from_db=False):
     trained = {}
     for name, model in model_specs.items():
         print(f"Training {name}...")
-        pipe = (Pipeline(steps=[('model', model)]) if name == 'cat'
-                else Pipeline(steps=[('preprocessor', preprocessor), ('model', model)]))
+        pipe = Pipeline(steps=[('preprocessor', preprocessor), ('model', model)])
         pipe.fit(X_train, y_train_log)
         preds = np.exp(pipe.predict(X_test))
         mae   = mean_absolute_error(y_test, preds)
@@ -737,19 +566,8 @@ def train(from_db=False):
     stacked_mae  = mean_absolute_error(y_test, stacked_preds)
     stacked_r2   = r2_score(y_test, stacked_preds)
     stacked_mape = _mape(y_test.values, stacked_preds)
-    simple_mape  = _mape(y_test.values, simple_avg)
-    print(f"Simple avg: MAE=S${mean_absolute_error(y_test, simple_avg):,.0f}  R²={r2_score(y_test, simple_avg):.4f}  MAPE={simple_mape:.2f}%")
+    print(f"Simple avg: MAE=S${mean_absolute_error(y_test, simple_avg):,.0f}  R²={r2_score(y_test, simple_avg):.4f}  MAPE={_mape(y_test.values, simple_avg):.2f}%")
     print(f"Stacked:    MAE=S${stacked_mae:,.0f}  R²={stacked_r2:.4f}  MAPE={stacked_mape:.2f}%")
-
-    # Fall back to equal weights if stacker doesn't beat simple average
-    if stacked_mape > simple_mape:
-        n = len(stacker_weights)
-        stacker.coef_      = np.full(n, 1.0 / n)
-        stacker.intercept_ = 0.0
-        stacker_weights    = stacker.coef_.tolist()
-        stacker_intercept  = 0.0
-        stacked_mape       = simple_mape
-        print(f"  → Stacker worse than simple avg; using equal weights {[f'{w:.3f}' for w in stacker_weights]}")
 
     # 6. Meta: store medians + latest policy/SORA for inference
     # (medians already computed above before df_feat was freed)
