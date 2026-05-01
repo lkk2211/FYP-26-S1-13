@@ -3170,10 +3170,11 @@ def property_areas():
     flat_type_param = request.args.get('flat_type', '').strip().upper()
     flat_type = flat_type_param if flat_type_param in _BEDS_TO_FLAT.values() else _BEDS_TO_FLAT.get(bedrooms, '3 ROOM')
 
-    floor_areas      = []
-    max_floor        = None   # computed from real data; frontend falls back to 20 if still None
-    storey_ranges    = []
+    floor_areas          = []
+    max_floor            = None   # computed from real data; frontend falls back to 20 if still None
+    storey_ranges        = []
     default_storey_range = None   # most frequent range for this block — pre-selects in UI
+    floor_data_source    = 'block'  # must be initialised here — condo path never sets it
 
     try:
         conn = get_db()
@@ -3379,13 +3380,20 @@ def property_areas():
                         fl_rows = _condo_floors("UPPER(project) LIKE ?", (f'%{first_word}%',))
 
             # 2. Fall back to postal district
+            # Try both "D23" and "23" formats — CSV uploads may store either
             if not raw:
-                sector   = postal[:2] if len(postal) >= 2 else ''
-                district = _SECTOR_TO_DISTRICT.get(sector, '')
-                if district:
-                    raw     = _condo_query("postal_district = ?", (district,))
-                    if not fl_rows:
-                        fl_rows = _condo_floors("postal_district = ?", (district,))
+                sector      = postal[:2] if len(postal) >= 2 else ''
+                district    = _SECTOR_TO_DISTRICT.get(sector, '')
+                district_num = district.lstrip('D').zfill(2)   # "D23" → "23"
+                for dv in [district, district_num]:
+                    if dv:
+                        raw = _condo_query("UPPER(postal_district) = ?", (dv,))
+                        if raw: break
+                if not fl_rows:
+                    for dv in [district, district_num]:
+                        if dv:
+                            fl_rows = _condo_floors("UPPER(postal_district) = ?", (dv,))
+                            if fl_rows: break
 
             if raw:
                 floor_areas = sorted(set(round(v / 50.0) * 50 for v in raw))
