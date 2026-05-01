@@ -3783,42 +3783,64 @@ def upload_status():
 def model_status():
     """Return live status + trained_at for HDB and private models."""
     import joblib as _jl
+    import predict as _pm
+    # Trigger lazy load so in-memory pipeline state is current
+    try: _pm._load_models()
+    except Exception: pass
+    try: _pm._load_private_models()
+    except Exception: pass
+
     _mdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
+
     def _check(xgb_file, meta_file):
         live = os.path.exists(os.path.join(_mdir, xgb_file)) and \
                os.path.exists(os.path.join(_mdir, meta_file))
         trained_at = None
         eval_metrics = {}
+        meta_obj = {}
         if live:
             try:
-                m = _jl.load(os.path.join(_mdir, meta_file))
-                trained_at = m.get('trained_at')
+                meta_obj = _jl.load(os.path.join(_mdir, meta_file))
+                trained_at = meta_obj.get('trained_at')
                 for k in ('eval_mae', 'eval_r2', 'eval_mape', 'eval_n_test'):
-                    if m.get(k) is not None:
-                        eval_metrics[k] = m[k]
+                    if meta_obj.get(k) is not None:
+                        eval_metrics[k] = meta_obj[k]
             except Exception:
                 pass
-        return {'live': live, 'trained_at': trained_at, 'eval': eval_metrics}
-    from predict import _pipelines, _private_pipelines, _meta, _private_meta
+        return {'live': live, 'trained_at': trained_at, 'eval': eval_metrics,
+                '_meta_obj': meta_obj}
+
     def _loaded_names(pipelines, meta):
-        if pipelines is None:
+        if not pipelines:
             return []
         raw   = (meta or {}).get('model_names', ['xgb', 'lgbm', 'cat'])
         order = [n.replace('_private', '') for n in raw]
         return order[:len(pipelines)]
 
-    def _stacker_active(pipelines, meta):
-        if not pipelines or not meta:
+    def _stacker_active(pipelines, meta_obj):
+        # Read stacker state from meta file — accurate regardless of LOAD_ALL_MODELS.
+        # Equal-weight fallback ([1/n, 1/n, ...]) counts as inactive.
+        coef = (meta_obj or {}).get('stacker_coef')
+        if not coef:
             return False
-        coef = meta.get('stacker_coef')
-        return bool(coef and len(coef) == len(pipelines))
+        n = len(coef)
+        if n == 0:
+            return False
+        equal = 1.0 / n
+        # If all weights are within 0.001 of equal, it's the fallback — not a trained stacker
+        is_equal_weights = all(abs(w - equal) < 0.001 for w in coef)
+        return not is_equal_weights
 
     hdb_info     = _check('xgb_pipeline.joblib',         'meta.joblib')
     private_info = _check('xgb_private_pipeline.joblib', 'meta_private.joblib')
-    hdb_info['loaded_models']      = _loaded_names(_pipelines,         _meta)
-    private_info['loaded_models']  = _loaded_names(_private_pipelines, _private_meta)
-    hdb_info['stacker_active']     = _stacker_active(_pipelines,         _meta)
-    private_info['stacker_active'] = _stacker_active(_private_pipelines, _private_meta)
+
+    hdb_meta_obj     = hdb_info.pop('_meta_obj', {})
+    private_meta_obj = private_info.pop('_meta_obj', {})
+
+    hdb_info['loaded_models']      = _loaded_names(_pm._pipelines,         _pm._meta)
+    private_info['loaded_models']  = _loaded_names(_pm._private_pipelines, _pm._private_meta)
+    hdb_info['stacker_active']     = _stacker_active(_pm._pipelines,     hdb_meta_obj)
+    private_info['stacker_active'] = _stacker_active(_pm._private_pipelines, private_meta_obj)
     hdb_info['load_all_enabled']   = os.environ.get('LOAD_ALL_MODELS', '0') == '1'
     return jsonify({'hdb': hdb_info, 'private': private_info})
 
