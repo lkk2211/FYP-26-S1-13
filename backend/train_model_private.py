@@ -21,7 +21,10 @@ import os
 import re
 import sys
 import gc
+import warnings
 import joblib
+
+warnings.filterwarnings('ignore', message='X does not have valid feature names')
 import requests
 import numpy as np
 import pandas as pd
