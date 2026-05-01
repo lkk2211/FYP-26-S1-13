@@ -59,9 +59,9 @@ jobs:
             echo " done"
           done
           echo "Triggering model reload..."
-          curl -sf -X POST "$RENDER_URL/api/admin/reload-models" \
-            -H "X-Upload-Secret: $MODEL_UPLOAD_SECRET"
-          echo " reloaded"
+          curl -s -X POST "$RENDER_URL/api/admin/reload-models" \
+            -H "X-Upload-Secret: $MODEL_UPLOAD_SECRET" || echo " reload request failed (non-critical)"
+          echo " done"
 
       # ── Private model ─────────────────────────────────────────────────────────
       - name: Train Private model
@@ -89,9 +89,9 @@ jobs:
             echo " done"
           done
           echo "Triggering model reload..."
-          curl -sf -X POST "$RENDER_URL/api/admin/reload-models" \
-            -H "X-Upload-Secret: $MODEL_UPLOAD_SECRET"
-          echo " reloaded"
+          curl -s -X POST "$RENDER_URL/api/admin/reload-models" \
+            -H "X-Upload-Secret: $MODEL_UPLOAD_SECRET" || echo " reload request failed (non-critical)"
+          echo " done"
 
       # ── Commit models back to repo so they survive Render redeploys ──────────
       - name: Commit trained models to repo

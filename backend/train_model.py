@@ -260,14 +260,25 @@ def load_sora_from_db():
             return None
         df = pd.DataFrame(rows)
         df['date']    = pd.to_datetime(df['publication_date'], errors='coerce')
-        # Cast to str first — psycopg2 returns NUMERIC as Decimal which
-        # pd.to_numeric doesn't convert directly; str() handles Decimal, float, int, strings
         df['sora_3m'] = pd.to_numeric(df['compound_sora_3m'].astype(str), errors='coerce')
         before = len(df)
-        df = df.dropna(subset=['date', 'sora_3m'])
+        n_bad_date = int(df['date'].isna().sum())
+        n_bad_sora = int(df['sora_3m'].isna().sum())
+        print(f"  sora_rates: {before} fetched — bad dates={n_bad_date}, bad sora={n_bad_sora}")
+        # Only require sora value to be valid; missing dates get imputed below
+        df = df.dropna(subset=['sora_3m'])
         if df.empty:
-            print(f"  sora_rates: {before} rows fetched but all dropped (check compound_sora_3m values)")
+            print(f"  sora_rates: all {before} rows dropped — compound_sora_3m unreadable")
             return None
+        # Impute missing publication_date by spacing rows from earliest known date
+        if df['date'].isna().any():
+            known = df['date'].dropna()
+            base  = known.min() if not known.empty else pd.Timestamp('2019-01-01')
+            df = df.copy()
+            df['date'] = df['date'].fillna(
+                pd.Series([base + pd.DateOffset(months=i)
+                           for i in range(len(df))], index=df.index)
+            )
         df['month'] = df['date'].dt.to_period('M').dt.to_timestamp().astype('datetime64[s]')
         result = df.groupby('month', as_index=False)['sora_3m'].mean().rename(columns={'sora_3m': 'sora'})
         print(f"  sora_rates: {len(result)} monthly rows loaded (range {df['date'].min().year}–{df['date'].max().year})")
