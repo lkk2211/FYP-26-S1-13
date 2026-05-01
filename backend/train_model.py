@@ -642,16 +642,16 @@ def train(from_db=False):
         # XGB: shallow trees + strong regularisation → different bias/variance regime from LGBM.
         # depth=5 forces wider splits (less overfit on leaf patterns), reg_alpha/lambda/gamma
         # penalise complex trees so XGB learns a smoother, more global surface.
-        'xgb':  XGBRegressor(n_estimators=1000, learning_rate=0.02, max_depth=5,
+        'xgb':  XGBRegressor(n_estimators=800, learning_rate=0.02, max_depth=5,
                               min_child_weight=10, reg_alpha=0.1, reg_lambda=2.0, gamma=0.05,
                               subsample=0.8, colsample_bytree=0.8, random_state=42,
                               objective='reg:squarederror', tree_method='hist'),
-        'lgbm': LGBMRegressor(n_estimators=1200, learning_rate=0.02, num_leaves=127,
+        'lgbm': LGBMRegressor(n_estimators=1000, learning_rate=0.02, num_leaves=127,
                                min_child_samples=20,
                                subsample=0.8, colsample_bytree=0.8, random_state=42,
                                verbose=-1),
-        # CatBoost: leaf-wise growth (Lossguide). Best individual model — more iterations.
-        'cat':  CatBoostRegressor(iterations=1200, learning_rate=0.025,
+        # CatBoost is slowest on large datasets — 800 iterations sufficient with 700k rows
+        'cat':  CatBoostRegressor(iterations=800, learning_rate=0.03,
                                    grow_policy='Lossguide', max_leaves=64,
                                    min_data_in_leaf=20,
                                    loss_function='RMSE', random_seed=42, verbose=0,
@@ -669,7 +669,7 @@ def train(from_db=False):
 
     # ── Phase 1: OOF predictions for HuberRegressor meta-learner ────────────
     print("Phase 1: Generating out-of-fold predictions for stacker...")
-    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    kf = KFold(n_splits=3, shuffle=True, random_state=42)
     oof_preds = np.zeros((len(X_train), len(model_specs)))
 
     for i, (name, model) in enumerate(model_specs.items()):
@@ -683,7 +683,7 @@ def train(from_db=False):
                 X_val = X_train.iloc[val_idx]
                 y_tr  = y_train_log.iloc[train_idx]
                 fold_pipe = Pipeline(steps=[('model', CatBoostRegressor(
-                    iterations=1200, learning_rate=0.025,
+                    iterations=800, learning_rate=0.03,
                     grow_policy='Lossguide', max_leaves=64,
                     min_data_in_leaf=20,
                     loss_function='RMSE', random_seed=42, verbose=0,

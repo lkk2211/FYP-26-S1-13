@@ -526,19 +526,18 @@ def train(df_raw: pd.DataFrame):
     model_specs = {
         # XGB: shallow + regularised to diverge from LGBM's deep leaf-wise surface
         'xgb_private':  XGBRegressor(
-            n_estimators=1000, learning_rate=0.02, max_depth=5,
+            n_estimators=800, learning_rate=0.02, max_depth=5,
             min_child_weight=10, reg_alpha=0.1, reg_lambda=2.0, gamma=0.05,
             subsample=0.8, colsample_bytree=0.8, tree_method='hist',
             random_state=42, objective='reg:squarederror', verbosity=0,
         ),
         'lgbm_private': LGBMRegressor(
-            n_estimators=1200, learning_rate=0.02, num_leaves=127,
+            n_estimators=1000, learning_rate=0.02, num_leaves=127,
             min_child_samples=20,
             subsample=0.8, colsample_bytree=0.8, random_state=42, verbose=-1,
         ),
-        # Lossguide = leaf-wise growth like LGBM. CatBoost best individual (R²=0.949).
         'cat_private':  CatBoostRegressor(
-            iterations=1200, learning_rate=0.025,
+            iterations=800, learning_rate=0.03,
             grow_policy='Lossguide', max_leaves=64,
             min_data_in_leaf=20,
             loss_function='RMSE', random_seed=42, verbose=0,
@@ -548,7 +547,7 @@ def train(df_raw: pd.DataFrame):
 
     # ── Phase 1: Out-of-fold predictions for meta-learner ────────────────────
     print('\nPhase 1: Generating out-of-fold predictions for stacker...')
-    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    kf = KFold(n_splits=3, shuffle=True, random_state=42)
     oof_preds = np.zeros((len(X_train), len(model_specs)))
 
     for i, (name, model) in enumerate(model_specs.items()):
@@ -561,7 +560,7 @@ def train(df_raw: pd.DataFrame):
                 X_val = X_train.iloc[val_idx]
                 y_tr  = y_train_log.iloc[train_idx]
                 fold_pipe = _build_catboost_pipeline(CatBoostRegressor(
-                    iterations=1200, learning_rate=0.025,
+                    iterations=800, learning_rate=0.03,
                     grow_policy='Lossguide', max_leaves=64,
                     min_data_in_leaf=20,
                     loss_function='RMSE', random_seed=42, verbose=0,
