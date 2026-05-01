@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
-from sklearn.linear_model import Ridge
+from sklearn.linear_model import HuberRegressor
 from sklearn.model_selection import KFold, cross_val_predict
 from sklearn.metrics import mean_absolute_error, r2_score
 from xgboost import XGBRegressor
@@ -520,13 +520,14 @@ def train(df_raw: pd.DataFrame):
             oof_preds[:, i] = cross_val_predict(pipe, X_train, y_train_log, cv=kf)
         gc.collect()
 
-    # Non-negative Ridge meta-learner: forces each model to contribute positively.
-    # Prevents CatBoost (or any base model) from getting a negative weight that
-    # worsens the ensemble. fit_intercept=False keeps the blend as a pure weighted sum.
-    stacker = Ridge(alpha=1e-3, positive=True, fit_intercept=False)
+    # HuberRegressor meta-learner: robust to price outliers in OOF predictions.
+    # Clip any negative weights to zero after fitting — a base model should only
+    # contribute positively to the blend, never subtract from it.
+    stacker = HuberRegressor(epsilon=1.35, alpha=0.0001, max_iter=300)
     stacker.fit(oof_preds, y_train_log)
+    stacker.coef_ = np.maximum(stacker.coef_, 0)
     stacker_weights = stacker.coef_.tolist()
-    stacker_intercept = 0.0
+    stacker_intercept = float(stacker.intercept_)
     print(f'  Stacker weights: {[f"{w:.3f}" for w in stacker_weights]}  intercept={stacker_intercept:.4f}')
 
     # ── Phase 2: Train final base models on full training data ───────────────
