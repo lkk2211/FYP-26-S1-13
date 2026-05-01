@@ -891,10 +891,15 @@ def _predict_ml(features):
         'sin_month':                         sin_month,
         'cos_month':                         cos_month,
     }
-    row = pd.DataFrame([{k: feat[k] for k in (_meta.get('categorical_cols', ['town','flat_type','flat_model']) + num_cols) if k in feat}])
+    # Each model was trained on a different feature subset — use per-model subsets.
+    model_names    = _meta.get('model_names', ['xgb', 'lgbm', 'cat'])
+    feat_subsets   = _meta.get('model_feature_subsets', {})
+    preds_log = []
+    for mname, pipeline in zip(model_names, _pipelines):
+        mfeats = feat_subsets.get(mname, _meta.get('categorical_cols', []) + num_cols)
+        mrow   = pd.DataFrame([{k: feat[k] for k in mfeats if k in feat}])
+        preds_log.append(pipeline.predict(mrow)[0])
 
-    preds_log = [p.predict(row)[0] for p in _pipelines]
-    # Use HuberRegressor stacker weights if available, else simple average
     stacker_coef = _meta.get('stacker_coef')
     stacker_int  = float(_meta.get('stacker_intercept', 0.0))
     if stacker_coef and len(stacker_coef) == len(preds_log):
@@ -1512,9 +1517,14 @@ def _predict_private_ml(features):
     }
 
     try:
-        row = pd.DataFrame([{k: feat[k] for k in (cat_cols + num_cols) if k in feat}])
-        preds_log = [p.predict(row)[0] for p in _private_pipelines]
-        # Use stacker coefficients if available (trained via stacked generalisation)
+        priv_model_names  = _private_meta.get('model_names', ['xgb_private','lgbm_private','cat_private'])
+        priv_feat_subsets = _private_meta.get('model_feature_subsets', {})
+        preds_log = []
+        for mname, pipeline in zip(priv_model_names, _private_pipelines):
+            mfeats = priv_feat_subsets.get(mname, cat_cols + num_cols)
+            mrow   = pd.DataFrame([{k: feat[k] for k in mfeats if k in feat}])
+            preds_log.append(pipeline.predict(mrow)[0])
+
         stacker_coef = _private_meta.get('stacker_coef')
         stacker_int  = float(_private_meta.get('stacker_intercept', 0.0))
         if stacker_coef and len(stacker_coef) == len(preds_log):

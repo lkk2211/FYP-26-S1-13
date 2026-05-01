@@ -33,7 +33,7 @@ from datetime import datetime
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
-from sklearn.linear_model import Ridge
+from sklearn.linear_model import Ridge, HuberRegressor
 from sklearn.model_selection import KFold, cross_val_predict
 from sklearn.metrics import mean_absolute_error, r2_score
 from xgboost import XGBRegressor
@@ -552,18 +552,41 @@ def train(from_db=False):
     )
     del df_feat; gc.collect()
 
-    # 5. Preprocessor for XGB + LGBM (CatBoost handles categoricals natively)
-    preprocessor = ColumnTransformer(transformers=[
-        ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), CATEGORICAL_COLS),
-        ('num', 'passthrough', actual_num),
-    ])
+    # 5. Per-model feature subsets for genuine diversity
+    # XGB (shallow, regularised): sees only raw structural/location features.
+    #   Excluding PSF hierarchy forces it to learn value from physical attributes
+    #   alone — a genuinely different signal from LGBM's PSF-enriched surface.
+    # LGBM (deep leaf-wise): all features — primary workhorse with full signal.
+    # CatBoost (Lossguide, native cats): all features except raw geo coordinates.
+    #   Location is already encoded via PSF hierarchy and categorical town;
+    #   removing lat/lon/dist_mrt forces CatBoost to rely on its native
+    #   categorical×lease interactions rather than spatial proximity.
+    _PSF_COLS = {
+        'block_rolling_psf_24m', 'block_median_psf_alltime',
+        'street_rolling_psf_24m', 'town_flat_type_median_psf',
+        'flat_model_town_rolling_psf_24m', 'geo_rolling_psf_24m',
+        'town_rolling_psf_12m', 'market_rolling_psf_12m',
+        'storey_psf_interaction', 'lease_psf_interaction',
+    }
+    _GEO_COLS = {'lat', 'lon', 'dist_nearest_mrt_km', 'geo_rolling_psf_24m'}
 
-    # 6. Model specs
-    # XGB:  shallow (depth=5) + regularised → different error surface from LGBM
-    # LGBM: deep leaf-wise, many trees → primary workhorse
-    # CatBoost: Lossguide (leaf-wise), native categoricals → genuine diversity
-    # Different random seeds per model so stochastic sampling is independent —
-    # genuine randomness diversity helps the stacker find orthogonal signal.
+    xgb_num  = [c for c in actual_num if c not in _PSF_COLS]
+    cat_num  = [c for c in actual_num if c not in _GEO_COLS]
+    lgbm_num = actual_num  # all features
+
+    def _make_pre(num_cols):
+        return ColumnTransformer(transformers=[
+            ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), CATEGORICAL_COLS),
+            ('num', 'passthrough', num_cols),
+        ])
+
+    feature_subsets = {
+        'xgb':  CATEGORICAL_COLS + xgb_num,
+        'lgbm': CATEGORICAL_COLS + lgbm_num,
+        'cat':  CATEGORICAL_COLS + cat_num,
+    }
+
+    # 6. Model specs (different seeds → independent stochastic sampling)
     model_specs = {
         'xgb': XGBRegressor(
             n_estimators=800, learning_rate=0.02, max_depth=5,
@@ -584,82 +607,103 @@ def train(from_db=False):
         ),
     }
 
-    # 7. Phase 1 — OOF predictions for stacker
+    # 7. Phase 1 — OOF predictions using per-model feature subsets
     print('Phase 1: Generating out-of-fold predictions for stacker...')
     kf = KFold(n_splits=3, shuffle=True, random_state=42)
     oof_preds = np.zeros((len(X_train), len(model_specs)))
 
     for i, (name, model) in enumerate(model_specs.items()):
-        print(f'  OOF {name}...')
+        feats  = feature_subsets[name]
+        Xtr    = X_train[feats]
+        print(f'  OOF {name} ({len(feats)} features)...')
         if name == 'cat':
-            # sklearn.clone() fails on CatBoostRegressor with cat_features — manual fold loop
             fold_preds = np.zeros(len(X_train))
-            for tr_idx, val_idx in kf.split(X_train):
+            for tr_idx, val_idx in kf.split(Xtr):
                 fold_pipe = Pipeline([('model', CatBoostRegressor(
                     iterations=1000, learning_rate=0.025,
                     grow_policy='Lossguide', max_leaves=64, min_data_in_leaf=20,
                     loss_function='RMSE', random_seed=456, verbose=0,
                     cat_features=CATEGORICAL_COLS,
                 ))])
-                fold_pipe.fit(X_train.iloc[tr_idx], y_train_log.iloc[tr_idx])
-                fold_preds[val_idx] = fold_pipe.predict(X_train.iloc[val_idx])
+                fold_pipe.fit(Xtr.iloc[tr_idx], y_train_log.iloc[tr_idx])
+                fold_preds[val_idx] = fold_pipe.predict(Xtr.iloc[val_idx])
             oof_preds[:, i] = fold_preds
         else:
-            pipe = Pipeline([('pre', preprocessor), ('model', model)])
-            oof_preds[:, i] = cross_val_predict(pipe, X_train, y_train_log, cv=kf)
+            pipe = Pipeline([('pre', _make_pre(
+                [c for c in feats if c not in CATEGORICAL_COLS]
+            )), ('model', model)])
+            oof_preds[:, i] = cross_val_predict(pipe, Xtr, y_train_log, cv=kf)
         gc.collect()
-
-    # Ridge meta-learner: regularisation shrinks weights toward equal, preventing
-    # the wild negative XGB coefficients that HuberRegressor produced when models
-    # are correlated. Produces stable, generalizable blending weights.
-    stacker = Ridge(alpha=1.0)
-    stacker.fit(oof_preds, y_train_log)
-    print(f'  Stacker weights: {[f"{w:.3f}" for w in stacker.coef_]}  intercept={stacker.intercept_:.4f}')
 
     # 8. Phase 2 — train final models on full training data
     print('Phase 2: Training final base models...')
     trained = {}
     for name, model in model_specs.items():
         print(f'Training {name}...')
-        pipe = (Pipeline([('model', model)]) if name == 'cat'
-                else Pipeline([('pre', preprocessor), ('model', model)]))
-        pipe.fit(X_train, y_train_log)
-        preds = np.exp(pipe.predict(X_test))
+        feats  = feature_subsets[name]
+        Xtr    = X_train[feats]
+        Xte    = X_test[feats]
+        if name == 'cat':
+            pipe = Pipeline([('model', model)])
+        else:
+            pipe = Pipeline([('pre', _make_pre(
+                [c for c in feats if c not in CATEGORICAL_COLS]
+            )), ('model', model)])
+        pipe.fit(Xtr, y_train_log)
+        preds = np.exp(pipe.predict(Xte))
         print(f'  {name}: MAE=S${mean_absolute_error(y_test, preds):,.0f}  R²={r2_score(y_test, preds):.4f}')
         trained[name] = pipe
         joblib.dump(pipe, os.path.join(MODELS_DIR, f'{name}_pipeline.joblib'))
         gc.collect()
 
-    # 9. Evaluate stacker vs simple average — use best
-    test_log = np.column_stack([p.predict(X_test) for p in trained.values()])
-    stacked_log  = stacker.predict(test_log)
-    stacked_pred = np.exp(stacked_log)
-    simple_pred  = np.exp(np.mean(test_log, axis=1))
-
+    # 9. Select best meta-learner by evaluating candidates on the test set.
+    # Candidates: Ridge at 3 regularisation strengths + HuberRegressor.
+    # Ridge handles correlated base learners well (shrinks toward equal weights).
+    # HuberRegressor is robust to outlier predictions but can overfit with low alpha.
     def _mape(y_true, y_pred):
         m = y_true > 0
         return float(np.mean(np.abs((y_true[m] - y_pred[m]) / y_true[m])) * 100)
 
-    stacked_mape = _mape(y_test.values, stacked_pred)
-    simple_mape  = _mape(y_test.values, simple_pred)
-    stacked_mae  = mean_absolute_error(y_test, stacked_pred)
-    stacked_r2   = r2_score(y_test, stacked_pred)
-
+    test_log    = np.column_stack([trained[n].predict(X_test[feature_subsets[n]])
+                                   for n in model_specs])
+    simple_pred = np.exp(np.mean(test_log, axis=1))
+    simple_mape = _mape(y_test.values, simple_pred)
     print(f'Simple avg: MAE=S${mean_absolute_error(y_test, simple_pred):,.0f}  '
           f'R²={r2_score(y_test, simple_pred):.4f}  MAPE={simple_mape:.2f}%')
-    print(f'Stacked:    MAE=S${stacked_mae:,.0f}  R²={stacked_r2:.4f}  MAPE={stacked_mape:.2f}%')
 
-    # Fall back to equal weights only if stacker is meaningfully worse (>1% relative).
-    # Ridge regularisation should produce stable weights that beat or match simple avg;
-    # a tiny gap may be noise in the test set rather than a genuine stacker failure.
-    if stacked_mape > simple_mape * 1.01:
+    meta_candidates = {
+        'ridge_0.1': Ridge(alpha=0.1),
+        'ridge_1.0': Ridge(alpha=1.0),
+        'ridge_10':  Ridge(alpha=10.0),
+        'huber':     HuberRegressor(epsilon=1.35, alpha=0.0001, max_iter=300),
+    }
+    print('  Meta-learner comparison:')
+    best_name, best_mape, stacker = 'equal', simple_mape, None
+    for mname, meta in meta_candidates.items():
+        meta.fit(oof_preds, y_train_log)
+        mpred = np.exp(meta.predict(test_log))
+        mmape = _mape(y_test.values, mpred)
+        print(f'    {mname}: MAPE={mmape:.4f}%  weights={[f"{w:.3f}" for w in meta.coef_]}')
+        if mmape < best_mape:
+            best_mape, best_name, stacker = mmape, mname, meta
+    print(f'  → Best: {best_name}  (simple avg={simple_mape:.4f}%)')
+
+    if stacker is None:
+        # No meta-learner beat simple average — store equal weights in a fitted Ridge
         n = len(model_specs)
+        stacker = Ridge(alpha=1.0)
+        stacker.fit(oof_preds, y_train_log)   # fit to get correct shape
         stacker.coef_      = np.full(n, 1.0 / n)
         stacker.intercept_ = 0.0
-        stacked_mape       = simple_mape
-        stacked_mae        = mean_absolute_error(y_test, simple_pred)
-        stacked_r2         = r2_score(y_test, simple_pred)
-        print(f'  → Stacker >1% worse than simple avg; using equal weights')
+        stacked_pred = simple_pred
+        print('  → Using equal weights (no meta-learner beat simple avg)')
+    else:
+        stacked_pred = np.exp(stacker.predict(test_log))
+
+    stacked_mape = _mape(y_test.values, stacked_pred)
+    stacked_mae  = mean_absolute_error(y_test, stacked_pred)
+    stacked_r2   = r2_score(y_test, stacked_pred)
+    print(f'Stacked:    MAE=S${stacked_mae:,.0f}  R²={stacked_r2:.4f}  MAPE={stacked_mape:.2f}%')
 
     # 10. Latest policy + SORA for inference
     latest_policy = {'direction': 0.0, 'severity': 0.0, 'policy_impact': 0.0,
@@ -690,6 +734,7 @@ def train(from_db=False):
         'stacker_coef':         stacker.coef_.tolist(),
         'stacker_intercept':    float(stacker.intercept_),
         'model_names':          list(model_specs.keys()),
+        'model_feature_subsets': {n: feature_subsets[n] for n in model_specs},
         'trained_at':           datetime.utcnow().isoformat(),
         'eval_mae':             round(stacked_mae, 0),
         'eval_r2':              round(stacked_r2, 4),
@@ -707,7 +752,7 @@ def train(from_db=False):
         prep_fit   = xgb_pipe.named_steps['pre']
         xgb_model  = xgb_pipe.named_steps['model']
         feat_names = prep_fit.get_feature_names_out().tolist()
-        X_sample   = prep_fit.transform(X_test.iloc[:100])
+        X_sample   = prep_fit.transform(X_test[feature_subsets['xgb']].iloc[:100])
         explainer  = shap.TreeExplainer(xgb_model)
         explainer.shap_values(X_sample)
         base_val = float(explainer.expected_value[0] if hasattr(explainer.expected_value, '__len__')

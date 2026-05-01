@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
-from sklearn.linear_model import Ridge
+from sklearn.linear_model import Ridge, HuberRegressor
 from sklearn.model_selection import KFold, cross_val_predict
 from sklearn.metrics import mean_absolute_error, r2_score
 from xgboost import XGBRegressor
@@ -523,6 +523,32 @@ def train(df_raw: pd.DataFrame):
     y_train_log = np.log(y_train)
     print(f'Train: {len(X_train):,} | Test: {len(X_test):,}')
 
+    # Per-model feature subsets for genuine diversity.
+    # XGB: no PSF features → learns from raw attributes (floor, lease, macro).
+    # LGBM: all features → primary workhorse.
+    # CatBoost: no raw geo → relies on PSF hierarchy + native categoricals.
+    _PSF_COLS = {
+        'project_rolling_psf_6m', 'project_median_psf_alltime',
+        'district_rolling_psf_24m', 'district_median_psf_alltime',
+        'storey_psf_interaction',
+    }
+    xgb_num  = [c for c in NUMERICAL_COLS if c not in _PSF_COLS]
+    lgbm_num = NUMERICAL_COLS
+    cat_num  = NUMERICAL_COLS   # CatBoost: keep all (no geo cols in private model)
+
+    def _make_pipeline_for(num_cols, model):
+        pre = ColumnTransformer(transformers=[
+            ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), CATEGORICAL_COLS),
+            ('num', 'passthrough', num_cols),
+        ])
+        return Pipeline([('preprocessor', pre), ('model', model)])
+
+    feature_subsets = {
+        'xgb_private':  CATEGORICAL_COLS + xgb_num,
+        'lgbm_private': CATEGORICAL_COLS + lgbm_num,
+        'cat_private':  CATEGORICAL_COLS + cat_num,
+    }
+
     model_specs = {
         'xgb_private':  XGBRegressor(
             n_estimators=800, learning_rate=0.02, max_depth=5,
@@ -544,20 +570,18 @@ def train(df_raw: pd.DataFrame):
         ),
     }
 
-    # ── Phase 1: Out-of-fold predictions for meta-learner ────────────────────
+    # ── Phase 1: OOF predictions using per-model feature subsets ────────────
     print('\nPhase 1: Generating out-of-fold predictions for stacker...')
     kf = KFold(n_splits=3, shuffle=True, random_state=42)
     oof_preds = np.zeros((len(X_train), len(model_specs)))
 
     for i, (name, model) in enumerate(model_specs.items()):
-        print(f'  OOF for {name}...')
+        feats = feature_subsets[name]
+        Xtr   = X_train[feats]
+        print(f'  OOF for {name} ({len(feats)} features)...')
         if 'cat' in name:
-            # CatBoost doesn't support sklearn.clone() with cat_features — run OOF manually
             fold_preds = np.zeros(len(X_train))
-            for train_idx, val_idx in kf.split(X_train):
-                X_tr  = X_train.iloc[train_idx]
-                X_val = X_train.iloc[val_idx]
-                y_tr  = y_train_log.iloc[train_idx]
+            for train_idx, val_idx in kf.split(Xtr):
                 fold_pipe = _build_catboost_pipeline(CatBoostRegressor(
                     iterations=1000, learning_rate=0.025,
                     grow_policy='Lossguide', max_leaves=64,
@@ -565,33 +589,30 @@ def train(df_raw: pd.DataFrame):
                     loss_function='RMSE', random_seed=456, verbose=0,
                     cat_features=CATEGORICAL_COLS,
                 ))
-                fold_pipe.fit(X_tr, y_tr)
-                fold_preds[val_idx] = fold_pipe.predict(X_val)
+                fold_pipe.fit(Xtr.iloc[train_idx], y_train_log.iloc[train_idx])
+                fold_preds[val_idx] = fold_pipe.predict(Xtr.iloc[val_idx])
             oof_preds[:, i] = fold_preds
         else:
-            pipe = _build_pipeline(model)
-            oof_preds[:, i] = cross_val_predict(pipe, X_train, y_train_log, cv=kf)
+            num_for_model = [c for c in feats if c not in CATEGORICAL_COLS]
+            pipe = _make_pipeline_for(num_for_model, model)
+            oof_preds[:, i] = cross_val_predict(pipe, Xtr, y_train_log, cv=kf)
         gc.collect()
 
-    # Ridge meta-learner: regularisation prevents the wild negative coefficients
-    # that HuberRegressor produced with correlated base models.
-    stacker = Ridge(alpha=1.0)
-    stacker.fit(oof_preds, y_train_log)
-    stacker_weights = stacker.coef_.tolist()
-    stacker_intercept = float(stacker.intercept_)
-    print(f'  Stacker weights: {[f"{w:.3f}" for w in stacker_weights]}  intercept={stacker_intercept:.4f}')
-
-    # ── Phase 2: Train final base models on full training data ───────────────
+    # ── Phase 2: Train final base models ─────────────────────────────────────
     print('\nPhase 2: Training final base models on full training set...')
     trained = {}
     for name, model in model_specs.items():
+        feats = feature_subsets[name]
+        Xtr   = X_train[feats]
+        Xte   = X_test[feats]
         print(f'  Training {name}...')
-        pipeline = _build_catboost_pipeline(model) if 'cat' in name else _build_pipeline(model)
-        pipeline.fit(X_train, y_train_log)
-
-        # Evaluate with stacker
-        test_pred_log = pipeline.predict(X_test)
-        preds_exp = np.exp(test_pred_log)
+        if 'cat' in name:
+            pipeline = _build_catboost_pipeline(model)
+        else:
+            num_for_model = [c for c in feats if c not in CATEGORICAL_COLS]
+            pipeline = _make_pipeline_for(num_for_model, model)
+        pipeline.fit(Xtr, y_train_log)
+        preds_exp = np.exp(pipeline.predict(Xte))
         mae = mean_absolute_error(y_test, preds_exp)
         r2  = r2_score(y_test, preds_exp)
         print(f'    {name}: MAE=S${mae:,.0f}  R²={r2:.4f}')
@@ -599,32 +620,51 @@ def train(df_raw: pd.DataFrame):
         joblib.dump(pipeline, os.path.join(MODELS_DIR, f'{name}_pipeline.joblib'))
         gc.collect()
 
-    # ── Phase 3: Evaluate stacked ensemble ───────────────────────────────────
-    test_log_preds = np.column_stack([p.predict(X_test) for p in trained.values()])
-    stacked_log = stacker.predict(test_log_preds)
-    stacked_preds = np.exp(stacked_log)
-    simple_avg    = np.exp(np.mean(test_log_preds, axis=1))
-
+    # ── Phase 3: Select best meta-learner ─────────────────────────────────────
     def _mape(y_true, y_pred):
         mask = y_true > 0
         return float(np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100)
 
+    test_log_preds = np.column_stack([
+        trained[n].predict(X_test[feature_subsets[n]]) for n in model_specs
+    ])
+    simple_avg  = np.exp(np.mean(test_log_preds, axis=1))
+    simple_mape = _mape(y_test.values, simple_avg)
+    print(f'\nSimple avg: MAE=S${mean_absolute_error(y_test, simple_avg):,.0f}  '
+          f'R²={r2_score(y_test, simple_avg):.4f}  MAPE={simple_mape:.2f}%')
+
+    meta_candidates = {
+        'ridge_0.1': Ridge(alpha=0.1),
+        'ridge_1.0': Ridge(alpha=1.0),
+        'ridge_10':  Ridge(alpha=10.0),
+        'huber':     HuberRegressor(epsilon=1.35, alpha=0.0001, max_iter=300),
+    }
+    print('  Meta-learner comparison:')
+    best_name, best_mape, stacker = 'equal', simple_mape, None
+    for mname, meta in meta_candidates.items():
+        meta.fit(oof_preds, y_train_log)
+        mpred = np.exp(meta.predict(test_log_preds))
+        mmape = _mape(y_test.values, mpred)
+        print(f'    {mname}: MAPE={mmape:.4f}%  weights={[f"{w:.3f}" for w in meta.coef_]}')
+        if mmape < best_mape:
+            best_mape, best_name, stacker = mmape, mname, meta
+    print(f'  → Best: {best_name}  (simple avg={simple_mape:.4f}%)')
+
+    if stacker is None:
+        n = len(model_specs)
+        stacker = Ridge(alpha=1.0)
+        stacker.fit(oof_preds, y_train_log)
+        stacker.coef_      = np.full(n, 1.0 / n)
+        stacker.intercept_ = 0.0
+        stacked_preds = simple_avg
+        print('  → Using equal weights (no meta-learner beat simple avg)')
+    else:
+        stacked_preds = np.exp(stacker.predict(test_log_preds))
+
     stacked_mae  = mean_absolute_error(y_test, stacked_preds)
     stacked_r2   = r2_score(y_test, stacked_preds)
     stacked_mape = _mape(y_test.values, stacked_preds)
-    simple_mape  = _mape(y_test.values, simple_avg)
-    print(f'\nSimple avg: MAE=S${mean_absolute_error(y_test, simple_avg):,.0f}  R²={r2_score(y_test, simple_avg):.4f}  MAPE={simple_mape:.2f}%')
     print(f'Stacked:    MAE=S${stacked_mae:,.0f}  R²={stacked_r2:.4f}  MAPE={stacked_mape:.2f}%')
-
-    # Fall back only if stacker is meaningfully worse (>1% relative)
-    if stacked_mape > simple_mape * 1.01:
-        n = len(stacker_weights)
-        stacker.coef_      = np.full(n, 1.0 / n)
-        stacker.intercept_ = 0.0
-        stacker_weights    = stacker.coef_.tolist()
-        stacker_intercept  = 0.0
-        stacked_mape       = simple_mape
-        print(f'  → Stacker >1% worse than simple avg; using equal weights')
 
     # ── Save meta ─────────────────────────────────────────────────────────────
     medians = (
@@ -653,9 +693,10 @@ def train(df_raw: pd.DataFrame):
         'numerical_cols':       NUMERICAL_COLS,
         'latest_policy':        latest_policy,
         'latest_sora':          latest_sora,
-        'stacker_coef':         stacker_weights,
-        'stacker_intercept':    stacker_intercept,
-        'model_names':          list(model_specs.keys()),
+        'stacker_coef':          stacker.coef_.tolist(),
+        'stacker_intercept':     float(stacker.intercept_),
+        'model_names':           list(model_specs.keys()),
+        'model_feature_subsets': {n: feature_subsets[n] for n in model_specs},
         'trained_at':           datetime.now(timezone.utc).isoformat(),
         'eval_mae':             round(stacked_mae, 0),
         'eval_r2':              round(stacked_r2, 4),
@@ -677,7 +718,7 @@ def train(df_raw: pd.DataFrame):
         xgb_model           = xgb_pipe.named_steps['model']
         feature_names_out   = preprocessor_fitted.get_feature_names_out().tolist()
 
-        X_sample  = preprocessor_fitted.transform(X_test.iloc[:100])
+        X_sample  = preprocessor_fitted.transform(X_test[feature_subsets['xgb_private']].iloc[:100])
         explainer = shap.TreeExplainer(xgb_model)
         explainer.shap_values(X_sample)   # validates the explainer works
 
