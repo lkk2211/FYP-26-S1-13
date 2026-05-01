@@ -247,13 +247,26 @@ def load_sora_from_db():
     try:
         rows = _query("SELECT publication_date, compound_sora_3m FROM sora_rates WHERE publication_date IS NOT NULL")
         if not rows:
+            # Fallback: try stage_sora table (data uploaded but not yet processed)
+            try:
+                rows = _query("SELECT publication_date, compound_sora_3m FROM stage_sora WHERE publication_date IS NOT NULL")
+            except Exception:
+                pass
+        if not rows:
+            print("  sora_rates: no records found in sora_rates or stage_sora")
             return None
         df = pd.DataFrame(rows)
-        df['date'] = pd.to_datetime(df['publication_date'], errors='coerce')
+        df['date']   = pd.to_datetime(df['publication_date'], errors='coerce')
         df['sora_3m'] = pd.to_numeric(df['compound_sora_3m'], errors='coerce')
+        before = len(df)
         df = df.dropna(subset=['date', 'sora_3m'])
+        if df.empty:
+            print(f"  sora_rates: {before} rows fetched but all dropped (check compound_sora_3m values)")
+            return None
         df['month'] = df['date'].dt.to_period('M').dt.to_timestamp().astype('datetime64[s]')
-        return df.groupby('month', as_index=False)['sora_3m'].mean().rename(columns={'sora_3m': 'sora'})
+        result = df.groupby('month', as_index=False)['sora_3m'].mean().rename(columns={'sora_3m': 'sora'})
+        print(f"  sora_rates: {len(result)} monthly rows loaded (range {df['date'].min().year}–{df['date'].max().year})")
+        return result
     except Exception as e:
         print(f"  sora_rates load error: {e}")
         return None
@@ -510,7 +523,8 @@ def train(from_db=False):
                                subsample=0.8, colsample_bytree=0.8, random_state=42,
                                verbose=-1),
         'cat':  CatBoostRegressor(iterations=200, learning_rate=0.05, depth=5,
-                                   loss_function='RMSE', random_seed=42, verbose=0),
+                                   loss_function='RMSE', random_seed=42, verbose=0,
+                                   cat_features=CATEGORICAL_COLS),
     }
 
     # Compute medians for inference meta before freeing the df
@@ -529,8 +543,25 @@ def train(from_db=False):
 
     for i, (name, model) in enumerate(model_specs.items()):
         print(f"  OOF {name}...")
-        pipe = Pipeline(steps=[('preprocessor', preprocessor), ('model', model)])
-        oof_preds[:, i] = cross_val_predict(pipe, X_train, y_train_log, cv=kf)
+        if name == 'cat':
+            # CatBoost handles string categoricals natively — no OHE preprocessing.
+            # Must use manual fold loop because sklearn.clone() fails with cat_features.
+            fold_preds = np.zeros(len(X_train))
+            for train_idx, val_idx in kf.split(X_train):
+                X_tr  = X_train.iloc[train_idx]
+                X_val = X_train.iloc[val_idx]
+                y_tr  = y_train_log.iloc[train_idx]
+                fold_pipe = Pipeline(steps=[('model', CatBoostRegressor(
+                    iterations=200, learning_rate=0.05, depth=5,
+                    loss_function='RMSE', random_seed=42, verbose=0,
+                    cat_features=CATEGORICAL_COLS,
+                ))])
+                fold_pipe.fit(X_tr, y_tr)
+                fold_preds[val_idx] = fold_pipe.predict(X_val)
+            oof_preds[:, i] = fold_preds
+        else:
+            pipe = Pipeline(steps=[('preprocessor', preprocessor), ('model', model)])
+            oof_preds[:, i] = cross_val_predict(pipe, X_train, y_train_log, cv=kf)
         gc.collect()
 
     # HuberRegressor meta-learner: robust to price outliers in OOF predictions.
@@ -554,7 +585,8 @@ def train(from_db=False):
     trained = {}
     for name, model in model_specs.items():
         print(f"Training {name}...")
-        pipe = Pipeline(steps=[('preprocessor', preprocessor), ('model', model)])
+        pipe = (Pipeline(steps=[('model', model)]) if name == 'cat'
+                else Pipeline(steps=[('preprocessor', preprocessor), ('model', model)]))
         pipe.fit(X_train, y_train_log)
         preds = np.exp(pipe.predict(X_test))
         mae   = mean_absolute_error(y_test, preds)
