@@ -738,6 +738,45 @@ def _predict_ml(features):
     if town_flat_type_median_psf is None or town_flat_type_median_psf <= 0:
         town_flat_type_median_psf = block_rolling_psf_24m
 
+    # Town × flat_type 12-month rolling PSF and market-wide 12-month rolling PSF
+    town_rolling_psf_12m   = None
+    market_rolling_psf_12m = None
+    try:
+        DATABASE_URL = os.environ.get('DATABASE_URL', '')
+        if DATABASE_URL:
+            import psycopg2, psycopg2.extras
+            _ctm = psycopg2.connect(DATABASE_URL)
+            _ctmcur = _ctm.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            _ctmcur.execute(
+                "SELECT AVG(CAST(resale_price AS REAL)/(CAST(floor_area_sqm AS REAL)*10.764)) AS psf "
+                "FROM resale_flat_prices "
+                "WHERE UPPER(town)=%s AND UPPER(flat_type)=%s "
+                "AND month>=(CURRENT_DATE-INTERVAL '13 months') AND month<(CURRENT_DATE-INTERVAL '1 month')",
+                (town, flat_type)
+            )
+            r = _ctmcur.fetchone()
+            if r:
+                v = dict(r).get('psf')
+                if v: town_rolling_psf_12m = float(v)
+            _ctmcur.execute(
+                "SELECT AVG(CAST(resale_price AS REAL)/(CAST(floor_area_sqm AS REAL)*10.764)) AS psf "
+                "FROM resale_flat_prices "
+                "WHERE UPPER(flat_type)=%s "
+                "AND month>=(CURRENT_DATE-INTERVAL '13 months') AND month<(CURRENT_DATE-INTERVAL '1 month')",
+                (flat_type,)
+            )
+            r2 = _ctmcur.fetchone()
+            if r2:
+                v2 = dict(r2).get('psf')
+                if v2: market_rolling_psf_12m = float(v2)
+            _ctm.close()
+    except Exception:
+        pass
+    if not town_rolling_psf_12m or town_rolling_psf_12m <= 0:
+        town_rolling_psf_12m = town_flat_type_median_psf
+    if not market_rolling_psf_12m or market_rolling_psf_12m <= 0:
+        market_rolling_psf_12m = town_flat_type_median_psf
+
     # Flat model × town rolling PSF (DBSS, Maisonette, premium premiums)
     flat_model = str(features.get('flat_model', '')).strip().upper()
     flat_model_town_rolling_psf_24m = None
@@ -844,6 +883,8 @@ def _predict_ml(features):
         'block_median_psf_alltime':          block_median_psf_alltime,
         'street_rolling_psf_24m':            street_rolling_psf_24m,
         'town_flat_type_median_psf':         town_flat_type_median_psf,
+        'town_rolling_psf_12m':              town_rolling_psf_12m,
+        'market_rolling_psf_12m':            market_rolling_psf_12m,
         'flat_model_town_rolling_psf_24m':   flat_model_town_rolling_psf_24m,
         'geo_rolling_psf_24m':               geo_rolling_psf_24m,
         'sin_month':                         sin_month,

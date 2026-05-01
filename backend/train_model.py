@@ -78,6 +78,8 @@ NUMERICAL_COLS_FULL = [
     'town_flat_type_median_psf',        # all-time town×flat_type (broadest anchor)
     'flat_model_town_rolling_psf_24m',  # 24m town×flat_model (DBSS, Maisonette etc.)
     'geo_rolling_psf_24m',              # 24m ~1km spatial grid × flat_type
+    'town_rolling_psf_12m',             # 12m town×flat_type momentum (recent trend)
+    'market_rolling_psf_12m',           # 12m national flat_type trend (market drift signal)
     # Interaction
     'storey_psf_interaction',           # storey_pct × block_rolling_psf_24m
 ]
@@ -90,6 +92,7 @@ NUMERICAL_COLS_MIN = [
     'block_rolling_psf_24m', 'block_median_psf_alltime',
     'street_rolling_psf_24m', 'town_flat_type_median_psf',
     'flat_model_town_rolling_psf_24m', 'geo_rolling_psf_24m',
+    'town_rolling_psf_12m', 'market_rolling_psf_12m',
     'storey_psf_interaction',
 ]
 
@@ -366,6 +369,25 @@ def engineer_features(df, policy_df, sora_df, geo_df):
 
     df_s.drop(columns=['_street_type_key', '_fm_town_key'], inplace=True)
     df = df_s.sort_index()
+
+    # ── Market & town rolling PSF ─────────────────────────────────────────────
+    # These require month-sorted order WITHIN each group, so must be computed
+    # on separately sorted views (df_s is sorted by block_key+month, not flat_type+month).
+    global_psf_median = df['psf'].median()
+
+    df_mkt = df.sort_values(['flat_type', 'month'])
+    market_psf = (
+        df_mkt.groupby('flat_type')['psf']
+        .transform(lambda x: x.shift(1).rolling(12, min_periods=3).median())
+    )
+    df['market_rolling_psf_12m'] = market_psf.reindex(df.index).fillna(global_psf_median)
+
+    df_twn = df.sort_values(['town', 'flat_type', 'month'])
+    town_psf = (
+        df_twn.groupby(['town', 'flat_type'])['psf']
+        .transform(lambda x: x.shift(1).rolling(12, min_periods=3).median())
+    )
+    df['town_rolling_psf_12m'] = town_psf.reindex(df.index).fillna(df['town_flat_type_median_psf'])
 
     # ── Policy merge ──────────────────────────────────────────────────────────
     if policy_df is not None and len(policy_df) > 0:
