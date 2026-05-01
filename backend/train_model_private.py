@@ -175,7 +175,7 @@ def load_sora_from_db():
             return None
         df = pd.DataFrame(rows)
         df['date']    = pd.to_datetime(df['publication_date'], errors='coerce')
-        df['sora_3m'] = pd.to_numeric(df['compound_sora_3m'], errors='coerce')
+        df['sora_3m'] = pd.to_numeric(df['compound_sora_3m'].astype(str), errors='coerce')
         df = df.dropna(subset=['date', 'sora_3m'])
         df['month'] = df['date'].dt.to_period('M').dt.to_timestamp().astype('datetime64[s]')
         return df.groupby('month', as_index=False)['sora_3m'].mean().rename(columns={'sora_3m': 'sora'})

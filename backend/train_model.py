@@ -259,8 +259,10 @@ def load_sora_from_db():
             print("  sora_rates: no records found in sora_rates or stage_sora")
             return None
         df = pd.DataFrame(rows)
-        df['date']   = pd.to_datetime(df['publication_date'], errors='coerce')
-        df['sora_3m'] = pd.to_numeric(df['compound_sora_3m'], errors='coerce')
+        df['date']    = pd.to_datetime(df['publication_date'], errors='coerce')
+        # Cast to str first — psycopg2 returns NUMERIC as Decimal which
+        # pd.to_numeric doesn't convert directly; str() handles Decimal, float, int, strings
+        df['sora_3m'] = pd.to_numeric(df['compound_sora_3m'].astype(str), errors='coerce')
         before = len(df)
         df = df.dropna(subset=['date', 'sora_3m'])
         if df.empty:

@@ -3886,10 +3886,9 @@ def reload_models():
         if provided and provided != expected:
             return jsonify({'error': 'Invalid upload secret'}), 401
     try:
-        from predict import _load_models, _load_private_models
         _predict_module.reset_model_cache()
-        hdb_ok     = _load_models()
-        private_ok = _load_private_models()
+        hdb_ok     = _predict_module._load_models()
+        private_ok = _predict_module._load_private_models()
         return jsonify({'hdb': hdb_ok, 'private': private_ok,
                         'message': 'Models reloaded from disk.'})
     except Exception as e:
