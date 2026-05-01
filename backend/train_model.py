@@ -553,26 +553,29 @@ def train(from_db=False):
     del df_feat; gc.collect()
 
     # 5. Per-model feature subsets for genuine diversity
-    # XGB (shallow, regularised): sees only raw structural/location features.
-    #   Excluding PSF hierarchy forces it to learn value from physical attributes
-    #   alone — a genuinely different signal from LGBM's PSF-enriched surface.
-    # LGBM (deep leaf-wise): all features — primary workhorse with full signal.
-    # CatBoost (Lossguide, native cats): all features except raw geo coordinates.
-    #   Location is already encoded via PSF hierarchy and categorical town;
-    #   removing lat/lon/dist_mrt forces CatBoost to rely on its native
-    #   categorical×lease interactions rather than spatial proximity.
-    _PSF_COLS = {
-        'block_rolling_psf_24m', 'block_median_psf_alltime',
+    # XGB: keep the two most important PSF signals (block 24m + market trend)
+    #   but exclude the rest of the hierarchy. XGB with shallow trees + regularisation
+    #   learns a smooth global surface from structural features + local block anchor +
+    #   market momentum — a different regime from LGBM's deep local PSF learning.
+    # LGBM: all features — primary workhorse with full signal.
+    # CatBoost: exclude dynamic rolling PSF (market/town trend) — forces reliance on
+    #   static location value (alltime medians, geo, lat/lon) + categorical interactions.
+    #   LGBM handles the dynamic market drift; CatBoost handles the static location signal.
+    _XGB_EXCLUDE = {
+        'block_median_psf_alltime',
         'street_rolling_psf_24m', 'town_flat_type_median_psf',
         'flat_model_town_rolling_psf_24m', 'geo_rolling_psf_24m',
-        'town_rolling_psf_12m', 'market_rolling_psf_12m',
+        'town_rolling_psf_12m',
         'storey_psf_interaction', 'lease_psf_interaction',
     }
-    _GEO_COLS = {'lat', 'lon', 'dist_nearest_mrt_km', 'geo_rolling_psf_24m'}
+    _CAT_EXCLUDE = {
+        'market_rolling_psf_12m', 'town_rolling_psf_12m',
+        'flat_model_town_rolling_psf_24m', 'street_rolling_psf_24m',
+    }
 
-    xgb_num  = [c for c in actual_num if c not in _PSF_COLS]
-    cat_num  = [c for c in actual_num if c not in _GEO_COLS]
-    lgbm_num = actual_num  # all features
+    xgb_num  = [c for c in actual_num if c not in _XGB_EXCLUDE]
+    cat_num  = [c for c in actual_num if c not in _CAT_EXCLUDE]
+    lgbm_num = actual_num
 
     def _make_pre(num_cols):
         return ColumnTransformer(transformers=[

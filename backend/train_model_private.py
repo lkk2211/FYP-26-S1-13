@@ -524,17 +524,23 @@ def train(df_raw: pd.DataFrame):
     print(f'Train: {len(X_train):,} | Test: {len(X_test):,}')
 
     # Per-model feature subsets for genuine diversity.
-    # XGB: no PSF features → learns from raw attributes (floor, lease, macro).
+    # XGB: keep project_rolling_psf_6m (strongest signal) but drop the rest of
+    #   PSF hierarchy — forces XGB to use raw physical features + core project PSF.
     # LGBM: all features → primary workhorse.
-    # CatBoost: no raw geo → relies on PSF hierarchy + native categoricals.
-    _PSF_COLS = {
-        'project_rolling_psf_6m', 'project_median_psf_alltime',
+    # CatBoost: exclude dynamic rolling PSF (district trend, seasonality) so it
+    #   relies on static all-time anchors + categorical×lease interactions.
+    _XGB_EXCLUDE = {
+        'project_median_psf_alltime',
         'district_rolling_psf_24m', 'district_median_psf_alltime',
         'storey_psf_interaction',
     }
-    xgb_num  = [c for c in NUMERICAL_COLS if c not in _PSF_COLS]
+    _CAT_EXCLUDE = {
+        'district_rolling_psf_24m',
+        'sin_quarter', 'cos_quarter',
+    }
+    xgb_num  = [c for c in NUMERICAL_COLS if c not in _XGB_EXCLUDE]
     lgbm_num = NUMERICAL_COLS
-    cat_num  = NUMERICAL_COLS   # CatBoost: keep all (no geo cols in private model)
+    cat_num  = [c for c in NUMERICAL_COLS if c not in _CAT_EXCLUDE]
 
     def _make_pipeline_for(num_cols, model):
         pre = ColumnTransformer(transformers=[
