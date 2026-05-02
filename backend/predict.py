@@ -1074,9 +1074,8 @@ def _predict_ml(features):
     except Exception as _se:
         print(f"[predict] SHAP HDB inference skipped: {_se}")
 
-    # ── Confidence: two independent signals combined ──────────────────────────
-    # Signal 1 — intra-model spread (only meaningful when ensemble has 2+ models;
-    #             with a single model we still get signal via first/second half of trees)
+# --- MARKET ALIGNMENT: TWO INDEPENDENT SIGNALS ---
+    # Signal 1 — intra-model spread (Tree agreement signal)
     xgb_pipe = _pipelines[0]
     try:
         booster   = xgb_pipe.named_steps['model'].get_booster()
@@ -1084,9 +1083,10 @@ def _predict_ml(features):
         prep_row  = xgb_pipe.named_steps['preprocessor'].transform(row)
         import xgboost as _xgb
         dmat = _xgb.DMatrix(prep_row)
+        
         if n_trees >= 4:
             half = n_trees // 2
-            pred_first  = float(np.exp(booster.predict(dmat, iteration_range=(0,    half),    output_margin=True)[0]))
+            pred_first  = float(np.exp(booster.predict(dmat, iteration_range=(0, half), output_margin=True)[0]))
             pred_second = float(np.exp(booster.predict(dmat, iteration_range=(half, n_trees), output_margin=True)[0]))
             tree_spread = abs(pred_first - pred_second)
             cv = tree_spread / estimated_value
@@ -1097,10 +1097,12 @@ def _predict_ml(features):
         spread = float(np.std([np.exp(v) for v in preds_log]))
         cv = spread / estimated_value
 
-    base_conf = round(92.0 - cv * 180, 1)   # ensemble/tree agreement signal
+    # Recalibrated Baseline: 100 - MAPE (7.25%) = 92.75%
+    base_alignment = round(92.75 - cv * 180, 1)
 
-    # Signal 2 — block-level data density: more recent transactions → higher confidence
+    # Signal 2 — block-level data density
     density_adj = 0.0
+    n_local = 0
     if blk:
         try:
             DATABASE_URL = os.environ.get('DATABASE_URL', '')
@@ -1128,10 +1130,22 @@ def _predict_ml(features):
             _dr = _dcu.fetchone()
             n_local = int(dict(_dr).get('n', 0)) if _dr else 0
             _dc.close()
-            # 0 txns → −4 pts  |  10 txns → 0 pts  |  30+ txns → +3 pts
+            # 0 txns → −4 pts | 10 txns → 0 pts | 30+ txns → +3 pts
             density_adj = max(-4.0, min(3.0, (n_local - 10) * 0.35))
         except Exception:
             pass
+
+    final_score = round(min(98.5, base_alignment + density_adj), 1)
+
+    # Return structured object for frontend
+    return {
+        "estimated_value": estimated_value,
+        "market_alignment": {
+            "score": final_score,
+            "label": "High" if final_score > 90 else "Reliable",
+            "records_analyzed": n_local
+        }
+    }
 
     # Signal 3 — floor extrapolation penalty
     # If the requested floor exceeds the highest transacted floor across block + nearby siblings,
