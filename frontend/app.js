@@ -2586,28 +2586,28 @@ async function _doUploadFile(formData, status, btn, input) {
 }
 
 // ── URA API Sync ─────────────────────────────────────────────
-async function handleSyncUra() {
-    const btn    = document.getElementById('ura-sync-btn');
-    const status = document.getElementById('ura-sync-status');
+
+async function handlePopulateAmenities() {
+    const btn    = document.getElementById('amenity-populate-btn');
+    const status = document.getElementById('amenity-populate-status');
     if (!btn) return;
     btn.disabled = true;
-    btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Syncing…';
+    btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Fetching…';
     lucide.createIcons();
-    if (status) { status.classList.remove('hidden'); status.textContent = 'Connecting to URA DataService…'; }
+    if (status) { status.classList.remove('hidden'); status.textContent = 'Querying OpenStreetMap (may take 2–3 min)…'; }
     try {
-        const res  = await fetch('/api/admin/sync-ura', { method: 'POST' });
+        const res  = await fetch('/api/admin/populate-amenities', { method: 'POST' });
         const data = await res.json();
         if (data.error) throw new Error(data.error);
-        const msg = data.message || `Synced ${(data.inserted||0).toLocaleString()} new records.`;
+        const msg = data.message || 'Amenity population started.';
         if (status) status.textContent = msg;
         showToast(msg);
-        loadDataTabStats();
     } catch (e) {
         if (status) status.textContent = `Error: ${e.message}`;
-        showToast('URA sync failed: ' + e.message);
+        showToast('Amenity population failed: ' + e.message);
     } finally {
         btn.disabled = false;
-        btn.innerHTML = '<i data-lucide="refresh-cw" class="w-4 h-4"></i> Sync URA Transactions';
+        btn.innerHTML = '<i data-lucide="map-pin" class="w-4 h-4"></i> Populate Amenities';
         lucide.createIcons();
     }
 }

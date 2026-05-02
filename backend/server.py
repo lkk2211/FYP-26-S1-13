@@ -3920,6 +3920,108 @@ def reload_models():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/admin/populate-amenities', methods=['POST'])
+def populate_amenities():
+    """Bulk-populate the amenities table from OpenStreetMap via Overpass API.
+    Covers the entire Singapore bounding box in one request — much faster than
+    the per-postal-code approach used at runtime."""
+    _require_admin()
+    import threading, json as _json, urllib.request as _ur, time as _time
+
+    SG_BBOX = '1.1500,103.5900,1.5000,104.1000'
+    QUERY = f"""[out:json][timeout:180][bbox:{SG_BBOX}];(
+        node["amenity"="school"]; way["amenity"="school"];
+        node["amenity"="kindergarten"]; node["amenity"="university"]; node["amenity"="college"];
+        node["amenity"="hawker_centre"]; way["amenity"="hawker_centre"];
+        node["amenity"="food_court"]; way["amenity"="food_court"]; node["amenity"="marketplace"];
+        node["amenity"="hospital"]; way["amenity"="hospital"]; node["healthcare"="hospital"];
+        node["amenity"="clinic"]; node["amenity"="doctors"]; node["amenity"="pharmacy"]; node["amenity"="dentist"];
+        node["leisure"="park"]; way["leisure"="park"]; node["leisure"="garden"]; way["leisure"="garden"];
+        node["leisure"="nature_reserve"]; way["leisure"="nature_reserve"];
+        node["leisure"="sports_centre"]; node["leisure"="fitness_centre"]; node["leisure"="swimming_pool"];
+        node["amenity"="community_centre"]; way["amenity"="community_centre"];
+        node["amenity"="library"]; node["amenity"="place_of_worship"];
+        node["shop"="supermarket"]; node["shop"="mall"]; way["shop"="mall"];
+        node["amenity"="theatre"]; node["amenity"="cinema"];
+    );out center body;"""
+
+    def _classify(el):
+        t = el.get('tags', {})
+        a, l, s, h = t.get('amenity',''), t.get('leisure',''), t.get('shop',''), t.get('healthcare','')
+        if a in ('school','kindergarten','university','college'): return 'school'
+        if a in ('hawker_centre','food_court','marketplace'):     return 'hawker'
+        if a in ('hospital','clinic','doctors','pharmacy','dentist') or h=='hospital': return 'health'
+        if l in ('park','garden','nature_reserve'):               return 'park'
+        if l in ('sports_centre','fitness_centre','swimming_pool'): return 'recreation'
+        if a in ('community_centre','library','place_of_worship'): return 'community'
+        if s in ('supermarket','mall','department_store'):         return 'shopping'
+        if a in ('theatre','cinema'):                              return 'entertainment'
+        return None
+
+    def _run():
+        mirrors = ['https://overpass-api.de/api/interpreter',
+                   'https://overpass.kumi.systems/api/interpreter',
+                   'https://maps.mail.ru/osm/tools/overpass/api/interpreter']
+        elements = []
+        for m in mirrors:
+            try:
+                req = _ur.Request(m, data=QUERY.encode(), method='POST')
+                req.add_header('User-Agent', 'PropAI-SG/1.0')
+                with _ur.urlopen(req, timeout=200) as r:
+                    elements = _json.loads(r.read()).get('elements', [])
+                print(f'[amenities] {len(elements):,} elements from {m}')
+                break
+            except Exception as e:
+                print(f'[amenities] mirror {m} failed: {e}')
+                _time.sleep(2)
+        if not elements:
+            print('[amenities] All mirrors failed')
+            return
+
+        rows, seen = [], set()
+        for el in elements:
+            atype = _classify(el)
+            if not atype: continue
+            lat = el.get('lat') or (el.get('center') or {}).get('lat')
+            lon = el.get('lon') or (el.get('center') or {}).get('lon')
+            if not lat or not lon: continue
+            key = (atype, round(float(lat), 4), round(float(lon), 4))
+            if key in seen: continue
+            seen.add(key)
+            name = (el.get('tags', {}).get('name') or el.get('tags', {}).get('name:en') or '').strip()
+            rows.append((name or atype, atype, float(lat), float(lon), 'overpass'))
+
+        try:
+            conn = get_db()
+            cur  = _cursor(conn)
+            cur.execute("DELETE FROM amenities WHERE source = 'overpass' OR source IS NULL")
+            if USE_POSTGRES:
+                import psycopg2.extras as _pge
+                _pge.execute_values(cur, """
+                    INSERT INTO amenities (amenity_name, amenity_type, latitude, longitude, source)
+                    VALUES %s
+                """, rows, page_size=500)
+            else:
+                cur.executemany(
+                    "INSERT INTO amenities (amenity_name, amenity_type, latitude, longitude, source) VALUES (?,?,?,?,?)",
+                    rows)
+            conn.commit()
+            from collections import Counter
+            counts = Counter(r[1] for r in rows)
+            print(f'[amenities] Inserted {len(rows):,} rows: {dict(sorted(counts.items()))}')
+            # Invalidate predict.py amenity cache so next inference reloads
+            try:
+                import predict as _pm
+                _pm._amenity_coords_cache.clear()
+            except Exception:
+                pass
+        except Exception as e:
+            print(f'[amenities] DB insert error: {e}')
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({'message': 'Amenity population started in background. Check server logs for progress (~2-3 min).'})
+
+
 @app.route('/api/admin/sync-ura', methods=['POST'])
 def sync_ura():
     """Fetch latest URA private property transactions and insert new records into ura_transactions."""
