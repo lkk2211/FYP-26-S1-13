@@ -2587,30 +2587,6 @@ async function _doUploadFile(formData, status, btn, input) {
 
 // ── URA API Sync ─────────────────────────────────────────────
 
-async function handlePopulateAmenities() {
-    const btn    = document.getElementById('amenity-populate-btn');
-    const status = document.getElementById('amenity-populate-status');
-    if (!btn) return;
-    btn.disabled = true;
-    btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Fetching…';
-    lucide.createIcons();
-    if (status) { status.classList.remove('hidden'); status.textContent = 'Querying OpenStreetMap (may take 2–3 min)…'; }
-    try {
-        const res  = await fetch('/api/admin/populate-amenities', { method: 'POST' });
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
-        const msg = data.message || 'Amenity population started.';
-        if (status) status.textContent = msg;
-        showToast(msg);
-    } catch (e) {
-        if (status) status.textContent = `Error: ${e.message}`;
-        showToast('Amenity population failed: ' + e.message);
-    } finally {
-        btn.disabled = false;
-        btn.innerHTML = '<i data-lucide="map-pin" class="w-4 h-4"></i> Populate Amenities';
-        lucide.createIcons();
-    }
-}
 
 // ── Property Not Found Modal ──────────────────────────────────
 function openPropertyNotFoundModal(postal) {

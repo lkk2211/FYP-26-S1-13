@@ -586,36 +586,46 @@ def engineer_features(df, policy_df, sora_df, geo_df, amenity_dict=None):
 
     # ── MRT distances (vectorised haversine) ─────────────────────────────────
     if has_geo:
-        print('  Computing amenity distances (vectorised)...')
+        print('  Computing amenity distances (chunked)...')
         R    = 6371.0
         lats = np.radians(df['lat'].values)
         lons = np.radians(df['lon'].values)
 
-        def _min_dist(coords):
+        def _min_dist(coords, chunk=20_000):
+            """Chunked haversine — caps peak memory at chunk × n_coords × 8 bytes.
+            With chunk=20k and up to 1000 amenity points: ~160MB peak vs 2GB+ full."""
             if not coords:
                 return np.full(len(lats), 0.5)
-            arr   = np.array(coords)
+            arr   = np.array(coords, dtype=np.float32)
             alats = np.radians(arr[:, 0])
             alons = np.radians(arr[:, 1])
-            dlat  = alats[None, :] - lats[:, None]
-            dlon  = alons[None, :] - lons[:, None]
-            a     = np.sin(dlat/2)**2 + np.cos(lats[:,None])*np.cos(alats[None,:])*np.sin(dlon/2)**2
-            return (R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))).min(axis=1).round(4)
+            out   = np.empty(len(lats), dtype=np.float32)
+            for s in range(0, len(lats), chunk):
+                e     = min(s + chunk, len(lats))
+                clats = lats[s:e]
+                clons = lons[s:e]
+                dlat  = alats[None, :] - clats[:, None]
+                dlon  = alons[None, :] - clons[:, None]
+                a     = (np.sin(dlat/2)**2 +
+                         np.cos(clats[:,None]) * np.cos(alats[None,:]) * np.sin(dlon/2)**2)
+                out[s:e] = (R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))).min(axis=1)
+            return out.round(4)
 
-        # Merge DB amenities with hardcoded fallback lists
         ad = amenity_dict or {}
-        school_coords  = ad.get('school',    []) or _PRIMARY_SCHOOLS
-        hawker_coords  = ad.get('hawker',    []) or _HAWKER_CENTRES
-        health_coords  = ad.get('health',    [])
-        park_coords    = ad.get('park',      [])
+        school_coords    = ad.get('school',    []) or _PRIMARY_SCHOOLS
+        hawker_coords    = ad.get('hawker',    []) or _HAWKER_CENTRES
+        health_coords    = ad.get('health',    [])
+        park_coords      = ad.get('park',      [])
         community_coords = ad.get('community', [])
 
         df['dist_nearest_mrt_km']       = _min_dist(_MRT_STATIONS)
         df['dist_nearest_school_km']    = _min_dist(school_coords)
         df['dist_nearest_hawker_km']    = _min_dist(hawker_coords)
-        df['dist_nearest_health_km']    = _min_dist(health_coords)   if health_coords    else 1.0
-        df['dist_nearest_park_km']      = _min_dist(park_coords)     if park_coords      else 0.5
+        df['dist_nearest_health_km']    = _min_dist(health_coords)    if health_coords    else 1.0
+        df['dist_nearest_park_km']      = _min_dist(park_coords)      if park_coords      else 0.5
         df['dist_nearest_community_km'] = _min_dist(community_coords) if community_coords else 1.0
+        del school_coords, hawker_coords, health_coords, park_coords, community_coords
+        gc.collect()
     else:
         df['dist_nearest_mrt_km']       = 0.5
         df['dist_nearest_school_km']    = 0.5
@@ -760,12 +770,12 @@ def train(from_db=False):
             objective='reg:squarederror', tree_method='hist', random_state=42,
         ),
         'lgbm': LGBMRegressor(
-            n_estimators=1200, learning_rate=0.02, num_leaves=127,
+            n_estimators=800, learning_rate=0.02, num_leaves=127,
             min_child_samples=20, subsample=0.8, colsample_bytree=0.8,
             random_state=123, verbose=-1,
         ),
         'cat': CatBoostRegressor(
-            iterations=1000, learning_rate=0.025,
+            iterations=700, learning_rate=0.03,
             grow_policy='Lossguide', max_leaves=64, min_data_in_leaf=20,
             loss_function='RMSE', random_seed=456, verbose=0,
             cat_features=CATEGORICAL_COLS,
@@ -785,7 +795,7 @@ def train(from_db=False):
             fold_preds = np.zeros(len(X_train))
             for tr_idx, val_idx in kf.split(Xtr):
                 fold_pipe = Pipeline([('model', CatBoostRegressor(
-                    iterations=1000, learning_rate=0.025,
+                    iterations=700, learning_rate=0.03,
                     grow_policy='Lossguide', max_leaves=64, min_data_in_leaf=20,
                     loss_function='RMSE', random_seed=456, verbose=0,
                     cat_features=CATEGORICAL_COLS,

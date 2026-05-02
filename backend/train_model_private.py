@@ -554,16 +554,23 @@ def engineer_features(df: pd.DataFrame, policy_df=None, sora_df=None, amenity_di
     lats = np.radians(np.array([c[0] for c in dist_df]))
     lons = np.radians(np.array([c[1] for c in dist_df]))
 
-    def _vmin_dist(coords):
+    def _vmin_dist(coords, chunk=20_000):
         if not coords:
             return np.full(len(lats), 1.0)
-        arr   = np.array(coords)
+        arr   = np.array(coords, dtype=np.float32)
         alats = np.radians(arr[:, 0])
         alons = np.radians(arr[:, 1])
-        dlat  = alats[None, :] - lats[:, None]
-        dlon  = alons[None, :] - lons[:, None]
-        a     = np.sin(dlat/2)**2 + np.cos(lats[:,None])*np.cos(alats[None,:])*np.sin(dlon/2)**2
-        return (6371.0 * 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))).min(axis=1).round(4)
+        out   = np.empty(len(lats), dtype=np.float32)
+        for s in range(0, len(lats), chunk):
+            e     = min(s + chunk, len(lats))
+            clats = lats[s:e]
+            clons = lons[s:e]
+            dlat  = alats[None, :] - clats[:, None]
+            dlon  = alons[None, :] - clons[:, None]
+            a     = (np.sin(dlat/2)**2 +
+                     np.cos(clats[:,None]) * np.cos(alats[None,:]) * np.sin(dlon/2)**2)
+            out[s:e] = (6371.0 * 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))).min(axis=1)
+        return out.round(4)
 
     df['dist_nearest_mrt_km']    = _vmin_dist(_MRT_STATIONS)
     df['dist_nearest_school_km'] = _vmin_dist(school_coords)
@@ -691,12 +698,12 @@ def train(df_raw: pd.DataFrame):
             random_state=42, objective='reg:squarederror', verbosity=0,
         ),
         'lgbm_private': LGBMRegressor(
-            n_estimators=1200, learning_rate=0.02, num_leaves=127,
+            n_estimators=800, learning_rate=0.02, num_leaves=127,
             min_child_samples=20,
             subsample=0.8, colsample_bytree=0.8, random_state=123, verbose=-1,
         ),
         'cat_private':  CatBoostRegressor(
-            iterations=1000, learning_rate=0.025,
+            iterations=700, learning_rate=0.03,
             grow_policy='Lossguide', max_leaves=64,
             min_data_in_leaf=20,
             loss_function='RMSE', random_seed=456, verbose=0,
@@ -717,7 +724,7 @@ def train(df_raw: pd.DataFrame):
             fold_preds = np.zeros(len(X_train))
             for train_idx, val_idx in kf.split(Xtr):
                 fold_pipe = _build_catboost_pipeline(CatBoostRegressor(
-                    iterations=1000, learning_rate=0.025,
+                    iterations=700, learning_rate=0.03,
                     grow_policy='Lossguide', max_leaves=64,
                     min_data_in_leaf=20,
                     loss_function='RMSE', random_seed=456, verbose=0,
