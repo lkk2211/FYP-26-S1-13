@@ -71,8 +71,11 @@ NUMERICAL_COLS_FULL = [
     'sora',
     # Location (excluded when geocoding unavailable)
     'lat', 'lon', 'dist_nearest_mrt_km',
-    'dist_nearest_school_km',          # distance to nearest primary school
-    'dist_nearest_hawker_km',          # distance to nearest hawker centre
+    'dist_nearest_school_km',     # nearest school (all types)
+    'dist_nearest_hawker_km',     # nearest hawker / food court
+    'dist_nearest_health_km',     # nearest hospital / clinic
+    'dist_nearest_park_km',       # nearest park / green space
+    'dist_nearest_community_km',  # nearest CC / library
     # PSF hierarchy — all shift(1) to prevent data leakage
     'block_rolling_psf_24m',            # 24m block×flat_type median (strongest feature)
     'block_median_psf_alltime',         # all-time block anchor
@@ -98,6 +101,7 @@ NUMERICAL_COLS_MIN = [
     'town_rolling_psf_12m', 'market_rolling_psf_12m',
     'storey_psf_interaction', 'lease_psf_interaction',
     'dist_nearest_school_km', 'dist_nearest_hawker_km',
+    'dist_nearest_health_km', 'dist_nearest_park_km', 'dist_nearest_community_km',
 ]
 
 # ─── Bala's Curve (SISV standard — 11-point table) ───────────────────────────
@@ -350,6 +354,53 @@ def load_geocoded_from_db():
         print(f'  geocoded_addresses error: {e}')
         return None
 
+
+def load_amenities_from_db():
+    """Load all amenity coordinates grouped by type from the amenities table.
+    Also mines the amenity_cache table for additional points not yet in amenities.
+    Returns dict: {amenity_type: [(lat, lon), ...]}
+    """
+    import json as _json
+    result = {}
+    try:
+        # Primary source: amenities table
+        rows = _query("""
+            SELECT amenity_type, latitude, longitude
+            FROM amenities
+            WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+        """)
+        for r in rows:
+            t = str(r['amenity_type']).strip().lower()
+            result.setdefault(t, []).append((float(r['latitude']), float(r['longitude'])))
+
+        # Secondary source: mine amenity_cache JSON blobs for any types not yet in amenities
+        cache_rows = _query("SELECT data FROM amenity_cache WHERE data IS NOT NULL")
+        for cr in cache_rows:
+            try:
+                blob = _json.loads(cr['data'])
+                for atype, items in blob.items():
+                    if not isinstance(items, list):
+                        continue
+                    key = atype.strip().lower()
+                    for item in items:
+                        lat = item.get('lat')
+                        lng = item.get('lng')
+                        if lat and lng:
+                            result.setdefault(key, []).append((float(lat), float(lng)))
+            except Exception:
+                continue
+
+        # Deduplicate within each type (round to 4dp ≈ 11m)
+        for t in result:
+            result[t] = list({(round(la, 4), round(lo, 4)) for la, lo in result[t]})
+
+        counts = {t: len(v) for t, v in result.items()}
+        print(f'  Amenities loaded: { {t: n for t, n in sorted(counts.items())} }')
+        return result
+    except Exception as e:
+        print(f'  amenities load error: {e}')
+        return {}
+
 # ─── Feature engineering ───────────────────────────────────────────────────────
 
 def _storey_mid(s):
@@ -369,7 +420,7 @@ def _remaining_lease_years(rl):
         years = 65.0
     return years + (float(m.group(1)) if m else 0.0) / 12
 
-def engineer_features(df, policy_df, sora_df, geo_df):
+def engineer_features(df, policy_df, sora_df, geo_df, amenity_dict=None):
     df = df.copy()
 
     # ── Basic parsing ────────────────────────────────────────────────────────
@@ -535,12 +586,14 @@ def engineer_features(df, policy_df, sora_df, geo_df):
 
     # ── MRT distances (vectorised haversine) ─────────────────────────────────
     if has_geo:
-        print('  Computing MRT / school / hawker distances (vectorised)...')
+        print('  Computing amenity distances (vectorised)...')
         R    = 6371.0
         lats = np.radians(df['lat'].values)
         lons = np.radians(df['lon'].values)
 
         def _min_dist(coords):
+            if not coords:
+                return np.full(len(lats), 0.5)
             arr   = np.array(coords)
             alats = np.radians(arr[:, 0])
             alons = np.radians(arr[:, 1])
@@ -549,13 +602,27 @@ def engineer_features(df, policy_df, sora_df, geo_df):
             a     = np.sin(dlat/2)**2 + np.cos(lats[:,None])*np.cos(alats[None,:])*np.sin(dlon/2)**2
             return (R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))).min(axis=1).round(4)
 
-        df['dist_nearest_mrt_km']    = _min_dist(_MRT_STATIONS)
-        df['dist_nearest_school_km'] = _min_dist(_PRIMARY_SCHOOLS)
-        df['dist_nearest_hawker_km'] = _min_dist(_HAWKER_CENTRES)
+        # Merge DB amenities with hardcoded fallback lists
+        ad = amenity_dict or {}
+        school_coords  = ad.get('school',    []) or _PRIMARY_SCHOOLS
+        hawker_coords  = ad.get('hawker',    []) or _HAWKER_CENTRES
+        health_coords  = ad.get('health',    [])
+        park_coords    = ad.get('park',      [])
+        community_coords = ad.get('community', [])
+
+        df['dist_nearest_mrt_km']       = _min_dist(_MRT_STATIONS)
+        df['dist_nearest_school_km']    = _min_dist(school_coords)
+        df['dist_nearest_hawker_km']    = _min_dist(hawker_coords)
+        df['dist_nearest_health_km']    = _min_dist(health_coords)   if health_coords    else 1.0
+        df['dist_nearest_park_km']      = _min_dist(park_coords)     if park_coords      else 0.5
+        df['dist_nearest_community_km'] = _min_dist(community_coords) if community_coords else 1.0
     else:
-        df['dist_nearest_mrt_km']    = 0.5
-        df['dist_nearest_school_km'] = 0.5
-        df['dist_nearest_hawker_km'] = 0.3
+        df['dist_nearest_mrt_km']       = 0.5
+        df['dist_nearest_school_km']    = 0.5
+        df['dist_nearest_hawker_km']    = 0.3
+        df['dist_nearest_health_km']    = 1.0
+        df['dist_nearest_park_km']      = 0.5
+        df['dist_nearest_community_km'] = 1.0
 
     # ── Interactions ──────────────────────────────────────────────────────────
     df['storey_psf_interaction'] = df['storey_pct'] * df['block_rolling_psf_24m']
@@ -589,21 +656,23 @@ def train(from_db=False):
     print(f'Raw records: {len(df):,}')
 
     # 2. Load supplementary data
-    print('Loading policy, SORA, and geocoding data...')
-    policy_df = load_policy_from_db()
-    sora_df   = load_sora_from_db()
-    geo_df    = load_geocoded_from_db()
+    print('Loading policy, SORA, geocoding, and amenity data...')
+    policy_df    = load_policy_from_db()
+    sora_df      = load_sora_from_db()
+    geo_df       = load_geocoded_from_db()
+    amenity_dict = load_amenities_from_db()
     print(f'  Policy rows: {len(policy_df) if policy_df is not None else 0}')
     print(f'  Geo rows:    {len(geo_df)    if geo_df    is not None else 0}')
 
     # 3. Feature engineering
     print('Engineering features...')
-    df_feat, has_geo = engineer_features(df, policy_df, sora_df, geo_df)
+    df_feat, has_geo = engineer_features(df, policy_df, sora_df, geo_df, amenity_dict)
     df_feat = df_feat[df_feat['year'] >= MIN_YEAR].copy()
 
     has_policy = policy_df is not None and len(policy_df) > 0
     has_sora   = sora_df   is not None and len(sora_df)   > 0
-    _geo_only  = {'lat', 'lon', 'dist_nearest_school_km', 'dist_nearest_hawker_km'}
+    _geo_only  = {'lat', 'lon', 'dist_nearest_school_km', 'dist_nearest_hawker_km',
+                  'dist_nearest_health_km', 'dist_nearest_park_km', 'dist_nearest_community_km'}
     _policy_cols = {'direction', 'severity', 'policy_impact', 'months_since_policy_change'}
     actual_num = [
         c for c in NUMERICAL_COLS_FULL

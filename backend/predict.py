@@ -157,6 +157,69 @@ def _dist_nearest(lat, lon, coords):
 def _dist_nearest_mrt(lat, lon):
     return _dist_nearest(lat, lon, _MRT_STATIONS)
 
+
+# Cached at module load — amenities table is static during a server lifetime
+_amenity_coords_cache: dict = {}
+
+def _load_amenity_coords():
+    """Load all amenity coordinates from DB, grouped by type. Cached after first call."""
+    global _amenity_coords_cache
+    if _amenity_coords_cache:
+        return _amenity_coords_cache
+    import json as _json
+    result = {}
+    try:
+        DATABASE_URL = os.environ.get('DATABASE_URL', '')
+        if DATABASE_URL:
+            import psycopg2, psycopg2.extras
+            _c = psycopg2.connect(DATABASE_URL)
+            _cur = _c.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            # Primary source: amenities table
+            _cur.execute("SELECT amenity_type, latitude, longitude FROM amenities WHERE latitude IS NOT NULL AND longitude IS NOT NULL")
+            for r in _cur.fetchall():
+                t = str(r['amenity_type']).strip().lower()
+                result.setdefault(t, []).append((float(r['latitude']), float(r['longitude'])))
+            # Secondary source: amenity_cache blobs
+            _cur.execute("SELECT data FROM amenity_cache WHERE data IS NOT NULL LIMIT 5000")
+            for row in _cur.fetchall():
+                try:
+                    blob = _json.loads(row['data'])
+                    for atype, items in blob.items():
+                        if not isinstance(items, list):
+                            continue
+                        key = atype.strip().lower()
+                        for item in items:
+                            la, lo = item.get('lat'), item.get('lng')
+                            if la and lo:
+                                result.setdefault(key, []).append((float(la), float(lo)))
+                except Exception:
+                    continue
+            _c.close()
+            # Deduplicate
+            for t in result:
+                result[t] = list({(round(la, 4), round(lo, 4)) for la, lo in result[t]})
+    except Exception as e:
+        print(f'[predict] amenity load error: {e}')
+    _amenity_coords_cache = result
+    return result
+
+
+def _amenity_distances(lat, lon):
+    """Return (school, hawker, health, park, community) distances in km."""
+    ad = _load_amenity_coords()
+    school    = ad.get('school',    []) or _PRIMARY_SCHOOLS
+    hawker    = ad.get('hawker',    []) or _HAWKER_CENTRES
+    health    = ad.get('health',    [])
+    park      = ad.get('park',      [])
+    community = ad.get('community', [])
+    return (
+        _dist_nearest(lat, lon, school),
+        _dist_nearest(lat, lon, hawker),
+        _dist_nearest(lat, lon, health)    if health    else 1.0,
+        _dist_nearest(lat, lon, park)      if park      else 0.5,
+        _dist_nearest(lat, lon, community) if community else 1.0,
+    )
+
 # ─── Rule-based fallback (used when ML models are not available) ──────────────
 
 POSTAL_CONFIG = {
@@ -677,8 +740,8 @@ def _predict_ml(features):
 
     # 2. Distance to nearest MRT (km)
     dist_mrt    = _dist_nearest_mrt(eff_lat, eff_lon)
-    dist_school = _dist_nearest(eff_lat, eff_lon, _PRIMARY_SCHOOLS)
-    dist_hawker = _dist_nearest(eff_lat, eff_lon, _HAWKER_CENTRES)
+    dist_school, dist_hawker, dist_health, dist_park, dist_community = \
+        _amenity_distances(eff_lat, eff_lon)
 
     # 3. Storey % of building height — use max_floor from request if provided
     max_floor_hint = features.get('max_floor')
@@ -962,6 +1025,9 @@ def _predict_ml(features):
         'dist_nearest_mrt_km':       dist_mrt,
         'dist_nearest_school_km':    dist_school,
         'dist_nearest_hawker_km':    dist_hawker,
+        'dist_nearest_health_km':    dist_health,
+        'dist_nearest_park_km':      dist_park,
+        'dist_nearest_community_km': dist_community,
         'lease_commence_date':               lease_commence_date,
         'storey_psf_interaction':            storey_pct * block_rolling_psf_24m,
         'lease_psf_interaction':             remaining_lease_years * block_rolling_psf_24m,
