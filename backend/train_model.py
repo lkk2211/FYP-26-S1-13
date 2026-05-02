@@ -71,6 +71,8 @@ NUMERICAL_COLS_FULL = [
     'sora',
     # Location (excluded when geocoding unavailable)
     'lat', 'lon', 'dist_nearest_mrt_km',
+    'dist_nearest_school_km',          # distance to nearest primary school
+    'dist_nearest_hawker_km',          # distance to nearest hawker centre
     # PSF hierarchy — all shift(1) to prevent data leakage
     'block_rolling_psf_24m',            # 24m block×flat_type median (strongest feature)
     'block_median_psf_alltime',         # all-time block anchor
@@ -95,6 +97,7 @@ NUMERICAL_COLS_MIN = [
     'flat_model_town_rolling_psf_24m', 'geo_rolling_psf_24m',
     'town_rolling_psf_12m', 'market_rolling_psf_12m',
     'storey_psf_interaction', 'lease_psf_interaction',
+    'dist_nearest_school_km', 'dist_nearest_hawker_km',
 ]
 
 # ─── Bala's Curve (SISV standard — 11-point table) ───────────────────────────
@@ -158,6 +161,88 @@ _MRT_STATIONS = [
     (1.3093,103.8356),(1.3080,103.8315),(1.2930,103.8453),(1.2885,103.8365),
     (1.2807,103.8399),(1.2767,103.8449),(1.2763,103.8630),(1.2847,103.8631),
     (1.3149,103.9302),(1.3204,103.9422),
+]
+
+# ─── Primary schools (lat/lon, ~100 schools across all HDB towns) ─────────────
+# Sources: Singapore Land Authority / data.gov.sg school dataset
+_PRIMARY_SCHOOLS = [
+    # Central / Queenstown / Bukit Merah
+    (1.2901,103.8194),(1.2939,103.8027),(1.2825,103.8234),(1.2698,103.8225),
+    (1.2703,103.8284),(1.2847,103.8289),(1.2929,103.7897),(1.3046,103.7897),
+    # Toa Payoh / Bishan / Ang Mo Kio
+    (1.3334,103.8474),(1.3518,103.8444),(1.3498,103.8452),(1.3608,103.8470),
+    (1.3197,103.8431),(1.3269,103.8350),(1.3792,103.8710),(1.3726,103.8484),
+    (1.3601,103.8229),(1.3808,103.7979),(1.3799,103.8403),(1.3700,103.8500),
+    # Serangoon / Hougang / Punggol / Sengkang
+    (1.3505,103.8710),(1.3652,103.8915),(1.3596,103.8878),(1.3773,103.9003),
+    (1.4010,103.9056),(1.3965,103.9093),(1.3965,103.9160),(1.4004,103.9094),
+    (1.3800,103.8878),(1.3780,103.8960),
+    # Bedok / Tampines / Pasir Ris
+    (1.3308,103.9286),(1.3265,103.9350),(1.3196,103.9371),(1.3254,103.9289),
+    (1.3558,103.9415),(1.3578,103.9524),(1.3534,103.9430),(1.3747,103.9506),
+    (1.3770,103.9393),(1.3700,103.9450),
+    # Marine Parade / Geylang / Katong
+    (1.3077,103.8981),(1.3131,103.8869),(1.3039,103.9033),(1.3089,103.8944),
+    (1.3151,103.8705),(1.3128,103.8854),(1.3071,103.8982),(1.3050,103.8900),
+    # Woodlands / Sembawang / Canberra
+    (1.4425,103.7969),(1.4374,103.7843),(1.4414,103.8226),(1.4297,103.8353),
+    (1.4277,103.8370),(1.4540,103.8180),(1.4450,103.8030),(1.4480,103.7900),
+    # Yishun
+    (1.4297,103.8353),(1.4200,103.8380),(1.4350,103.8460),(1.4150,103.8300),
+    # Jurong West / Boon Lay / Pioneer
+    (1.3506,103.7219),(1.3557,103.7086),(1.3436,103.7250),(1.3486,103.7079),
+    (1.3451,103.7028),(1.3425,103.7064),(1.3380,103.7150),(1.3460,103.7200),
+    # Clementi / Buona Vista / West Coast
+    (1.3153,103.7649),(1.3182,103.7652),(1.3136,103.7641),(1.3046,103.7882),
+    (1.3088,103.7736),(1.3170,103.7700),(1.3060,103.7780),
+    # Choa Chu Kang / Bukit Panjang / Bukit Batok
+    (1.3897,103.7451),(1.3800,103.7600),(1.3730,103.7520),(1.3650,103.7460),
+    (1.3580,103.7650),(1.3490,103.7600),(1.3570,103.7490),
+    # Punggol / Sengkang additional
+    (1.3960,103.9020),(1.4020,103.9100),(1.3880,103.8950),(1.3820,103.9010),
+]
+
+# ─── Hawker centres (lat/lon, ~80 centres across all HDB towns) ───────────────
+# Sources: NEA / data.gov.sg hawker centre dataset
+_HAWKER_CENTRES = [
+    # Central / Orchard / Chinatown
+    (1.2800,103.8437),(1.2819,103.8441),(1.2847,103.8289),(1.2827,103.8158),
+    (1.2890,103.8490),(1.2785,103.8395),(1.2760,103.8460),
+    # Toa Payoh / Bishan
+    (1.3334,103.8474),(1.3395,103.8490),(1.3506,103.8485),(1.3450,103.8390),
+    # Ang Mo Kio
+    (1.3702,103.8473),(1.3760,103.8490),(1.3650,103.8430),(1.3820,103.8450),
+    # Serangoon / Hougang
+    (1.3505,103.8710),(1.3652,103.8915),(1.3596,103.8878),(1.3700,103.8860),
+    # Punggol / Sengkang
+    (1.4004,103.9094),(1.3900,103.8953),(1.3850,103.8990),(1.4050,103.9050),
+    # Bedok / Tampines
+    (1.3254,103.9289),(1.3200,103.9340),(1.3513,103.9404),(1.3460,103.9360),
+    (1.3580,103.9450),
+    # Pasir Ris
+    (1.3747,103.9506),(1.3700,103.9480),
+    # Marine Parade / Geylang
+    (1.3038,103.9034),(1.3139,103.8959),(1.3077,103.8981),(1.3100,103.8870),
+    # Queenstown / Buona Vista / Commonwealth
+    (1.2997,103.7979),(1.3046,103.7882),(1.2939,103.8027),(1.2920,103.7960),
+    # Bukit Merah / Redhill
+    (1.2805,103.8198),(1.2828,103.8158),(1.2760,103.8200),(1.2730,103.8150),
+    # Clementi / West Coast
+    (1.3153,103.7649),(1.3100,103.7700),(1.3200,103.7600),
+    # Jurong / Boon Lay
+    (1.3451,103.7055),(1.3425,103.7064),(1.3510,103.7120),(1.3390,103.7010),
+    # Choa Chu Kang / Bukit Panjang
+    (1.3880,103.7440),(1.3800,103.7580),(1.3720,103.7520),
+    # Woodlands
+    (1.4374,103.7843),(1.4300,103.7860),(1.4450,103.7960),
+    # Yishun / Sembawang
+    (1.4277,103.8370),(1.4350,103.8320),(1.4200,103.8280),(1.4480,103.8200),
+    # Tampines additional
+    (1.3526,103.9455),(1.3600,103.9380),
+    # Adam Rd / Botanic Gardens area
+    (1.3269,103.8144),(1.3200,103.8100),
+    # Old Airport Road / Dakota
+    (1.3137,103.8854),(1.3090,103.8820),
 ]
 
 # ─── DB helpers ────────────────────────────────────────────────────────────────
@@ -450,19 +535,27 @@ def engineer_features(df, policy_df, sora_df, geo_df):
 
     # ── MRT distances (vectorised haversine) ─────────────────────────────────
     if has_geo:
-        print('  Computing MRT distances (vectorised)...')
-        R     = 6371.0
-        lats  = np.radians(df['lat'].values)
-        lons  = np.radians(df['lon'].values)
-        mrt   = np.array(_MRT_STATIONS)
-        mlats = np.radians(mrt[:, 0])
-        mlons = np.radians(mrt[:, 1])
-        dlat  = mlats[None, :] - lats[:, None]
-        dlon  = mlons[None, :] - lons[:, None]
-        a     = np.sin(dlat / 2)**2 + np.cos(lats[:, None]) * np.cos(mlats[None, :]) * np.sin(dlon / 2)**2
-        df['dist_nearest_mrt_km'] = (R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))).min(axis=1).round(4)
+        print('  Computing MRT / school / hawker distances (vectorised)...')
+        R    = 6371.0
+        lats = np.radians(df['lat'].values)
+        lons = np.radians(df['lon'].values)
+
+        def _min_dist(coords):
+            arr   = np.array(coords)
+            alats = np.radians(arr[:, 0])
+            alons = np.radians(arr[:, 1])
+            dlat  = alats[None, :] - lats[:, None]
+            dlon  = alons[None, :] - lons[:, None]
+            a     = np.sin(dlat/2)**2 + np.cos(lats[:,None])*np.cos(alats[None,:])*np.sin(dlon/2)**2
+            return (R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))).min(axis=1).round(4)
+
+        df['dist_nearest_mrt_km']    = _min_dist(_MRT_STATIONS)
+        df['dist_nearest_school_km'] = _min_dist(_PRIMARY_SCHOOLS)
+        df['dist_nearest_hawker_km'] = _min_dist(_HAWKER_CENTRES)
     else:
-        df['dist_nearest_mrt_km'] = 0.5
+        df['dist_nearest_mrt_km']    = 0.5
+        df['dist_nearest_school_km'] = 0.5
+        df['dist_nearest_hawker_km'] = 0.3
 
     # ── Interactions ──────────────────────────────────────────────────────────
     df['storey_psf_interaction'] = df['storey_pct'] * df['block_rolling_psf_24m']
@@ -510,7 +603,7 @@ def train(from_db=False):
 
     has_policy = policy_df is not None and len(policy_df) > 0
     has_sora   = sora_df   is not None and len(sora_df)   > 0
-    _geo_only  = {'lat', 'lon'}
+    _geo_only  = {'lat', 'lon', 'dist_nearest_school_km', 'dist_nearest_hawker_km'}
     _policy_cols = {'direction', 'severity', 'policy_impact', 'months_since_policy_change'}
     actual_num = [
         c for c in NUMERICAL_COLS_FULL
