@@ -3925,7 +3925,6 @@ def populate_amenities():
     """Bulk-populate the amenities table from OpenStreetMap via Overpass API.
     Covers the entire Singapore bounding box in one request — much faster than
     the per-postal-code approach used at runtime."""
-    _require_admin()
     import threading, json as _json, urllib.request as _ur, time as _time
 
     SG_BBOX = '1.1500,103.5900,1.5000,104.1000'
