@@ -43,6 +43,40 @@ MODELS_DIR   = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models'
 URA_BASE     = 'https://eservice.ura.gov.sg/uraDataService'
 ACCESS_KEY   = os.environ.get('URA_ACCESS_KEY', '')
 DATABASE_URL = os.environ.get('DATABASE_URL', '')
+
+# Approximate centroid (lat, lon) for each Singapore postal district.
+# Used to compute amenity distances for private properties — the model has no
+# per-project geocoding, so district centroids give the best available spatial anchor.
+_DISTRICT_CENTROIDS = {
+    'D01': (1.2800, 103.8500),  # Boat Quay / Raffles Place / Marina
+    'D02': (1.2780, 103.8440),  # Chinatown / Tanjong Pagar
+    'D03': (1.2760, 103.8150),  # Alexandra / Queenstown
+    'D04': (1.2650, 103.8200),  # Harbourfront / Telok Blangah
+    'D05': (1.3050, 103.7850),  # Clementi / West Coast
+    'D06': (1.2900, 103.8450),  # City Hall / Bugis
+    'D07': (1.3020, 103.8560),  # Beach Road / Lavender
+    'D08': (1.3090, 103.8620),  # Farrer Park / Little India
+    'D09': (1.2990, 103.8330),  # Orchard / River Valley
+    'D10': (1.3100, 103.8090),  # Buona Vista / Holland Village / Farrer
+    'D11': (1.3260, 103.8170),  # Newton / Novena / Watten
+    'D12': (1.3200, 103.8450),  # Toa Payoh / Balestier
+    'D13': (1.3330, 103.8810),  # Potong Pasir / Macpherson
+    'D14': (1.3140, 103.8880),  # Geylang / Eunos
+    'D15': (1.3050, 103.9060),  # Katong / Joo Chiat / Marine Parade
+    'D16': (1.3230, 103.9330),  # Bedok / Upper East Coast
+    'D17': (1.3610, 103.9400),  # Loyang / Changi
+    'D18': (1.3560, 103.9540),  # Tampines / Pasir Ris
+    'D19': (1.3750, 103.8800),  # Serangoon / Hougang / Punggol
+    'D20': (1.3470, 103.8420),  # Ang Mo Kio / Bishan
+    'D21': (1.3330, 103.7680),  # Clementi Park / Upper Bukit Timah
+    'D22': (1.3490, 103.7100),  # Jurong
+    'D23': (1.3800, 103.7540),  # Hillview / Bukit Batok / Choa Chu Kang
+    'D24': (1.4050, 103.7750),  # Lim Chu Kang / Tengah
+    'D25': (1.4360, 103.8110),  # Woodlands
+    'D26': (1.4040, 103.8170),  # Upper Thomson / Mandai
+    'D27': (1.4390, 103.8290),  # Yishun / Sembawang
+    'D28': (1.3850, 103.8860),  # Sengkang / Punggol
+}
 MIN_YEAR     = 2018   # only use transactions from this year onwards
 
 TEMP_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_progress_private.csv')
@@ -67,6 +101,11 @@ NUMERICAL_COLS   = [
     'district_median_psf_alltime',   # all-time district×property_type median (stable anchor)
     'storey_psf_interaction',        # floor_level_pct × project_rolling_psf_6m
     'sin_quarter', 'cos_quarter',    # cyclic quarter encoding (seasonality)
+    'dist_nearest_mrt_km',           # MRT proximity (from district centroid)
+    'dist_nearest_school_km',        # school proximity — Phase 2A/2B/2C premium
+    'dist_nearest_hawker_km',        # hawker centre proximity
+    'dist_nearest_health_km',        # hospital / clinic proximity
+    'dist_nearest_park_km',          # park / green space proximity
 ]
 ALL_FEATURES = CATEGORICAL_COLS + NUMERICAL_COLS
 
@@ -160,6 +199,54 @@ def _query(sql):
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
     return rows
+
+
+def _haversine_min(lat, lon, coords):
+    """Vectorised minimum haversine distance in km from (lat,lon) to any point in coords."""
+    if not coords:
+        return 1.0
+    import math as _m
+    R = 6371.0
+    lat_r = _m.radians(lat)
+    min_d = float('inf')
+    for clat, clon in coords:
+        dlat = _m.radians(clat - lat)
+        dlon = _m.radians(clon - lon)
+        a = _m.sin(dlat/2)**2 + _m.cos(lat_r)*_m.cos(_m.radians(clat))*_m.sin(dlon/2)**2
+        d = R * 2 * _m.atan2(_m.sqrt(a), _m.sqrt(1-a))
+        if d < min_d:
+            min_d = d
+    return round(min_d, 4)
+
+
+def load_amenities_from_db():
+    """Load amenity coordinates grouped by type. Same as HDB model."""
+    import json as _json
+    result = {}
+    try:
+        rows = _query("SELECT amenity_type, latitude, longitude FROM amenities WHERE latitude IS NOT NULL AND longitude IS NOT NULL")
+        for r in rows:
+            t = str(r['amenity_type']).strip().lower()
+            result.setdefault(t, []).append((float(r['latitude']), float(r['longitude'])))
+        cache_rows = _query("SELECT data FROM amenity_cache WHERE data IS NOT NULL")
+        for cr in cache_rows:
+            try:
+                blob = _json.loads(cr['data'])
+                for atype, items in blob.items():
+                    key = atype.strip().lower()
+                    for item in items:
+                        la, lo = item.get('lat'), item.get('lng')
+                        if la and lo:
+                            result.setdefault(key, []).append((float(la), float(lo)))
+            except Exception:
+                continue
+        for t in result:
+            result[t] = list({(round(la, 4), round(lo, 4)) for la, lo in result[t]})
+        if result:
+            print(f'  Private amenities: { {t: len(v) for t, v in sorted(result.items())} }')
+    except Exception as e:
+        print(f'  amenities load error (non-critical): {e}')
+    return result
 
 
 def load_policy_from_db():
@@ -323,7 +410,7 @@ def load_from_db() -> pd.DataFrame:
 
 # ─── Feature engineering ─────────────────────────────────────────────────────
 
-def engineer_features(df: pd.DataFrame, policy_df=None, sora_df=None) -> pd.DataFrame:
+def engineer_features(df: pd.DataFrame, policy_df=None, sora_df=None, amenity_dict=None) -> pd.DataFrame:
     df = df.copy()
     for col in ['property_type', 'market_segment', 'type_of_sale']:
         df[col] = df[col].astype(str).str.strip().str.upper().str.replace(r'\s+', ' ', regex=True)
@@ -447,6 +534,43 @@ def engineer_features(df: pd.DataFrame, policy_df=None, sora_df=None) -> pd.Data
     df['sin_quarter'] = np.sin(2 * np.pi * df['quarter'] / 4)
     df['cos_quarter'] = np.cos(2 * np.pi * df['quarter'] / 4)
 
+    # ── Amenity distances via district centroid ───────────────────────────────
+    # Private model has no per-project geocoding; district centroids give the
+    # best available spatial anchor. Captures sub-segment differentiation that
+    # postal_district-as-categorical cannot express numerically.
+    ad = amenity_dict or {}
+    from train_model import _MRT_STATIONS, _PRIMARY_SCHOOLS, _HAWKER_CENTRES
+    school_coords  = ad.get('school', [])  or _PRIMARY_SCHOOLS
+    hawker_coords  = ad.get('hawker', [])  or _HAWKER_CENTRES
+    health_coords  = ad.get('health', [])
+    park_coords    = ad.get('park',   [])
+
+    def _dist_col(district):
+        coords = _DISTRICT_CENTROIDS.get(str(district), _DISTRICT_CENTROIDS.get('D15', (1.305, 103.906)))
+        return coords
+
+    # Vectorise using district-level lookup (all rows in same district share centroid)
+    dist_df = df['postal_district'].apply(_dist_col)
+    lats = np.radians(np.array([c[0] for c in dist_df]))
+    lons = np.radians(np.array([c[1] for c in dist_df]))
+
+    def _vmin_dist(coords):
+        if not coords:
+            return np.full(len(lats), 1.0)
+        arr   = np.array(coords)
+        alats = np.radians(arr[:, 0])
+        alons = np.radians(arr[:, 1])
+        dlat  = alats[None, :] - lats[:, None]
+        dlon  = alons[None, :] - lons[:, None]
+        a     = np.sin(dlat/2)**2 + np.cos(lats[:,None])*np.cos(alats[None,:])*np.sin(dlon/2)**2
+        return (6371.0 * 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))).min(axis=1).round(4)
+
+    df['dist_nearest_mrt_km']    = _vmin_dist(_MRT_STATIONS)
+    df['dist_nearest_school_km'] = _vmin_dist(school_coords)
+    df['dist_nearest_hawker_km'] = _vmin_dist(hawker_coords)
+    df['dist_nearest_health_km'] = _vmin_dist(health_coords) if health_coords else 1.0
+    df['dist_nearest_park_km']   = _vmin_dist(park_coords)   if park_coords   else 0.5
+
     required = CATEGORICAL_COLS + ['floor_area_sqft', 'floor_level_num', 'floor_level_pct',
                                     'tenure_remaining_years', 'is_strata', 'year', 'quarter',
                                     'direction', 'severity', 'policy_impact',
@@ -454,6 +578,9 @@ def engineer_features(df: pd.DataFrame, policy_df=None, sora_df=None) -> pd.Data
                                     'project_rolling_psf_6m', 'project_median_psf_alltime',
                                     'district_rolling_psf_24m', 'district_median_psf_alltime',
                                     'storey_psf_interaction', 'sin_quarter', 'cos_quarter',
+                                    'dist_nearest_mrt_km', 'dist_nearest_school_km',
+                                    'dist_nearest_hawker_km', 'dist_nearest_health_km',
+                                    'dist_nearest_park_km',
                                     'transacted_price']
     return df.dropna(subset=[c for c in required if c != 'transacted_price'] + ['transacted_price'])
 
@@ -480,12 +607,13 @@ def _build_catboost_pipeline(model):
 def train(df_raw: pd.DataFrame):
     os.makedirs(MODELS_DIR, exist_ok=True)
 
-    print('Loading policy and SORA data...')
-    policy_df = load_policy_from_db()
-    sora_df   = load_sora_from_db()
+    print('Loading policy, SORA, and amenity data...')
+    policy_df    = load_policy_from_db()
+    sora_df      = load_sora_from_db()
+    amenity_dict = load_amenities_from_db()
 
     print('Engineering features...')
-    df = engineer_features(df_raw, policy_df, sora_df)
+    df = engineer_features(df_raw, policy_df, sora_df, amenity_dict)
 
     # Remove outliers
     df = df[(df['transacted_price'] > 100_000) & (df['floor_area_sqft'] > 100)]

@@ -1473,6 +1473,19 @@ _SECTOR_TO_DISTRICT = {
     '69':'D24','70':'D24','71':'D24','72':'D25','73':'D25',
     '75':'D27','76':'D27','77':'D26','78':'D26','79':'D28','80':'D28',
 }
+_DISTRICT_CENTROIDS = {
+    'D01':(1.2800,103.8500),'D02':(1.2780,103.8440),'D03':(1.2760,103.8150),
+    'D04':(1.2650,103.8200),'D05':(1.3050,103.7850),'D06':(1.2900,103.8450),
+    'D07':(1.3020,103.8560),'D08':(1.3090,103.8620),'D09':(1.2990,103.8330),
+    'D10':(1.3100,103.8090),'D11':(1.3260,103.8170),'D12':(1.3200,103.8450),
+    'D13':(1.3330,103.8810),'D14':(1.3140,103.8880),'D15':(1.3050,103.9060),
+    'D16':(1.3230,103.9330),'D17':(1.3610,103.9400),'D18':(1.3560,103.9540),
+    'D19':(1.3750,103.8800),'D20':(1.3470,103.8420),'D21':(1.3330,103.7680),
+    'D22':(1.3490,103.7100),'D23':(1.3800,103.7540),'D24':(1.4050,103.7750),
+    'D25':(1.4360,103.8110),'D26':(1.4040,103.8170),'D27':(1.4390,103.8290),
+    'D28':(1.3850,103.8860),
+}
+
 _CCR_DISTRICTS = {'D01','D02','D04','D09','D10','D11'}
 _RCR_DISTRICTS = {'D03','D05','D06','D07','D08','D12','D13','D14','D15','D20','D21'}
 
@@ -1511,6 +1524,24 @@ def _get_district_rolling_psf(district: str, property_type: str) -> float:
     except Exception:
         pass
     return default
+
+
+def _private_amenity_distances(district: str) -> dict:
+    """Compute amenity distances for a condo using its district centroid as lat/lon."""
+    centroid = _DISTRICT_CENTROIDS.get(district, (1.305, 103.906))
+    lat, lon  = centroid
+    ad = _load_amenity_coords()
+    school  = ad.get('school', []) or _PRIMARY_SCHOOLS
+    hawker  = ad.get('hawker', []) or _HAWKER_CENTRES
+    health  = ad.get('health', [])
+    park    = ad.get('park',   [])
+    return {
+        'dist_nearest_mrt_km':    _dist_nearest(lat, lon, _MRT_STATIONS),
+        'dist_nearest_school_km': _dist_nearest(lat, lon, school),
+        'dist_nearest_hawker_km': _dist_nearest(lat, lon, hawker),
+        'dist_nearest_health_km': _dist_nearest(lat, lon, health) if health else 1.0,
+        'dist_nearest_park_km':   _dist_nearest(lat, lon, park)   if park   else 0.5,
+    }
 
 
 def _predict_private_ml(features):
@@ -1665,6 +1696,8 @@ def _predict_private_ml(features):
         'storey_psf_interaction':       floor_level_pct * project_rolling_psf,
         'sin_quarter':                  __import__('math').sin(2 * __import__('math').pi * quarter / 4),
         'cos_quarter':                  __import__('math').cos(2 * __import__('math').pi * quarter / 4),
+        # Amenity distances from district centroid
+        **_private_amenity_distances(district),
     }
 
     try:
