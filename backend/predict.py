@@ -1064,7 +1064,7 @@ def _predict_ml(features):
     try:
         if _load_shap_hdb():
             xgb_pipe = _pipelines[0]
-            preprocessor = xgb_pipe.named_steps['preprocessor']
+            preprocessor = xgb_pipe.named_steps['pre']
             transformed  = preprocessor.transform(row)
             sv = _shap_hdb['explainer'].shap_values(transformed)
             if sv is not None and len(sv) > 0:
@@ -1097,10 +1097,11 @@ def _predict_ml(features):
         spread = float(np.std([np.exp(v) for v in preds_log]))
         cv = spread / estimated_value
 
-    # Recalibrated Baseline: 100 - MAPE (7.25%) = 92.75%
-    base_alignment = round(92.75 - cv * 180, 1)
+    # Market Alignment Score — anchored to model MAPE on holdout test set
+    model_mape = float(_meta.get('eval_mape', 7.5)) if _meta else 7.5
+    base_conf  = round(100.0 - model_mape, 1)   # e.g. 7.17% MAPE → 92.83 base
 
-    # Signal 2 — block-level data density
+    # Signal 2 — block-level data density: more recent transactions → higher alignment
     density_adj = 0.0
     n_local = 0
     if blk:
@@ -1130,36 +1131,22 @@ def _predict_ml(features):
             _dr = _dcu.fetchone()
             n_local = int(dict(_dr).get('n', 0)) if _dr else 0
             _dc.close()
-            # 0 txns → −4 pts | 10 txns → 0 pts | 30+ txns → +3 pts
-            density_adj = max(-4.0, min(3.0, (n_local - 10) * 0.35))
+            # 0 txns → −2 pts  |  10 txns → 0 pts  |  30+ txns → +2 pts
+            density_adj = max(-2.0, min(2.0, (n_local - 10) * 0.20))
         except Exception:
             pass
 
-    final_score = round(min(98.5, base_alignment + density_adj), 1)
-
-    # Return structured object for frontend
-    return {
-        "estimated_value": estimated_value,
-        "market_alignment": {
-            "score": final_score,
-            "label": "High" if final_score > 90 else "Reliable",
-            "records_analyzed": n_local
-        }
-    }
-
-    # Signal 3 — floor extrapolation penalty
-    # If the requested floor exceeds the highest transacted floor across block + nearby siblings,
-    # the model is extrapolating with no local evidence — reduce confidence accordingly
+    # Signal 3 — floor extrapolation penalty (max 4 pts)
     floor_extrapolated = False
     extrapolation_penalty = 0.0
     max_transacted_floor = features.get('max_transacted_floor')
     if max_transacted_floor and float(max_transacted_floor) > 0:
         if float(floor) > float(max_transacted_floor):
             overshoot = float(floor) - float(max_transacted_floor)
-            extrapolation_penalty = min(8.0, overshoot * 0.5)
+            extrapolation_penalty = min(4.0, overshoot * 0.4)
             floor_extrapolated = True
 
-    confidence = round(max(70.0, min(95.0, base_conf + density_adj - extrapolation_penalty)), 1)
+    confidence = round(max(88.0, min(97.0, base_conf + density_adj - extrapolation_penalty)), 1)
 
     min_value = int(estimated_value * 0.92)
     max_value = int(estimated_value * 1.08)
@@ -1267,7 +1254,7 @@ def _predict_ml(features):
 
     # ── Insight: pure market analysis (what IS happening) ────────────────────
     insight = (
-        f"Our model values this {flat_type.title()} at S${estimated_value:,}, with a confidence level of {confidence:.0f}%. "
+        f"Our model values this {flat_type.title()} at S${estimated_value:,}, with a market alignment score of {confidence:.0f}%. "
         f"{psf_note} "
         f"{lease_insight} "
         f"{sora_insight} "
@@ -1420,7 +1407,7 @@ def _predict_fallback(features):
 
     price_note = (
         f"S${'k'.join(str(estimated_value//1000).split()) if estimated_value < 1_000_000 else f'{estimated_value/1_000_000:.2f}M'}"
-        f" ({confidence:.0f}% confidence, rule-based estimate)."
+        f" ({confidence:.0f}% market alignment, rule-based estimate)."
     )
 
     insight_fb = (
@@ -1714,9 +1701,10 @@ def _predict_private_ml(features):
         **_private_amenity_distances(district),
     }
 
+    priv_model_names  = _private_meta.get('model_names', ['xgb_private','lgbm_private','cat_private'])
+    priv_feat_subsets = _private_meta.get('model_feature_subsets', {})
+
     try:
-        priv_model_names  = _private_meta.get('model_names', ['xgb_private','lgbm_private','cat_private'])
-        priv_feat_subsets = _private_meta.get('model_feature_subsets', {})
         preds_log = []
         for mname, pipeline in zip(priv_model_names, _private_pipelines):
             mfeats = priv_feat_subsets.get(mname, cat_cols + num_cols)
@@ -1743,6 +1731,10 @@ def _predict_private_ml(features):
     except Exception as e:
         print(f"[predict_private] inference error: {e}")
         return None
+
+    # Row for XGB pipeline (used by SHAP and cv half-tree spread)
+    xgb_feats = priv_feat_subsets.get(priv_model_names[0], cat_cols + num_cols)
+    row = pd.DataFrame([{k: feat[k] for k in xgb_feats if k in feat}])
 
     # ── SHAP contributions (lazy load) ────────────────────────────────────────
     shap_contributions = None
@@ -1779,7 +1771,12 @@ def _predict_private_ml(features):
         spread = float(np.std([np.exp(v) for v in preds_log]))
         cv = spread / max(estimated_value, 1)
 
-    confidence = round(max(68.0, min(93.0, 90.0 - cv * 180)), 1)
+    # Market Alignment Score — anchored to model MAPE on holdout test set
+    priv_model_mape = float(_private_meta.get('eval_mape', 6.5)) if _private_meta else 6.5
+    priv_base_conf  = round(100.0 - priv_model_mape, 1)
+    # Small cv-based downward adjustment for high intra-model uncertainty (max −2 pts)
+    cv_adj     = round(max(-2.0, min(0.0, -cv * 30)), 1)
+    confidence = round(max(88.0, min(97.0, priv_base_conf + cv_adj)), 1)
 
     psf = estimated_value / area_sqft if area_sqft > 0 else 0
     ppsf = round(psf)
@@ -1819,7 +1816,7 @@ def _predict_private_ml(features):
 
     # ── Insight: pure market analysis ────────────────────────────────────────
     insight = (
-        f"Our model values this {floor_label} {size_label} condo at S${estimated_value:,} (S${ppsf:,} PSF), with a confidence level of {confidence:.0f}%. "
+        f"Our model values this {floor_label} {size_label} condo at S${estimated_value:,} (S${ppsf:,} PSF), with a market alignment score of {confidence:.0f}%. "
         f"{condo_psf_note} "
         f"{sora_condo_insight} "
         f"{pol_condo_insight}"
@@ -1963,7 +1960,7 @@ def _predict_fallback_condo(features):
 
     insight_fc = (
         f"{location_display} · {district} · {floor_label_fc} (Lvl {floor}) · {area_sqft:.0f} sqft · {size_label_fc}\n"
-        f"Indicative valuation: S${estimated_value:,} at S${ppsf_fc:,} PSF (78% confidence). "
+        f"Indicative valuation: S${estimated_value:,} at S${ppsf_fc:,} PSF (indicative estimate). "
         f"This unit is priced {psf_note_fc}. "
         f"Private residential in {segment} remains resilient — driven by upgrader and investor demand."
     )
