@@ -158,7 +158,6 @@ def _dist_nearest_mrt(lat, lon):
     return _dist_nearest(lat, lon, _MRT_STATIONS)
 
 
-# Cached at module load — amenities table is static during a server lifetime
 _amenity_coords_cache: dict = {}
 
 def _load_amenity_coords():
@@ -179,7 +178,6 @@ def _load_amenity_coords():
             for r in _cur.fetchall():
                 t = str(r['amenity_type']).strip().lower()
                 result.setdefault(t, []).append((float(r['latitude']), float(r['longitude'])))
-            # Secondary source: amenity_cache blobs
             _cur.execute("SELECT data FROM amenity_cache WHERE data IS NOT NULL LIMIT 5000")
             for row in _cur.fetchall():
                 try:
@@ -195,7 +193,6 @@ def _load_amenity_coords():
                 except Exception:
                     continue
             _c.close()
-            # Deduplicate
             for t in result:
                 result[t] = list({(round(la, 4), round(lo, 4)) for la, lo in result[t]})
     except Exception as e:
@@ -409,9 +406,7 @@ def reset_model_cache():
 
 
 def _load_shap_hdb():
-    """Load SHAP metadata and build TreeExplainer from the already-loaded XGB pipeline.
-    The metadata file contains only plain Python objects (feature names, base_value).
-    The TreeExplainer is reconstructed here to avoid joblib serialisation issues."""
+    """Load SHAP metadata and build TreeExplainer from the already-loaded XGB pipeline."""
     global _shap_hdb
     if _shap_hdb is not None:
         return True
@@ -420,7 +415,6 @@ def _load_shap_hdb():
         if not os.path.exists(meta_path):
             return False
         meta = joblib.load(meta_path)
-        # Reconstruct explainer from the already-loaded XGB pipeline
         import shap as _shap
         xgb_model = _pipelines[0].named_steps['model']
         explainer = _shap.TreeExplainer(xgb_model)
@@ -464,21 +458,13 @@ def _load_shap_private():
 
 
 def _group_shap_values(shap_vals, feature_names, cat_cols):
-    """
-    Aggregate per-OHE-column SHAP values back to original feature groups.
-    E.g. cat__town_HOUGANG + cat__town_BEDOK → 'town'
-    Returns list of {name, value} sorted by abs(value) descending, top 8.
-    """
+    """Aggregate per-OHE-column SHAP values back to original feature groups. Returns top-8 sorted by abs value."""
     grouped = {}
     for val, fname in zip(shap_vals, feature_names):
-        # Strip ColumnTransformer prefixes: 'cat__town_HOUGANG' → 'town'
-        # or 'num__floor_area_sqm' → 'floor_area_sqm'
         if '__' in fname:
             raw = fname.split('__', 1)[1]
         else:
             raw = fname
-        # For OHE columns, raw is 'town_HOUGANG' — strip the value suffix
-        # by matching against known categorical col names
         group = raw
         for cat in cat_cols:
             if raw == cat or raw.startswith(cat + '_'):
@@ -517,8 +503,6 @@ def _load_models():
         xgb  = joblib.load(os.path.join(MODELS_DIR, 'xgb_pipeline.joblib'))
         meta = joblib.load(os.path.join(MODELS_DIR, 'meta.joblib'))
 
-        # Attempt to load additional models only when LOAD_ALL_MODELS=1 is set
-        # (requires ≥2GB RAM; free/starter Render tier is 512MB — XGB alone fits)
         load_all = os.environ.get('LOAD_ALL_MODELS', '0') == '1'
         loaded = {'xgb': xgb}
         if load_all:
@@ -529,12 +513,9 @@ def _load_models():
                 except Exception as ex:
                     print(f"[predict] Skipping {fname}: {ex}")
 
-        # Build pipeline list in training order so stacker coefficients align
         training_order = meta.get('model_names') or ['xgb', 'lgbm', 'cat']
         _pipelines = [loaded[n] for n in training_order if n in loaded]
 
-
-        # Narrow stacker coefficients to only the models that actually loaded
         stacker_coef = meta.get('stacker_coef')
         if stacker_coef and len(stacker_coef) == len(training_order):
             kept_indices = [i for i, n in enumerate(training_order) if n in loaded]
@@ -560,7 +541,6 @@ def _load_private_models():
         xgb  = joblib.load(os.path.join(MODELS_DIR, 'xgb_private_pipeline.joblib'))
         meta = joblib.load(os.path.join(MODELS_DIR, 'meta_private.joblib'))
 
-        # Attempt to load additional models only when LOAD_ALL_MODELS=1 is set
         load_all = os.environ.get('LOAD_ALL_MODELS', '0') == '1'
         loaded = {'xgb': xgb}
         if load_all:
@@ -571,13 +551,10 @@ def _load_private_models():
                 except Exception as ex:
                     print(f"[predict] Skipping {fname}: {ex}")
 
-        # Build pipeline list in training order so stacker coefficients align
-        # Normalise names: private model meta stores 'xgb_private' but loaded dict uses 'xgb'
         raw_order    = meta.get('model_names') or ['xgb', 'lgbm', 'cat']
         training_order = [n.replace('_private', '') for n in raw_order]
         _private_pipelines = [loaded[n] for n in training_order if n in loaded]
 
-        # Narrow stacker coefficients to only the models that actually loaded
         stacker_coef = meta.get('stacker_coef')
         if stacker_coef and len(stacker_coef) == len(training_order):
             kept_indices = [i for i, n in enumerate(training_order) if n in loaded]
@@ -681,13 +658,12 @@ def _geocode_postal(postal):
 
 def _predict_ml(features):
     postal    = str(features.get('postal', '')).strip().zfill(6)
-    area_sqm  = float(features.get('area', 90))   # incoming value is sqm
+    area_sqm  = float(features.get('area', 90))
     bedrooms  = int(features.get('bedrooms', 3))
     floor     = int(features.get('floor', 10))
 
     area_sqft = area_sqm * 10.764
 
-    # Accept flat_type directly (from dropdown) or derive from bedrooms
     flat_type_in = str(features.get('flat_type', '')).strip().upper()
     if flat_type_in and flat_type_in in _FLAT_TYPE_TO_MODEL:
         flat_type = flat_type_in
@@ -695,17 +671,15 @@ def _predict_ml(features):
         flat_type = _BEDROOMS_TO_FLAT_TYPE.get(bedrooms, 'EXECUTIVE' if bedrooms >= 6 else '5 ROOM')
     flat_model = _FLAT_TYPE_TO_MODEL.get(flat_type, 'MODEL A')
 
-    # Geocode → town + lat/lon; fall back to town provided by frontend if geocoding fails
     provided_town = str(features.get('town', '')).strip().upper()
     town, lat, lon = _geocode_postal(postal)
     if not town:
         if provided_town:
-            town = provided_town   # use town from property_lookup (already resolved on the frontend)
+            town = provided_town
             lat, lon = None, None
         else:
-            return None  # fall back to rule-based
+            return None
 
-    # Time features
     now = datetime.now()
     year = now.year
     quarter = (now.month - 1) // 3 + 1
@@ -714,7 +688,6 @@ def _predict_ml(features):
 
     storey_mid = float(floor)
 
-    # Lease/age — use actual property value from frontend if available, else training median
     key = (town, flat_type)
     med = _meta['medians_by_town_type'].get(key, {})
     _actual_lease = features.get('remaining_lease_years')
@@ -722,7 +695,6 @@ def _predict_ml(features):
                              if _actual_lease is not None and float(_actual_lease) > 0
                              else float(med.get('remaining_lease_years', 65.0)))
     flat_age_years        = float(med.get('flat_age_years', 34.0))
-    # Derive lease_commence_date: for a 99-year HDB lease, commence = current_year + remaining - 99
     lease_commence_date   = float(features.get('lease_commence_year') or
                                   round(year + remaining_lease_years - 99))
     lat_med = float(med.get('lat', lat or 1.35))
@@ -730,29 +702,21 @@ def _predict_ml(features):
     eff_lat = lat or lat_med
     eff_lon = lon or lon_med
 
-    # Latest policy + SORA (from meta, refreshed from DB at load time)
     pol = _meta.get('latest_policy', {})
     sora = float(_meta.get('latest_sora', 3.5))
 
-    # ── New accuracy features ─────────────────────────────────────────────────
-    # 1. Bala's non-linear lease fraction
     bala_frac = _bala_fraction(remaining_lease_years)
 
-    # 2. Distance to nearest MRT (km)
     dist_mrt    = _dist_nearest_mrt(eff_lat, eff_lon)
     dist_school, dist_hawker, dist_health, dist_park, dist_community = \
         _amenity_distances(eff_lat, eff_lon)
 
-    # 3. Storey % of building height — use max_floor from request if provided
     max_floor_hint = features.get('max_floor')
     if max_floor_hint and float(max_floor_hint) > 0:
         storey_pct = min(float(floor) / float(max_floor_hint), 1.0)
     else:
-        # Approximate: assume typical HDB = 12 floors, condo = 20
         storey_pct = min(float(floor) / 12.0, 1.0)
 
-    # 4. Block-level rolling PSF — query DB for recent block transactions.
-    # Two signals: 24-month rolling median and all-time median (stable anchor).
     block_rolling_psf_24m    = None
     block_median_psf_alltime = None
     blk = str(features.get('block', '')).strip()
@@ -770,7 +734,6 @@ def _predict_ml(features):
                 _c.row_factory = sqlite3.Row
                 _cur = _c.cursor()
                 ph = '?'
-            # 24-month rolling: last 25 months excluding current
             if DATABASE_URL:
                 _cur.execute(
                     "SELECT AVG(CAST(resale_price AS REAL) / (CAST(floor_area_sqm AS REAL) * 10.764)) "
@@ -794,7 +757,6 @@ def _predict_ml(features):
                 v = dict(row_psf).get('median_psf')
                 if v:
                     block_rolling_psf_24m = float(v)
-            # All-time median
             _cur.execute(
                 f"SELECT AVG(CAST(resale_price AS REAL) / (CAST(floor_area_sqm AS REAL) * 10.764)) "
                 f"AS median_psf FROM resale_flat_prices "
@@ -809,7 +771,6 @@ def _predict_ml(features):
             _c.close()
         except Exception:
             pass
-    # Fall back to town PSF benchmarks when block history is unavailable
     if block_rolling_psf_24m is None or block_rolling_psf_24m <= 0:
         _town_psf_bench = {
             'BISHAN': 750, 'TOA PAYOH': 700, 'QUEENSTOWN': 730, 'BUKIT MERAH': 680,
@@ -822,7 +783,6 @@ def _predict_ml(features):
     if block_median_psf_alltime is None or block_median_psf_alltime <= 0:
         block_median_psf_alltime = block_rolling_psf_24m
 
-    # Street × flat_type 24-month rolling PSF and town × flat_type all-time median
     street_name = str(features.get('street_name', '')).strip().upper()
     street_rolling_psf_24m   = None
     town_flat_type_median_psf = None
@@ -858,7 +818,6 @@ def _predict_ml(features):
                 v = dict(r).get('psf')
                 if v:
                     street_rolling_psf_24m = float(v)
-            # Town × flat_type all-time median
             if DATABASE_URL:
                 _curs.execute(
                     "SELECT AVG(CAST(resale_price AS REAL) / (CAST(floor_area_sqm AS REAL) * 10.764)) AS psf "
@@ -884,7 +843,6 @@ def _predict_ml(features):
     if town_flat_type_median_psf is None or town_flat_type_median_psf <= 0:
         town_flat_type_median_psf = block_rolling_psf_24m
 
-    # Town × flat_type 12-month rolling PSF and market-wide 12-month rolling PSF
     town_rolling_psf_12m   = None
     market_rolling_psf_12m = None
     try:
@@ -923,7 +881,6 @@ def _predict_ml(features):
     if not market_rolling_psf_12m or market_rolling_psf_12m <= 0:
         market_rolling_psf_12m = town_flat_type_median_psf
 
-    # Flat model × town rolling PSF (DBSS, Maisonette, premium premiums)
     flat_model = str(features.get('flat_model', '')).strip().upper()
     flat_model_town_rolling_psf_24m = None
     if flat_model and town:
@@ -964,7 +921,6 @@ def _predict_ml(features):
     if flat_model_town_rolling_psf_24m is None or flat_model_town_rolling_psf_24m <= 0:
         flat_model_town_rolling_psf_24m = town_flat_type_median_psf
 
-    # Geo-grid rolling PSF (~1km × 1km bin × flat_type)
     geo_rolling_psf_24m = None
     if eff_lat and eff_lon:
         try:
@@ -996,13 +952,11 @@ def _predict_ml(features):
     if geo_rolling_psf_24m is None or geo_rolling_psf_24m <= 0:
         geo_rolling_psf_24m = street_rolling_psf_24m
 
-    # Cyclic month encoding
     import math as _math
     _cur_month = datetime.now().month
     sin_month = _math.sin(2 * _math.pi * _cur_month / 12)
     cos_month = _math.cos(2 * _math.pi * _cur_month / 12)
 
-    # Build feature row using exactly the columns the model was trained on
     num_cols = _meta.get('numerical_cols', [])
     feat = {
         'town': town, 'flat_type': flat_type, 'flat_model': flat_model,
@@ -1042,7 +996,6 @@ def _predict_ml(features):
         'sin_month':                         sin_month,
         'cos_month':                         cos_month,
     }
-    # Each model was trained on a different feature subset — use per-model subsets.
     model_names    = _meta.get('model_names', ['xgb', 'lgbm', 'cat'])
     feat_subsets   = _meta.get('model_feature_subsets', {})
     preds_log = []
@@ -1059,7 +1012,6 @@ def _predict_ml(features):
         ensemble_log = float(np.mean(preds_log))
     estimated_value = int(np.exp(ensemble_log))
 
-    # Row for XGB pipeline (used by SHAP)
     xgb_feats = feat_subsets.get(model_names[0], _meta.get('categorical_cols', []) + num_cols)
     row = pd.DataFrame([{k: feat[k] for k in xgb_feats if k in feat}])
 
@@ -1078,8 +1030,6 @@ def _predict_ml(features):
     except Exception as _se:
         print(f"[predict] SHAP HDB inference skipped: {_se}")
 
-# --- MARKET ALIGNMENT: TWO INDEPENDENT SIGNALS ---
-    # Signal 1 — intra-model spread (Tree agreement signal)
     xgb_pipe = _pipelines[0]
     try:
         booster   = xgb_pipe.named_steps['model'].get_booster()
@@ -1100,11 +1050,9 @@ def _predict_ml(features):
         spread = float(np.std([np.exp(v) for v in preds_log]))
         cv = spread / max(estimated_value, 1)
 
-    # Market Alignment Score — anchored to model MAPE on holdout test set
     model_mape = float(_meta.get('eval_mape', 7.5)) if _meta else 7.5
-    base_conf  = round(100.0 - model_mape, 1)   # e.g. 7.17% MAPE → 92.83 base
+    base_conf  = round(100.0 - model_mape, 1)
 
-    # Signal 2 — block-level data density: more recent transactions → higher alignment
     density_adj = 0.0
     n_local = 0
     if blk:
@@ -1134,12 +1082,10 @@ def _predict_ml(features):
             _dr = _dcu.fetchone()
             n_local = int(dict(_dr).get('n', 0)) if _dr else 0
             _dc.close()
-            # 0 txns → −2 pts  |  10 txns → 0 pts  |  30+ txns → +2 pts
             density_adj = max(-2.0, min(2.0, (n_local - 10) * 0.20))
         except Exception:
             pass
 
-    # Signal 3 — floor extrapolation penalty (max 4 pts)
     floor_extrapolated = False
     extrapolation_penalty = 0.0
     max_transacted_floor = features.get('max_transacted_floor')
@@ -1156,7 +1102,6 @@ def _predict_ml(features):
 
     location_display = _TOWN_DISPLAY.get(town, town.title())
 
-    # Factor scores
     floor_score = min(int(40 + floor * 1.2), 98)
     lease_score = min(int(remaining_lease_years * 1.3), 98)
     area_score  = min(int(50 + (area_sqm - 50) * 0.5), 98)
@@ -1202,15 +1147,12 @@ def _predict_ml(features):
 
     ppsf = round(estimated_value / area_sqft) if area_sqft > 0 else 0
 
-    # ── Contextual insights ───────────────────────────────────────────────────
     sora_label  = "elevated" if sora > 3.5 else ("easing" if sora < 2.8 else "moderate")
     pol_dir     = float(pol.get('direction', 0))
     lease_label = "strong" if remaining_lease_years > 75 else ("adequate" if remaining_lease_years > 60 else "declining — factor into CPF and loan planning")
     floor_label = "high-floor" if floor >= 20 else ("mid-floor" if floor >= 10 else "lower-floor")
     area_label  = "spacious" if area_sqm >= 90 else ("standard" if area_sqm >= 65 else "compact")
 
-    # PSF context vs town median (approximated from model output)
-    # Town median PSF rough benchmarks (OCR HDB ~S$490–560/sqft based on 2026 data)
     town_psf_bench = {'BISHAN': 750,'TOA PAYOH': 700,'QUEENSTOWN': 730,'BUKIT MERAH': 680,
                       'KALLANG/WHAMPOA': 670,'MARINE PARADE': 700,'ANG MO KIO': 600,
                       'SERANGOON': 590,'TAMPINES': 545,'BEDOK': 530,'HOUGANG': 520,
@@ -1223,7 +1165,6 @@ def _predict_ml(features):
     else:
         psf_note = f"S${ppsf} PSF is in line with the {location_display} market median."
 
-    # Lease-specific buying advice
     if remaining_lease_years < 30:
         lease_advice = f"Critical: only {int(remaining_lease_years)} yrs remaining — bank financing and CPF usage are severely restricted."
     elif remaining_lease_years < 60:
@@ -1233,7 +1174,6 @@ def _predict_ml(features):
     else:
         lease_advice = f"Lease of {int(remaining_lease_years)} yrs is strong — full CPF and bank financing eligibility for buyers."
 
-    # Lease — plain language
     if remaining_lease_years < 30:
         lease_insight = f"One thing to be aware of: with only {int(remaining_lease_years)} years left on the lease, bank loans and CPF usage will be heavily restricted — this significantly reduces the buyer pool."
     elif remaining_lease_years < 60:
@@ -1255,7 +1195,6 @@ def _predict_ml(features):
          "The policy environment is broadly stable, with no major new measures expected in the near term.")
     )
 
-    # ── Insight: pure market analysis (what IS happening) ────────────────────
     insight = (
         f"Our model values this {flat_type.title()} at S${estimated_value:,}, with a market alignment score of {confidence:.0f}%. "
         f"{psf_note} "
@@ -1264,8 +1203,6 @@ def _predict_ml(features):
         f"{pol_insight}"
     )
 
-    # ── Recommendation: actionable steps only (what TO DO) ───────────────────
-    # Pricing strategy based on PSF position
     if ppsf > town_psf_bench * 1.10:
         price_strategy = f"Since this unit is priced above the {location_display} median, make sure the condition, renovations, and floor level justify the premium — buyers will compare closely."
     elif ppsf < town_psf_bench * 0.90:
@@ -1273,7 +1210,6 @@ def _predict_ml(features):
     else:
         price_strategy = f"The asking price is well-calibrated to the {location_display} market. Focus on presentation and availability to attract offers quickly."
 
-    # Buyer profile based on lease
     if remaining_lease_years < 30:
         buyer_target = f"Target cash-heavy or older buyers — most younger buyers won't qualify for bank loans or full CPF usage with only {int(remaining_lease_years)} years left. Be prepared for a longer selling timeline."
     elif remaining_lease_years < 60:
@@ -1283,7 +1219,6 @@ def _predict_ml(features):
     else:
         buyer_target = f"This is an easy sell on financing — all buyers can use full CPF and apply for a bank loan. Lead with this in your listing to maximise interest."
 
-    # Timing action based on SORA
     timing_action = (
         "With borrowing costs elevated, act on serious offers rather than waiting for a higher bid — buyer purchasing power is constrained right now."
         if sora > 3.5 else
@@ -1298,13 +1233,32 @@ def _predict_ml(features):
         f"Check the latest {location_display} transactions on the HDB Resale Portal to validate your pricing before listing."
     )
 
-    # ── 12-month price forecast ───────────────────────────────────────────────
-    # Base annual appreciation 2%, adjusted for SORA & policy
     annual_rate = 0.021
     if sora > 3.5: annual_rate -= 0.005
     if pol_dir < 0: annual_rate -= 0.004
     if pol_dir > 0: annual_rate += 0.003
     price_forecast = _build_forecast(estimated_value, annual_rate)
+
+    # ── MOP (Minimum Occupation Period) ──────────────────────────────────────────
+    purchase_year = features.get('purchase_year')
+    mop_info = None
+    if purchase_year:
+        try:
+            purchase_year = int(purchase_year)
+            current_year  = datetime.now().year
+            mop_end_year  = purchase_year + 5
+            years_to_mop  = max(0, mop_end_year - current_year)
+            within_mop    = years_to_mop > 0
+            compound      = (1 + annual_rate) ** years_to_mop if within_mop else 1
+            mop_info = {
+                'purchase_year':          purchase_year,
+                'mop_end_year':           mop_end_year,
+                'years_to_mop':           years_to_mop,
+                'within_mop':             within_mop,
+                'projected_value_at_mop': int(estimated_value * compound) if within_mop else None,
+            }
+        except Exception:
+            pass
 
     hdb_mape = float(_meta.get('eval_mape', 7.0)) if _meta else 7.0
     result = {
@@ -1329,6 +1283,8 @@ def _predict_ml(features):
     }
     if shap_contributions:
         result["shap_contributions"] = shap_contributions
+    if mop_info:
+        result["mop"] = mop_info
     return result
 
 
@@ -1340,11 +1296,9 @@ def _predict_fallback(features):
     beds   = int(features.get('bedrooms', 3))
     floor  = int(features.get('floor', 10))
 
-    # Build a better config using the town the frontend already resolved
     provided_town = str(features.get('town', '')).strip().upper()
     config = POSTAL_CONFIG.get(postal)
     if config is None:
-        # Derive district from postal sector, not D15 default
         derived_district = _SECTOR_TO_DISTRICT.get(postal[:2], '')
         if not derived_district and postal[:2].isdigit():
             derived_district = f'D{int(postal[:2]):02d}'
@@ -1358,7 +1312,7 @@ def _predict_fallback(features):
             }
         else:
             config = {**DEFAULT_CONFIG, "district": derived_district or DEFAULT_CONFIG["district"]}
-    area_sqft = area * 10.764   # area is in sqm
+    area_sqft = area * 10.764
     psf = config["base_psf"]
     floor_pct = 0.009 if config["property_type"] == "Condominium" else 0.006
     psf *= (1 + floor_pct * max(floor - 1, 0))
@@ -1392,14 +1346,12 @@ def _predict_fallback(features):
 
     ppsf_fb = round(estimated_value / area_sqft) if area_sqft > 0 else 0
 
-    # ── Dynamic insight from actual computed values ────────────────────────────
     flat_type_fb  = str(features.get('flat_type', '')).strip() or f'{beds}-room'
     area_label_fb = "spacious" if area >= 90 else ("standard" if area >= 65 else "compact")
     floor_label_fb = "high-floor" if floor >= 20 else ("mid-floor" if floor >= 10 else "lower-floor")
     loc = config["location"]
     mkt = config["market_state"]
 
-    # Derive lease context from features or a best estimate
     rem_lease_fb = float(features.get('remaining_lease_years', 0)) or None
     if rem_lease_fb:
         lease_label_fb = ("strong" if rem_lease_fb > 75
@@ -1420,7 +1372,6 @@ def _predict_fallback(features):
         f"Market is {mkt.lower()} — {'strong demand from upgraders and first-time buyers' if mkt in ('Very Active','Active') else 'transaction volume has softened; negotiate carefully'}."
     )
 
-    # Recommendation varies by floor, area, and market state
     if mkt in ('Very Active', 'Active'):
         timing = "Act decisively — well-priced units in this area move quickly."
     else:
@@ -1572,9 +1523,6 @@ def _predict_private_ml(features):
     pol  = _private_meta.get('latest_policy', {})
     sora = float(_private_meta.get('latest_sora', 3.5))
 
-    # ── Project rolling PSF and all-time median PSF ───────────────────────────
-    # project_rolling_psf_6m: 8-quarter (24m) rolling mean, min 3 months data
-    # project_median_psf_alltime: all-time median — stable anchor for the project
     project_rolling_psf    = None
     project_alltime_psf    = None
     _seg_benchmark = {'CCR': 2200, 'RCR': 1550, 'OCR': 1150}.get(segment, 1200)
@@ -1585,7 +1533,6 @@ def _predict_private_ml(features):
                 import psycopg2, psycopg2.extras
                 _pc = psycopg2.connect(_DATABASE_URL)
                 _pcur = _pc.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-                # 24-month rolling
                 _pcur.execute(
                     "SELECT AVG(unit_price_psf) AS avg_psf, COUNT(DISTINCT LEFT(sale_date,7)) AS n_months "
                     "FROM ura_transactions "
@@ -1600,7 +1547,6 @@ def _predict_private_ml(features):
                     n_months = int(row_d.get('n_months') or 0)
                     if v and n_months >= 3:
                         project_rolling_psf = float(v)
-                # All-time median
                 _pcur.execute(
                     "SELECT AVG(unit_price_psf) AS avg_psf "
                     "FROM ura_transactions "
@@ -1649,8 +1595,7 @@ def _predict_private_ml(features):
     if not project_alltime_psf or project_alltime_psf < 300:
         project_alltime_psf = project_rolling_psf
 
-    # floor_level_pct: normalise floor by max known floor in this project
-    floor_level_pct = 0.5   # default: mid-floor
+    floor_level_pct = 0.5
     if project:
         try:
             _DATABASE_URL = os.environ.get('DATABASE_URL', '')
@@ -1700,7 +1645,6 @@ def _predict_private_ml(features):
         'storey_psf_interaction':       floor_level_pct * project_rolling_psf,
         'sin_quarter':                  __import__('math').sin(2 * __import__('math').pi * quarter / 4),
         'cos_quarter':                  __import__('math').cos(2 * __import__('math').pi * quarter / 4),
-        # Amenity distances from district centroid
         **_private_amenity_distances(district),
     }
 
@@ -1722,7 +1666,6 @@ def _predict_private_ml(features):
             ensemble_log = float(np.mean(preds_log))
         estimated_value = int(np.exp(ensemble_log))
 
-        # ── PSF sanity check — clamp extreme extrapolations ───────────────────
         if area_sqft > 0:
             raw_psf = estimated_value / area_sqft
             psf_min, psf_max = _PSF_BOUNDS.get(segment, (600, 5000))
@@ -1735,7 +1678,6 @@ def _predict_private_ml(features):
         print(f"[predict_private] inference error: {e}")
         return None
 
-    # Row for XGB pipeline (used by SHAP and cv half-tree spread)
     xgb_feats = priv_feat_subsets.get(priv_model_names[0], cat_cols + num_cols)
     row = pd.DataFrame([{k: feat[k] for k in xgb_feats if k in feat}])
 
@@ -1754,7 +1696,6 @@ def _predict_private_ml(features):
     except Exception as _se:
         print(f"[predict] SHAP Private inference skipped: {_se}")
 
-    # Intra-model spread via first/second half of trees (same logic as HDB path)
     xgb_priv = _private_pipelines[0]
     try:
         booster   = xgb_priv.named_steps['model'].get_booster()
@@ -1774,10 +1715,8 @@ def _predict_private_ml(features):
         spread = float(np.std([np.exp(v) for v in preds_log]))
         cv = spread / max(estimated_value, 1)
 
-    # Market Alignment Score — anchored to model MAPE on holdout test set
     priv_model_mape = float(_private_meta.get('eval_mape', 6.5)) if _private_meta else 6.5
     priv_base_conf  = round(100.0 - priv_model_mape, 1)
-    # Small cv-based downward adjustment for high intra-model uncertainty (max −2 pts)
     cv_adj     = round(max(-2.0, min(0.0, -cv * 30)), 1)
     confidence = round(max(88.0, min(97.0, priv_base_conf + cv_adj)), 1)
 
@@ -1796,7 +1735,6 @@ def _predict_private_ml(features):
     floor_label = "high-floor" if floor >= 20 else ("mid-floor" if floor >= 10 else "lower-floor")
     size_label  = "large" if area_sqft >= 1400 else ("standard" if area_sqft >= 900 else "compact")
 
-    # Condo PSF segment benchmarks (2026 approximate)
     seg_psf_bench = {'CCR': 2400, 'RCR': 1700, 'OCR': 1350}.get(segment, 1500)
     if ppsf > seg_psf_bench * 1.10:
         condo_psf_note = f"At S${ppsf:,} PSF, this unit is priced above the {location_display} average — buyers will expect a compelling justification such as a high floor, recent renovation, or rare layout."
@@ -1817,7 +1755,6 @@ def _predict_private_ml(features):
          "The policy environment is neutral — no major new measures are expected to significantly shift demand in the near term.")
     )
 
-    # ── Insight: pure market analysis ────────────────────────────────────────
     insight = (
         f"Our model values this {floor_label} {size_label} condo at S${estimated_value:,} (S${ppsf:,} PSF), with a market alignment score of {confidence:.0f}%. "
         f"{condo_psf_note} "
@@ -1825,7 +1762,6 @@ def _predict_private_ml(features):
         f"{pol_condo_insight}"
     )
 
-    # ── Recommendation: actionable steps only ────────────────────────────────
     priv_mape_now = float(_private_meta.get('eval_mape', 10.0)) if _private_meta else 10.0
     priv_min = int(estimated_value * (1 - priv_mape_now / 100))
     priv_max = int(estimated_value * (1 + priv_mape_now / 100))

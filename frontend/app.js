@@ -162,6 +162,8 @@ function _onPropertyTypeChange() {
     const condoSpecs= document.getElementById('condo-specs');
     if (hdbSpecs)   hdbSpecs.classList.toggle('hidden', !isHdb);
     if (condoSpecs) condoSpecs.classList.toggle('hidden', isHdb);
+    const mopRow = document.getElementById('hdb-mop-row');
+    if (mopRow) mopRow.classList.toggle('hidden', !isHdb);
     _availableAreas = [];   // reset so slider re-snaps
     _loadFlatSpecs();
 }
@@ -537,6 +539,8 @@ async function handlePredict() {
     });
     if (_forecastChart) { _forecastChart.destroy(); _forecastChart = null; }
     if (_shapChart)     { _shapChart.destroy();     _shapChart     = null; }
+    const mopBannerReset = document.getElementById('output-mop-banner');
+    if (mopBannerReset) { mopBannerReset.classList.add('hidden'); mopBannerReset.innerHTML = ''; }
     if (_leaseDecayChart) { _leaseDecayChart.destroy(); _leaseDecayChart = null; }
     
     const postal   = document.getElementById('input-postal').value;
@@ -573,6 +577,8 @@ async function handlePredict() {
         if (_predictRoad)                 body.street_name          = _predictRoad;
         if (_predictProject)              body.project              = _predictProject;
         if (window._maxTransactedFloor)   body.max_transacted_floor = window._maxTransactedFloor;
+        const purchaseYearVal = document.getElementById('input-purchase-year')?.value;
+        if (purchaseYearVal && propType === 'HDB') body.purchase_year = parseInt(purchaseYearVal);
         const response = await fetch('/api/predict', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -593,6 +599,24 @@ async function handlePredict() {
             }
         }
         document.getElementById('output-confidence').innerText = `${data.confidence}%`;
+
+        // MOP banner
+        const mopBanner = document.getElementById('output-mop-banner');
+        if (mopBanner) {
+            const mop = data.mop;
+            if (mop && mop.within_mop) {
+                const projVal = mop.projected_value_at_mop ? `S$${mop.projected_value_at_mop.toLocaleString()}` : '—';
+                mopBanner.className = 'mt-3 flex items-start gap-3 px-4 py-3 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-800';
+                mopBanner.innerHTML = `<span class="text-base shrink-0">🔒</span><div><strong>MOP not yet met.</strong> This flat cannot be listed for resale until <strong>${mop.mop_end_year}</strong> (${mop.years_to_mop} year${mop.years_to_mop > 1 ? 's' : ''} remaining). Projected value at MOP: <strong>${projVal}</strong>. <span class="text-rose-600">Note: PLH and Plus-classified flats carry a 10-year MOP — verify your classification with HDB.</span></div>`;
+                mopBanner.classList.remove('hidden');
+            } else if (mop && !mop.within_mop) {
+                mopBanner.className = 'mt-3 flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs text-emerald-800';
+                mopBanner.innerHTML = `<span class="text-base shrink-0">✅</span><strong>MOP met</strong> — this flat is eligible for resale (purchased ${mop.purchase_year}, MOP cleared ${mop.mop_end_year}).`;
+                mopBanner.classList.remove('hidden');
+            } else {
+                mopBanner.classList.add('hidden');
+            }
+        }
 
         const mape = data.mape || (propType === 'HDB' ? 7.0 : 10.0);
         const priceLo = data.min_value || Math.round(data.estimated_value * (1 - mape / 100) / 1000) * 1000;
