@@ -4961,6 +4961,62 @@ function renderShapChart(contributions) {
             }
         }
     });
+
+    // Plain-English explanation
+    const explEl = document.getElementById('shap-explanation');
+    if (explEl && contributions.length) {
+        const _LABELS = {
+            'floor_area_sqm':              'Floor area (size)',
+            'floor_area':                  'Floor area (size)',
+            'storey_mid':                  'Floor level',
+            'floor_level':                 'Floor level',
+            'remaining_lease_years':       'Remaining lease',
+            'flat_age_years':              'Flat age',
+            'block_rolling_psf_24m':       'Recent block transactions',
+            'market_rolling_psf_12m':      'Overall market trend',
+            'town_rolling_psf_12m':        'Town-level price trend',
+            'town_flat_type_median_psf':   'Typical price in your area',
+            'geo_rolling_psf_24m':         'Street-level price trend',
+            'lat':                         'Location (north–south)',
+            'lon':                         'Location (east–west)',
+            'year':                        'Year of valuation',
+            'sora':                        'Interest rate (SORA)',
+            'town':                        'Town',
+            'flat_type':                   'Flat type',
+            'flat_model':                  'Flat model',
+            'storey_psf_interaction':      'Floor–price interaction',
+            'lease_psf_interaction':       'Lease–price interaction',
+            'dist_nearest_mrt_km':         'Distance to MRT',
+            'dist_nearest_school_km':      'Distance to school',
+            'dist_nearest_hawker_km':      'Distance to hawker centre',
+            'dist_nearest_health_km':      'Distance to clinic/hospital',
+            'dist_nearest_park_km':        'Distance to park',
+            'dist_nearest_community_km':   'Distance to community club',
+        };
+        const top = contributions.slice(0, 5);
+        const upFactors   = top.filter(c => c.value > 0.002);
+        const downFactors = top.filter(c => c.value < -0.002);
+
+        const fmt = c => {
+            const label = _LABELS[c.name] || c.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            const pct   = (Math.abs(c.value) * 100).toFixed(1);
+            return `<strong>${label}</strong> (~${pct}%)`;
+        };
+
+        let html = '';
+        if (upFactors.length) {
+            html += `<span class="text-emerald-600 font-semibold">↑ Pushing price up:</span> ${upFactors.map(fmt).join(', ')}. `;
+        }
+        if (downFactors.length) {
+            html += `<span class="text-red-500 font-semibold">↓ Pushing price down:</span> ${downFactors.map(fmt).join(', ')}. `;
+        }
+        if (!html) {
+            html = 'Multiple factors are contributing roughly equally to this valuation.';
+        } else {
+            html += 'The percentages show each factor\'s estimated impact on the final price.';
+        }
+        explEl.innerHTML = html;
+    }
 }
 
 // ── What-If Sliders ───────────────────────────────────────────────────────────
