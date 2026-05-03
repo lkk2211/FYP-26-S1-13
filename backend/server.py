@@ -3049,8 +3049,11 @@ def floor_comps():
     try:
         conn = get_db(); cur = _cursor(conn)
 
-        # Step 1: exact block match
+        # Step 1: exact block match, fall back to numeric-core LIKE if no data
+        block_core = ''.join(c for c in block if c.isdigit())
         rows = _fetch("AND UPPER(town) = ? AND UPPER(block) = ?", (flat_type, town, block))
+        if not rows and block_core and block_core != block:
+            rows = _fetch("AND UPPER(town) = ? AND UPPER(block) LIKE ?", (flat_type, town, f'{block_core}%'))
         comps = _aggregate(rows, max_blk_diff=0)
 
         source = 'block'
@@ -3225,8 +3228,9 @@ def property_areas():
                 block_num = 0
 
             # Step A: get max floor from the specific block (all flat types)
-            block_max_floor     = None   # highest floor from THIS block
-            max_transacted_floor = None  # highest floor across block + nearby siblings
+            block_max_floor      = None
+            max_transacted_floor = None
+            block_core = ''.join(c for c in block if c.isdigit())  # "443A" → "443"
             if block and town:
                 cur.execute(_q(
                     "SELECT DISTINCT storey_range FROM resale_flat_prices "
@@ -3234,6 +3238,13 @@ def property_areas():
                 ), (block, town))
                 all_ft = [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0])
                           for r in cur.fetchall()]
+                if not all_ft and block_core and block_core != block:
+                    cur.execute(_q(
+                        "SELECT DISTINCT storey_range FROM resale_flat_prices "
+                        "WHERE UPPER(block) LIKE ? AND UPPER(town) = ? AND storey_range LIKE '%% TO %%'"
+                    ), (f'{block_core}%', town))
+                    all_ft = [str(r['storey_range'] if hasattr(r, '__getitem__') else r[0])
+                              for r in cur.fetchall()]
                 if all_ft:
                     block_max_floor = max(_top(s) for s in all_ft)
                     max_transacted_floor = block_max_floor
@@ -3265,13 +3276,15 @@ def property_areas():
                     if not block_max_floor:
                         block_max_floor = sibling_max
 
-            # Step 1: block + town, specific flat type (for the actual storey range options)
+            # Step 1: block + town, specific flat type
             if block and town:
                 storeys = _fetch_storeys("AND UPPER(block) = ? AND UPPER(town) = ?",
                                          (flat_type, block, town))
+                if not storeys and block_core and block_core != block:
+                    storeys = _fetch_storeys("AND UPPER(block) LIKE ? AND UPPER(town) = ?",
+                                             (flat_type, f'{block_core}%', town))
                 if storeys:
                     floor_data_source = 'block'
-                    # Extend ranges to true building height if taller than flat-type transactions
                     if block_max_floor and block_max_floor > _top(storeys[-1]):
                         storeys = _gen_ranges(block_max_floor)
 
