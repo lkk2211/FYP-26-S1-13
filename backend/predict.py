@@ -1059,6 +1059,10 @@ def _predict_ml(features):
         ensemble_log = float(np.mean(preds_log))
     estimated_value = int(np.exp(ensemble_log))
 
+    # Row for XGB pipeline (used by SHAP)
+    xgb_feats = feat_subsets.get(model_names[0], _meta.get('categorical_cols', []) + num_cols)
+    row = pd.DataFrame([{k: feat[k] for k in xgb_feats if k in feat}])
+
     # ── SHAP contributions (lazy load) ────────────────────────────────────────
     shap_contributions = None
     try:
