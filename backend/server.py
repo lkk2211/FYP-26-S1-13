@@ -2983,7 +2983,7 @@ def hdb_flat_specs():
 
 @app.route('/api/floor-comps', methods=['GET'])
 def floor_comps():
-    """Return avg PSF by storey range for a block + numeric-proximity siblings (±5)."""
+    """Return avg PSF by storey range for a block, last 3 years. Falls back to ±5 sibling blocks."""
     block     = request.args.get('block', '').strip().upper()
     town      = request.args.get('town', '').strip().upper()
     flat_type = request.args.get('flat_type', '').strip().upper()
@@ -2996,67 +2996,78 @@ def floor_comps():
     except Exception:
         block_num = 0
 
-    road_kw = road.split()[0] if road else ''
-    try:
-        conn = get_db(); cur = _cursor(conn)
-        # Fetch storey range + avg PSF for all blocks on same street/town, last 3 years
-        if road_kw:
-            cur.execute(_q(
-                "SELECT block, storey_range, "
-                "AVG(resale_price / NULLIF(floor_area_sqm * 10.764, 0)) AS avg_psf, "
-                "COUNT(*) AS cnt "
-                "FROM resale_flat_prices "
-                "WHERE UPPER(town) = ? AND UPPER(flat_type) = ? "
-                "AND UPPER(street_name) LIKE ? "
-                "AND storey_range LIKE '%% TO %%' "
-                "AND resale_price > 0 AND floor_area_sqm > 0 "
-                "GROUP BY block, storey_range ORDER BY storey_range"
-            ), (town, flat_type, f'%{road_kw}%'))
-        else:
-            cur.execute(_q(
-                "SELECT block, storey_range, "
-                "AVG(resale_price / NULLIF(floor_area_sqm * 10.764, 0)) AS avg_psf, "
-                "COUNT(*) AS cnt "
-                "FROM resale_flat_prices "
-                "WHERE UPPER(town) = ? AND UPPER(flat_type) = ? AND UPPER(block) = ? "
-                "AND storey_range LIKE '%% TO %%' "
-                "AND resale_price > 0 AND floor_area_sqm > 0 "
-                "GROUP BY block, storey_range ORDER BY storey_range"
-            ), (town, flat_type, block))
-        rows = cur.fetchall()
-        conn.close()
+    date_filter = (
+        "AND month >= TO_CHAR(CURRENT_DATE - INTERVAL '36 months', 'YYYY-MM')"
+        if USE_POSTGRES else
+        "AND month >= strftime('%Y-%m', date('now', '-36 months'))"
+    )
 
-        # Filter to ±5 numeric proximity
+    def _fetch(extra_where, params):
+        cur.execute(_q(
+            "SELECT block, storey_range, "
+            "AVG(resale_price / NULLIF(floor_area_sqm * 10.764, 0)) AS avg_psf, "
+            "COUNT(*) AS cnt "
+            "FROM resale_flat_prices "
+            f"WHERE UPPER(flat_type) = ? {extra_where} "
+            "AND storey_range LIKE '%% TO %%' "
+            "AND resale_price > 0 AND floor_area_sqm > 0 "
+            f"{date_filter} "
+            "GROUP BY block, storey_range ORDER BY storey_range"
+        ), params)
+        return cur.fetchall()
+
+    def _aggregate(rows, max_blk_diff=0):
         comps_by_range = {}
         for r in rows:
             blk_raw = str(r['block'] if hasattr(r, '__getitem__') else r[0])
-            sr      = str(r['storey_range' if hasattr(r, '__getitem__') else None] or r[1])
-            psf     = float(r['avg_psf' if hasattr(r, '__getitem__') else None] or r[2] or 0)
-            cnt     = int(r['cnt' if hasattr(r, '__getitem__') else None] or r[3] or 0)
+            sr      = str(r[1] if not hasattr(r, '__getitem__') else r['storey_range'])
+            psf     = float(r[2] if not hasattr(r, '__getitem__') else r['avg_psf'] or 0)
+            cnt     = int(r[3]   if not hasattr(r, '__getitem__') else r['cnt']     or 0)
+            if not sr or ' TO ' not in sr or psf <= 0:
+                continue
             try:
                 bn = int(''.join(c for c in blk_raw if c.isdigit()) or '0')
             except Exception:
-                bn = 0
-            if block_num == 0 or abs(bn - block_num) <= 5:
-                if sr not in comps_by_range:
-                    comps_by_range[sr] = {'psf_sum': 0, 'cnt': 0}
-                comps_by_range[sr]['psf_sum'] += psf * cnt
-                comps_by_range[sr]['cnt'] += cnt
-
-        comps = []
+                bn = block_num
+            if block_num > 0 and abs(bn - block_num) > max_blk_diff:
+                continue
+            if sr not in comps_by_range:
+                comps_by_range[sr] = {'psf_sum': 0.0, 'cnt': 0}
+            comps_by_range[sr]['psf_sum'] += psf * cnt
+            comps_by_range[sr]['cnt']     += cnt
+        result = []
         for sr, v in sorted(comps_by_range.items(),
                              key=lambda x: int(x[0].split(' TO ')[0].strip()) if ' TO ' in x[0] else 0):
             if v['cnt'] > 0:
-                comps.append({
-                    'storey': sr.replace(' TO ', '–'),
-                    'avg_psf': round(v['psf_sum'] / v['cnt']),
-                    'count': v['cnt'],
+                result.append({
+                    'storey':   sr.replace(' TO ', '–'),
+                    'avg_psf':  round(v['psf_sum'] / v['cnt']),
+                    'count':    v['cnt'],
                 })
+        return result
 
-        source = 'block' if any(
-            abs(int(''.join(c for c in str(r['block'] if hasattr(r, '__getitem__') else r[0]) if c.isdigit()) or '0') - block_num) == 0
-            for r in rows
-        ) else 'sibling'
+    try:
+        conn = get_db(); cur = _cursor(conn)
+
+        # Step 1: exact block match
+        rows = _fetch("AND UPPER(town) = ? AND UPPER(block) = ?", (flat_type, town, block))
+        comps = _aggregate(rows, max_blk_diff=0)
+
+        source = 'block'
+        # Step 2: if fewer than 5 storey bands, widen to ±5 sibling blocks on same street
+        if len(comps) < 5:
+            road_kw = road.split()[0] if road else ''
+            if road_kw:
+                rows2 = _fetch(
+                    "AND UPPER(town) = ? AND UPPER(street_name) LIKE ?",
+                    (flat_type, town, f'%{road_kw}%')
+                )
+                comps2 = _aggregate(rows2, max_blk_diff=5)
+                if len(comps2) > len(comps):
+                    comps  = comps2
+                    source = 'sibling'
+
+        conn.close()
         return jsonify({'comps': comps, 'source': source})
     except Exception as e:
         print(f"[floor-comps] ERROR: {e}")
