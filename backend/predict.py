@@ -1084,22 +1084,21 @@ def _predict_ml(features):
     try:
         booster   = xgb_pipe.named_steps['model'].get_booster()
         n_trees   = booster.num_boosted_rounds()
-        prep_row  = xgb_pipe.named_steps['preprocessor'].transform(row)
+        prep_row  = xgb_pipe.named_steps['pre'].transform(row)
         import xgboost as _xgb
         dmat = _xgb.DMatrix(prep_row)
-        
         if n_trees >= 4:
             half = n_trees // 2
             pred_first  = float(np.exp(booster.predict(dmat, iteration_range=(0, half), output_margin=True)[0]))
             pred_second = float(np.exp(booster.predict(dmat, iteration_range=(half, n_trees), output_margin=True)[0]))
             tree_spread = abs(pred_first - pred_second)
-            cv = tree_spread / estimated_value
+            cv = tree_spread / max(estimated_value, 1)
         else:
             spread = float(np.std([np.exp(v) for v in preds_log]))
-            cv = spread / estimated_value
+            cv = spread / max(estimated_value, 1)
     except Exception:
         spread = float(np.std([np.exp(v) for v in preds_log]))
-        cv = spread / estimated_value
+        cv = spread / max(estimated_value, 1)
 
     # Market Alignment Score — anchored to model MAPE on holdout test set
     model_mape = float(_meta.get('eval_mape', 7.5)) if _meta else 7.5
