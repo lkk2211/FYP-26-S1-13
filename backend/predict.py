@@ -1245,14 +1245,18 @@ def _predict_ml(features):
     if purchase_year:
         try:
             purchase_year = int(purchase_year)
+            # Plus/PLH flats (introduced 2023) carry a 10-year MOP; all others are 5 years.
+            flat_classification = str(features.get('flat_classification', 'standard')).lower().strip()
+            mop_years     = 10 if flat_classification == 'plus' else 5
             current_year  = datetime.now().year
-            mop_end_year  = purchase_year + 5
+            mop_end_year  = purchase_year + mop_years
             years_to_mop  = max(0, mop_end_year - current_year)
             within_mop    = years_to_mop > 0
             compound      = (1 + annual_rate) ** years_to_mop if within_mop else 1
             mop_info = {
                 'purchase_year':          purchase_year,
                 'mop_end_year':           mop_end_year,
+                'mop_years':              mop_years,
                 'years_to_mop':           years_to_mop,
                 'within_mop':             within_mop,
                 'projected_value_at_mop': int(estimated_value * compound) if within_mop else None,
