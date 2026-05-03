@@ -101,5 +101,5 @@ jobs:
           git add backend/models/*.joblib
           git diff --staged --quiet && echo "No model changes to commit" || \
             git commit -m "chore: update trained model files [skip ci]"
-          git pull --rebase origin db-test
-          git push origin HEAD:db-test
+          git pull --rebase origin main
+          git push origin HEAD:main
