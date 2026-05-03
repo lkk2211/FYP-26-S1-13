@@ -2644,10 +2644,16 @@ def property_lookup():
             _dbc = get_db(); _dbc_cur = _cursor(_dbc)
             # Check HDB DB by block number (some HDBs have named buildings too, e.g. Pinnacle@Duxton)
             if blk_no:
+                _blk_core = ''.join(c for c in blk_no if c.isdigit())
                 _dbc_cur.execute(_q(
                     "SELECT 1 FROM resale_flat_prices WHERE UPPER(block) = ? LIMIT 1"
                 ), (blk_no.upper(),))
                 db_is_hdb = _dbc_cur.fetchone() is not None
+                if not db_is_hdb and _blk_core and _blk_core != blk_no:
+                    _dbc_cur.execute(_q(
+                        "SELECT 1 FROM resale_flat_prices WHERE UPPER(block) LIKE ? LIMIT 1"
+                    ), (f'{_blk_core}%',))
+                    db_is_hdb = _dbc_cur.fetchone() is not None
             # Check URA (condo/EC) DB by building name — takes priority over a bare block match,
             # because named HDBs (Pinnacle, Dawson etc.) will NOT appear in ura_transactions
             if building not in ('NIL', ''):
@@ -2875,10 +2881,11 @@ def property_lookup():
         if is_hdb and blk_no:
             try:
                 _rlc = get_db(); _rlc_cur = _cursor(_rlc)
+                _blk_core_lc = ''.join(c for c in blk_no if c.isdigit())
                 _rlc_cur.execute(_q(
                     "SELECT AVG(lease_commence_date) AS avg_lc "
-                    "FROM resale_flat_prices WHERE UPPER(block) = ? AND lease_commence_date IS NOT NULL"
-                ), (blk_no.upper(),))
+                    "FROM resale_flat_prices WHERE UPPER(block) LIKE ? AND lease_commence_date IS NOT NULL"
+                ), (f'{_blk_core_lc}%',))
                 _rlc_row = _rlc_cur.fetchone()
                 _rlc.close()
                 if _rlc_row:
