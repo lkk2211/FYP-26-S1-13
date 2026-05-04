@@ -1991,18 +1991,42 @@ def twofa_verify():
         expires_str = expires_dt.isoformat()
         client_ip  = _get_client_ip()
         try:
+            # Ensure table exists (guard against first-run race before migrate_db)
+            if USE_POSTGRES:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS trusted_devices (
+                        id SERIAL PRIMARY KEY,
+                        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                        token_hash TEXT NOT NULL UNIQUE,
+                        ip_address TEXT,
+                        expires_at TIMESTAMP NOT NULL,
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                """)
+            else:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS trusted_devices (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        token_hash TEXT NOT NULL UNIQUE,
+                        ip_address TEXT,
+                        expires_at TEXT NOT NULL,
+                        created_at TEXT DEFAULT (datetime('now'))
+                    )
+                """)
             cur.execute(_q("""
                 INSERT INTO trusted_devices (user_id, token_hash, ip_address, expires_at)
                 VALUES (?, ?, ?, ?)
             """), (user_id, token_hash, client_ip, expires_str))
             conn.commit()
-            # Set HttpOnly cookie (30 days)
+            # secure=True only in production (HTTPS); False lets the cookie work over HTTP locally
             resp.set_cookie(
                 'td_token', raw_token,
                 max_age=30 * 24 * 3600,
-                httponly=True, secure=True, samesite='Strict',
+                httponly=True, secure=USE_POSTGRES, samesite='Strict',
                 path='/'
             )
+            print(f"[2fa/verify] trusted_device saved for user {user_id}")
         except Exception as e:
             print(f"[2fa/verify] trusted_device insert error: {e}")
 
