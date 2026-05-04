@@ -331,19 +331,6 @@ SQLITE_SCHEMA = """
         model_version   TEXT NOT NULL DEFAULT 'v1.0.0',
         predicted_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
-    CREATE TABLE IF NOT EXISTS price_records (
-        id              INTEGER PRIMARY KEY AUTOINCREMENT,
-        postal_code     TEXT NOT NULL,
-        address         TEXT,
-        property_type   TEXT,
-        floor_area_sqft REAL,
-        num_bedrooms    INTEGER,
-        floor_level     INTEGER,
-        price_sgd       REAL NOT NULL,
-        price_psf       REAL,
-        price_date      TEXT NOT NULL,
-        data_source     TEXT NOT NULL DEFAULT 'housing.csv'
-    );
     CREATE TABLE IF NOT EXISTS amenities (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,
         amenity_name TEXT NOT NULL,
@@ -468,19 +455,6 @@ POSTGRES_SCHEMA = """
         feature_scores  TEXT,
         model_version   TEXT NOT NULL DEFAULT 'v1.0.0',
         predicted_at    TIMESTAMP NOT NULL DEFAULT NOW()
-    );
-    CREATE TABLE IF NOT EXISTS price_records (
-        id              SERIAL PRIMARY KEY,
-        postal_code     TEXT NOT NULL,
-        address         TEXT,
-        property_type   TEXT,
-        floor_area_sqft REAL,
-        num_bedrooms    INTEGER,
-        floor_level     INTEGER,
-        price_sgd       REAL NOT NULL,
-        price_psf       REAL,
-        price_date      TEXT NOT NULL,
-        data_source     TEXT NOT NULL DEFAULT 'housing.csv'
     );
     CREATE TABLE IF NOT EXISTS amenities (
         id           SERIAL PRIMARY KEY,
@@ -1519,10 +1493,6 @@ def stats():
 
     total_users       = count(cur, 'users')
     total_predictions = count(cur, 'predictions')
-    try:
-        total_records = count(cur, 'price_records')
-    except Exception:
-        total_records = 0
 
     # New table counts
     try:
@@ -4318,7 +4288,6 @@ def export_report():
 
     total_users  = cnt('users')
     total_preds  = cnt('predictions')
-    total_recs   = cnt('price_records')
     hdb_txs      = cnt('resale_flat_prices')
     priv_txs     = cnt('ura_transactions')
 
@@ -4483,7 +4452,6 @@ def export_report():
         ['Total Predictions Made',      str(total_preds)],
         ['  — HDB Predictions',         str(hdb_c)],
         ['  — Private Property',        str(priv_c)],
-        ['Price Records in DB',         str(total_recs)],
         ['HDB Transaction Records',     str(hdb_txs)],
         ['Private Transaction Records', str(priv_txs)],
         ['Database Size',               db_size],
@@ -4563,7 +4531,6 @@ def export_report():
         ['Table', 'Record Count'],
         ['users',               str(total_users)],
         ['predictions',         str(total_preds)],
-        ['price_records',       str(total_recs)],
         ['resale_flat_prices',  str(hdb_txs)],
         ['ura_transactions',    str(priv_txs)],
     ]
