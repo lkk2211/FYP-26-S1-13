@@ -162,8 +162,6 @@ function _onPropertyTypeChange() {
     const condoSpecs= document.getElementById('condo-specs');
     if (hdbSpecs)   hdbSpecs.classList.toggle('hidden', !isHdb);
     if (condoSpecs) condoSpecs.classList.toggle('hidden', isHdb);
-    const mopRow = document.getElementById('hdb-mop-row');
-    if (mopRow) mopRow.classList.toggle('hidden', !isHdb);
     _availableAreas = [];   // reset so slider re-snaps
     _loadFlatSpecs();
 }
@@ -539,8 +537,8 @@ async function handlePredict() {
     });
     if (_forecastChart) { _forecastChart.destroy(); _forecastChart = null; }
     if (_shapChart)     { _shapChart.destroy();     _shapChart     = null; }
-    const mopBannerReset = document.getElementById('output-mop-banner');
-    if (mopBannerReset) { mopBannerReset.classList.add('hidden'); mopBannerReset.innerHTML = ''; }
+    const mopDisclaimer = document.getElementById('output-mop-disclaimer');
+    if (mopDisclaimer) mopDisclaimer.classList.add('hidden');
     if (_leaseDecayChart) { _leaseDecayChart.destroy(); _leaseDecayChart = null; }
     
     const postal   = document.getElementById('input-postal').value;
@@ -577,12 +575,6 @@ async function handlePredict() {
         if (_predictRoad)                 body.street_name          = _predictRoad;
         if (_predictProject)              body.project              = _predictProject;
         if (window._maxTransactedFloor)   body.max_transacted_floor = window._maxTransactedFloor;
-        const purchaseYearVal = document.getElementById('input-purchase-year')?.value;
-        if (purchaseYearVal && propType === 'HDB') {
-            body.purchase_year = parseInt(purchaseYearVal);
-            const classification = document.getElementById('input-flat-classification')?.value || 'standard';
-            body.flat_classification = classification;
-        }
         const response = await fetch('/api/predict', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -604,24 +596,10 @@ async function handlePredict() {
         }
         document.getElementById('output-confidence').innerText = `${data.confidence}%`;
 
-        // MOP banner
-        const mopBanner = document.getElementById('output-mop-banner');
-        if (mopBanner) {
-            const mop = data.mop;
-            if (mop && mop.within_mop) {
-                const projVal = mop.projected_value_at_mop ? `S$${mop.projected_value_at_mop.toLocaleString()}` : '—';
-                const classLabel = mop.mop_years === 10 ? 'Plus/PLH flat (10-year MOP)' : 'Standard flat (5-year MOP)';
-                mopBanner.className = 'mt-3 flex items-start gap-3 px-4 py-3 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-800';
-                mopBanner.innerHTML = `<span class="text-base shrink-0">🔒</span><div><strong>MOP not yet met.</strong> This flat cannot be listed for resale until <strong>${mop.mop_end_year}</strong> (${mop.years_to_mop} year${mop.years_to_mop > 1 ? 's' : ''} remaining). Projected value at MOP: <strong>${projVal}</strong>. <span class="text-rose-500">${classLabel}.</span></div>`;
-                mopBanner.classList.remove('hidden');
-            } else if (mop && !mop.within_mop) {
-                const classLabel = mop.mop_years === 10 ? 'Plus/PLH (10-year MOP)' : 'Standard (5-year MOP)';
-                mopBanner.className = 'mt-3 flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs text-emerald-800';
-                mopBanner.innerHTML = `<span class="text-base shrink-0">✅</span><strong>MOP met</strong> — this flat is eligible for resale. Purchased ${mop.purchase_year}, MOP cleared ${mop.mop_end_year} <span class="text-emerald-600">(${classLabel})</span>.`;
-                mopBanner.classList.remove('hidden');
-            } else {
-                mopBanner.classList.add('hidden');
-            }
+        // MOP disclaimer — show for HDB, hide for private
+        const mopDisclaimer = document.getElementById('output-mop-disclaimer');
+        if (mopDisclaimer) {
+            mopDisclaimer.classList.toggle('hidden', propType !== 'HDB');
         }
 
         const mape = data.mape || (propType === 'HDB' ? 7.0 : 10.0);

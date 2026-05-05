@@ -467,22 +467,6 @@
                                             </div>
                                         </div>
 
-                                        <!-- MOP input (HDB only) -->
-                                        <div id="hdb-mop-row" class="space-y-3">
-                                            <div class="space-y-1">
-                                                <label class="text-xs font-bold text-slate-500 uppercase">Year You Purchased <span class="font-normal normal-case text-slate-400">(optional — for MOP check)</span></label>
-                                                <input id="input-purchase-year" type="number" min="1990" max="2026" placeholder="e.g. 2022"
-                                                    class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium" />
-                                            </div>
-                                            <div class="space-y-1">
-                                                <label class="text-xs font-bold text-slate-500 uppercase">Flat Classification <span class="font-normal normal-case text-slate-400">(affects MOP duration)</span></label>
-                                                <select id="input-flat-classification"
-                                                    class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium text-slate-700">
-                                                    <option value="standard">Standard HDB (5-year MOP)</option>
-                                                    <option value="plus">Plus / PLH (10-year MOP)</option>
-                                                </select>
-                                            </div>
-                                        </div>
 
                                         <button onclick="handlePredict()" class="w-full py-4 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 flex items-center justify-center gap-2 group">
                                             <i data-lucide="search" class="w-5 h-5"></i>
@@ -615,7 +599,10 @@
                                     <div>
                                     <span class="text-7xl font-bold tracking-tighter" id="output-price">S$465,000</span>
                                     <p class="text-sm text-slate-400 font-medium mt-2" id="output-price-range"></p>
-                                    <div id="output-mop-banner" class="hidden mt-3"></div>
+                                    <div id="output-mop-disclaimer" class="hidden mt-3 flex items-start gap-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-800">
+                                        <span class="shrink-0">ℹ️</span>
+                                        <span>If you are <strong>purchasing</strong> this HDB flat, please verify that the unit has fulfilled its <strong>Minimum Occupation Period (MOP)</strong> before proceeding. Standard HDB flats carry a 5-year MOP; Plus and Prime Location Housing (PLH) flats carry a 10-year MOP. Confirm directly with the seller or via the <a href="https://www.hdb.gov.sg" target="_blank" class="underline text-amber-700 hover:text-amber-900">HDB portal</a>.</span>
+                                    </div>
                                     <div id="output-floor-disclaimer" class="hidden mt-3 flex items-start gap-2 px-4 py-3 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-800">
                                         <span>⚠️</span>
                                         <span>No previous transactions found for this specific floor level. This estimate is based on similar transactions in the same area — treat it as a directional guide.</span>
