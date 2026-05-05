@@ -47,6 +47,10 @@ jobs:
           RENDER_URL: ${{ secrets.RENDER_URL }}
           MODEL_UPLOAD_SECRET: ${{ secrets.MODEL_UPLOAD_SECRET }}
         run: |
+          if [ -z "$RENDER_URL" ]; then
+            echo "⚠️  RENDER_URL secret not set — skipping upload. Models are committed to repo instead."
+            exit 0
+          fi
           for fname in xgb_pipeline.joblib lgbm_pipeline.joblib cat_pipeline.joblib meta.joblib shap_hdb.joblib; do
             if [ ! -f "backend/models/$fname" ]; then
               echo "  Skipping $fname (not found — SHAP may have been skipped)"
@@ -55,13 +59,13 @@ jobs:
             echo "Uploading $fname ..."
             curl -sf -X POST "$RENDER_URL/api/admin/upload-model" \
               -H "X-Upload-Secret: $MODEL_UPLOAD_SECRET" \
-              -F "file=@backend/models/$fname"
-            echo " done"
+              -F "file=@backend/models/$fname" \
+              && echo " done" || echo "  ⚠️  Upload failed for $fname (non-critical — file committed to repo)"
           done
           echo "Triggering model reload..."
           curl -s -X POST "$RENDER_URL/api/admin/reload-models" \
-            -H "X-Upload-Secret: $MODEL_UPLOAD_SECRET" || echo " reload request failed (non-critical)"
-          echo " done"
+            -H "X-Upload-Secret: $MODEL_UPLOAD_SECRET" \
+            && echo " done" || echo "  reload request failed (non-critical)"
 
       # ── Private model ─────────────────────────────────────────────────────────
       - name: Train Private model
@@ -77,6 +81,10 @@ jobs:
           RENDER_URL: ${{ secrets.RENDER_URL }}
           MODEL_UPLOAD_SECRET: ${{ secrets.MODEL_UPLOAD_SECRET }}
         run: |
+          if [ -z "$RENDER_URL" ]; then
+            echo "⚠️  RENDER_URL secret not set — skipping upload. Models are committed to repo instead."
+            exit 0
+          fi
           for fname in xgb_private_pipeline.joblib lgbm_private_pipeline.joblib cat_private_pipeline.joblib meta_private.joblib shap_private.joblib; do
             if [ ! -f "backend/models/$fname" ]; then
               echo "  Skipping $fname (not found — SHAP may have been skipped)"
@@ -85,13 +93,13 @@ jobs:
             echo "Uploading $fname ..."
             curl -sf -X POST "$RENDER_URL/api/admin/upload-model" \
               -H "X-Upload-Secret: $MODEL_UPLOAD_SECRET" \
-              -F "file=@backend/models/$fname"
-            echo " done"
+              -F "file=@backend/models/$fname" \
+              && echo " done" || echo "  ⚠️  Upload failed for $fname (non-critical — file committed to repo)"
           done
           echo "Triggering model reload..."
           curl -s -X POST "$RENDER_URL/api/admin/reload-models" \
-            -H "X-Upload-Secret: $MODEL_UPLOAD_SECRET" || echo " reload request failed (non-critical)"
-          echo " done"
+            -H "X-Upload-Secret: $MODEL_UPLOAD_SECRET" \
+            && echo " done" || echo "  reload request failed (non-critical)"
 
       # ── Commit models back to repo so they survive Render redeploys ──────────
       - name: Commit trained models to repo
