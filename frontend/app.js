@@ -3083,6 +3083,7 @@ async function handleSignIn(e) {
         document.getElementById('twofa-remember-device').checked = false;
         modal.classList.remove('hidden');
         modal.classList.add('flex');
+        document.getElementById('chat-widget').style.display = 'none';
         setTimeout(() => document.getElementById('twofa-verify-code').focus(), 100);
         return;
     }
@@ -5298,6 +5299,7 @@ async function submitVerify2FA() {
         const modal = document.getElementById('twofa-verify-modal');
         modal.classList.add('hidden');
         modal.classList.remove('flex');
+        document.getElementById('chat-widget').style.display = '';
         window._2faTempToken = null;
 
         currentUser = data.user;
@@ -5315,6 +5317,7 @@ function cancelVerify2FA() {
     const modal = document.getElementById('twofa-verify-modal');
     modal.classList.add('hidden');
     modal.classList.remove('flex');
+    document.getElementById('chat-widget').style.display = '';
     window._2faTempToken = null;
 }
 
