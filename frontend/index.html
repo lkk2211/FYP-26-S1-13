@@ -231,6 +231,24 @@
                     </div>
                     <div id="home-news-list" class="grid grid-cols-1 md:grid-cols-2 gap-3"></div>
                 </div>
+
+                <!-- Financial Calculators CTA -->
+                <div class="mt-10 bg-gradient-to-r from-violet-50 to-blue-50 dark:from-violet-900/20 dark:to-blue-900/20 border border-violet-100 dark:border-violet-800/40 rounded-[28px] p-8 flex flex-col sm:flex-row items-center justify-between gap-6">
+                    <div class="flex items-center gap-4">
+                        <div class="w-12 h-12 bg-violet-100 dark:bg-violet-900/40 rounded-2xl flex items-center justify-center shrink-0">
+                            <i data-lucide="calculator" class="w-6 h-6 text-violet-600"></i>
+                        </div>
+                        <div>
+                            <h3 class="font-bold text-slate-900 dark:text-white text-lg">Financial Calculators</h3>
+                            <p class="text-sm text-slate-500 dark:text-slate-400 mt-0.5">Estimate stamp duties, mortgage repayments, affordability and more.</p>
+                        </div>
+                    </div>
+                    <button onclick="showView('guides'); setTimeout(()=>{ const el=document.getElementById('calc-section'); if(el) el.scrollIntoView({behavior:'smooth'}); },300)"
+                        class="shrink-0 px-6 py-3 bg-violet-600 hover:bg-violet-700 text-white text-sm font-bold rounded-2xl transition-all shadow-md shadow-violet-200 dark:shadow-violet-900/30 flex items-center gap-2 group">
+                        Open Calculators
+                        <i data-lucide="arrow-right" class="w-4 h-4 transition-transform group-hover:translate-x-1"></i>
+                    </button>
+                </div>
             </main>
         </section>
 
@@ -1102,7 +1120,7 @@
 
                 <!-- Calculators -->
                 <div>
-                    <h2 class="text-2xl font-bold mb-6 dark:text-white flex items-center gap-3"><i data-lucide="calculator" class="w-6 h-6 text-violet-600"></i> Financial Calculators</h2>
+                    <h2 id="calc-section" class="text-2xl font-bold mb-6 dark:text-white flex items-center gap-3"><i data-lucide="calculator" class="w-6 h-6 text-violet-600"></i> Financial Calculators</h2>
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
 
                         <!-- BSD/ABSD Calculator -->

@@ -63,6 +63,13 @@ function showView(viewId) {
         renderRecentSearches();
     }
 
+    // Hide chatbot on auth screens
+    const chatWidget = document.getElementById('chat-widget');
+    if (chatWidget) {
+        const authViews = ['signin', 'register', 'forgot'];
+        chatWidget.style.display = authViews.includes(viewId) ? 'none' : '';
+    }
+
     window.scrollTo({ top: 0, behavior: 'smooth' });
     lucide.createIcons();
     updateDarkModeNavIcon();
