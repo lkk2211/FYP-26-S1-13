@@ -233,21 +233,51 @@
                 </div>
 
                 <!-- Financial Calculators CTA -->
-                <div class="mt-10 bg-gradient-to-r from-violet-50 to-blue-50 dark:from-violet-900/20 dark:to-blue-900/20 border border-violet-100 dark:border-violet-800/40 rounded-[28px] p-8 flex flex-col sm:flex-row items-center justify-between gap-6">
-                    <div class="flex items-center gap-4">
+                <div class="mt-10 bg-gradient-to-r from-violet-50 to-blue-50 dark:from-violet-900/20 dark:to-blue-900/20 border border-violet-100 dark:border-violet-800/40 rounded-[28px] p-8">
+                    <div class="flex items-center gap-4 mb-6">
                         <div class="w-12 h-12 bg-violet-100 dark:bg-violet-900/40 rounded-2xl flex items-center justify-center shrink-0">
                             <i data-lucide="calculator" class="w-6 h-6 text-violet-600"></i>
                         </div>
                         <div>
                             <h3 class="font-bold text-slate-900 dark:text-white text-lg">Financial Calculators</h3>
-                            <p class="text-sm text-slate-500 dark:text-slate-400 mt-0.5">Estimate stamp duties, mortgage repayments, affordability and more.</p>
+                            <p class="text-sm text-slate-500 dark:text-slate-400 mt-0.5">Jump directly to a calculator below.</p>
                         </div>
                     </div>
-                    <button onclick="showView('guides'); setTimeout(()=>{ const el=document.getElementById('calc-section'); if(el) el.scrollIntoView({behavior:'smooth'}); },300)"
-                        class="shrink-0 px-6 py-3 bg-violet-600 hover:bg-violet-700 text-white text-sm font-bold rounded-2xl transition-all shadow-md shadow-violet-200 dark:shadow-violet-900/30 flex items-center gap-2 group">
-                        Open Calculators
-                        <i data-lucide="arrow-right" class="w-4 h-4 transition-transform group-hover:translate-x-1"></i>
-                    </button>
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <button onclick="showView('guides'); setTimeout(()=>{ const el=document.getElementById('calc-stamp-duty'); if(el) el.scrollIntoView({behavior:'smooth',block:'center'}); },300)"
+                            class="flex items-center gap-3 px-5 py-4 bg-white dark:bg-slate-800 border border-violet-100 dark:border-violet-800/40 rounded-2xl hover:border-violet-400 hover:shadow-md transition-all group text-left">
+                            <div class="w-9 h-9 bg-violet-100 dark:bg-violet-900/40 rounded-xl flex items-center justify-center shrink-0">
+                                <i data-lucide="receipt" class="w-4 h-4 text-violet-600"></i>
+                            </div>
+                            <div>
+                                <p class="text-sm font-bold text-slate-800 dark:text-white leading-tight">Stamp Duty</p>
+                                <p class="text-xs text-slate-400 mt-0.5">BSD &amp; ABSD</p>
+                            </div>
+                            <i data-lucide="arrow-right" class="w-4 h-4 text-slate-300 ml-auto transition-transform group-hover:translate-x-1 group-hover:text-violet-500"></i>
+                        </button>
+                        <button onclick="showView('guides'); setTimeout(()=>{ const el=document.getElementById('calc-repayment'); if(el) el.scrollIntoView({behavior:'smooth',block:'center'}); },300)"
+                            class="flex items-center gap-3 px-5 py-4 bg-white dark:bg-slate-800 border border-violet-100 dark:border-violet-800/40 rounded-2xl hover:border-emerald-400 hover:shadow-md transition-all group text-left">
+                            <div class="w-9 h-9 bg-emerald-100 dark:bg-emerald-900/40 rounded-xl flex items-center justify-center shrink-0">
+                                <i data-lucide="landmark" class="w-4 h-4 text-emerald-600"></i>
+                            </div>
+                            <div>
+                                <p class="text-sm font-bold text-slate-800 dark:text-white leading-tight">Monthly Repayment</p>
+                                <p class="text-xs text-slate-400 mt-0.5">Home loan estimate</p>
+                            </div>
+                            <i data-lucide="arrow-right" class="w-4 h-4 text-slate-300 ml-auto transition-transform group-hover:translate-x-1 group-hover:text-emerald-500"></i>
+                        </button>
+                        <button onclick="showView('guides'); setTimeout(()=>{ const el=document.getElementById('calc-affordability'); if(el) el.scrollIntoView({behavior:'smooth',block:'center'}); },300)"
+                            class="flex items-center gap-3 px-5 py-4 bg-white dark:bg-slate-800 border border-violet-100 dark:border-violet-800/40 rounded-2xl hover:border-blue-400 hover:shadow-md transition-all group text-left">
+                            <div class="w-9 h-9 bg-blue-100 dark:bg-blue-900/40 rounded-xl flex items-center justify-center shrink-0">
+                                <i data-lucide="wallet" class="w-4 h-4 text-blue-600"></i>
+                            </div>
+                            <div>
+                                <p class="text-sm font-bold text-slate-800 dark:text-white leading-tight">Affordability</p>
+                                <p class="text-xs text-slate-400 mt-0.5">Max loan &amp; budget</p>
+                            </div>
+                            <i data-lucide="arrow-right" class="w-4 h-4 text-slate-300 ml-auto transition-transform group-hover:translate-x-1 group-hover:text-blue-500"></i>
+                        </button>
+                    </div>
                 </div>
             </main>
         </section>
@@ -1124,7 +1154,7 @@
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
 
                         <!-- BSD/ABSD Calculator -->
-                        <div class="bg-white dark:bg-slate-800 p-8 rounded-[32px] border border-slate-100 dark:border-slate-700 card-shadow space-y-5">
+                        <div id="calc-stamp-duty" class="bg-white dark:bg-slate-800 p-8 rounded-[32px] border border-slate-100 dark:border-slate-700 card-shadow space-y-5">
                             <div class="flex items-center gap-3">
                                 <div class="w-10 h-10 bg-violet-100 dark:bg-violet-900/30 rounded-2xl flex items-center justify-center">
                                     <i data-lucide="receipt" class="w-5 h-5 text-violet-600"></i>
@@ -1161,7 +1191,7 @@
                         </div>
 
                         <!-- Home Loan Calculator -->
-                        <div class="bg-white dark:bg-slate-800 p-8 rounded-[32px] border border-slate-100 dark:border-slate-700 card-shadow space-y-5">
+                        <div id="calc-repayment" class="bg-white dark:bg-slate-800 p-8 rounded-[32px] border border-slate-100 dark:border-slate-700 card-shadow space-y-5">
                             <div class="flex items-center gap-3">
                                 <div class="w-10 h-10 bg-emerald-100 dark:bg-emerald-900/30 rounded-2xl flex items-center justify-center">
                                     <i data-lucide="landmark" class="w-5 h-5 text-emerald-600"></i>
@@ -1195,7 +1225,7 @@
                         </div>
 
                         <!-- Affordability Calculator -->
-                        <div class="bg-white dark:bg-slate-800 p-8 rounded-[32px] border border-slate-100 dark:border-slate-700 card-shadow space-y-5">
+                        <div id="calc-affordability" class="bg-white dark:bg-slate-800 p-8 rounded-[32px] border border-slate-100 dark:border-slate-700 card-shadow space-y-5">
                             <div class="flex items-center gap-3">
                                 <div class="w-10 h-10 bg-blue-100 dark:bg-blue-900/30 rounded-2xl flex items-center justify-center">
                                     <i data-lucide="wallet" class="w-5 h-5 text-blue-600"></i>
