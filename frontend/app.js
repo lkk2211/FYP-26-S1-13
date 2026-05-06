@@ -1,4 +1,3 @@
-// View Router
 function showView(viewId) {
     const target = document.getElementById('view-' + viewId);
     if (!target) return;
@@ -63,7 +62,6 @@ function showView(viewId) {
         renderRecentSearches();
     }
 
-    // Hide chatbot on auth screens
     const chatWidget = document.getElementById('chat-widget');
     if (chatWidget) {
         const authViews = ['signin', 'register', 'forgot'];
@@ -75,7 +73,6 @@ function showView(viewId) {
     updateDarkModeNavIcon();
 }
 
-// ── Auth wall — shown when a guest tries to access a gated view ───────────────
 function showAuthWall(intendedView) {
     const modal = document.getElementById('auth-wall-modal');
     if (!modal) { showView('signin'); return; }
@@ -107,7 +104,6 @@ function authWallRegister() {
     showView('register');
 }
 
-// Predict Logic
 function togglePredictView(mode) {
     const input = document.getElementById('predict-input');
     const output = document.getElementById('predict-output');
@@ -121,7 +117,6 @@ function togglePredictView(mode) {
     }
 }
 
-// Available floor areas for the snapping slider (populated per postal + bedrooms)
 let _availableAreas = [];
 
 function _isHdbMode() {
@@ -134,7 +129,6 @@ function updateSlider(id) {
     const display = document.getElementById('val-' + id);
     if (!range) return;
     if (id === 'area' && _availableAreas.length > 0) {
-        // Index-based: slider value is index into _availableAreas
         const idx    = Math.min(parseInt(range.value), _availableAreas.length - 1);
         const actual = _availableAreas[idx];
         range.dataset.actualValue = actual;
@@ -169,18 +163,17 @@ function _onPropertyTypeChange() {
     const condoSpecs= document.getElementById('condo-specs');
     if (hdbSpecs)   hdbSpecs.classList.toggle('hidden', !isHdb);
     if (condoSpecs) condoSpecs.classList.toggle('hidden', isHdb);
-    _availableAreas = [];   // reset so slider re-snaps
+    _availableAreas = [];
     _loadFlatSpecs();
 }
 
 function _onFlatTypeChange() {
     _availableAreas     = [];
-    _cachedStoreyRanges = [];   // clear stale ranges so new flat_type doesn't inherit old floors
+    _cachedStoreyRanges = [];
     _cachedMaxFloor     = null;
     _loadFlatSpecs();
 }
 
-// Flat type mapping (bedrooms → HDB flat type)
 const _BEDS_TO_FLAT_TYPE = {
     1: '1 ROOM', 2: '2 ROOM', 3: '3 ROOM', 4: '4 ROOM', 5: '5 ROOM', 6: 'EXECUTIVE',
 };
@@ -214,7 +207,6 @@ function _populateFloorRanges(ranges, maxFloor, defaultRange) {
     const sel = document.getElementById('input-floor-range');
     if (!sel) return;
     if (!ranges || ranges.length === 0) {
-        // Generate synthetic ranges up to maxFloor in steps of 3
         ranges = [];
         for (let lo = 1; lo <= maxFloor; lo += 3) {
             const hi = Math.min(lo + 2, maxFloor);
@@ -227,7 +219,6 @@ function _populateFloorRanges(ranges, maxFloor, defaultRange) {
         return `<option value="${r}">${label}</option>`;
     }).join('');
 
-    // Priority: 1) most-frequent range for this block, 2) previous selection, 3) first option
     if (defaultRange && [...sel.options].some(o => o.value === defaultRange)) {
         sel.value = defaultRange;
     } else if ([...sel.options].some(o => o.value === prevVal)) {
@@ -241,14 +232,13 @@ async function _loadFlatSpecs() {
     const isHdb  = propType === 'HDB';
     const postal = document.getElementById('input-postal')?.value?.trim() || '';
 
-    // Determine flat_type or bedrooms to send
     let urlExtra = '';
     if (isHdb) {
         const ftEl = document.getElementById('input-flat-type');
         const ft   = ftEl ? ftEl.value : '4 ROOM';
         urlExtra = `&flat_type=${encodeURIComponent(ft)}`;
     } else {
-        urlExtra = '';   // condo: no bedroom filter — floor area comes from project/district URA data
+        urlExtra = '';
     }
 
     try {
@@ -263,14 +253,11 @@ async function _loadFlatSpecs() {
         const data = await res.json();
 
         const areas = data.floor_areas || [];
-        // Always prefer server response; only fall back to cache when server returned nothing
-        // AND the cache was seeded from the same context (same flat_type search)
         const storeyRanges = (data.storey_ranges && data.storey_ranges.length)
                              ? data.storey_ranges
-                             : _cachedStoreyRanges;   // cache was cleared on flat_type change so this is safe
+                             : _cachedStoreyRanges;
         const defaultRange = data.default_storey_range || null;
 
-        // Derive max floor: prefer explicit value, fall back to parsing "XX TO XX" strings
         let maxFloor = data.max_floor || _cachedMaxFloor || 0;
         if (!maxFloor && storeyRanges.length) {
             maxFloor = Math.max(...storeyRanges.map(s => {
@@ -280,12 +267,9 @@ async function _loadFlatSpecs() {
         }
         if (!maxFloor) maxFloor = 20;
 
-        // Keep _cachedMaxFloor in sync — property-areas may have a better value
         if (maxFloor > (_cachedMaxFloor || 0)) _cachedMaxFloor = maxFloor;
-        // Track highest transacted floor for confidence penalty
         window._maxTransactedFloor = data.max_transacted_floor || null;
 
-        // ── Floor range dropdown (HDB only) ──────────────────────
         if (isHdb) {
             const floorDataSource = data.floor_data_source || 'block';
             const hasBlockData = floorDataSource === 'block';
@@ -295,13 +279,11 @@ async function _loadFlatSpecs() {
             if (!hasBlockData) {
                 if (sel)  sel.classList.add('hidden');
                 if (wrap) wrap.classList.remove('hidden');
-                // Show town-wide max as a reference hint
                 const townMax = data.town_max_floor;
                 const hintEl  = wrap ? wrap.querySelector('p.text-xs') : null;
                 if (hintEl && townMax) {
                     hintEl.textContent = `No floor data for this block. Highest floor seen in this area: ${townMax}. Which level is the unit on?`;
                 }
-                // Update the Top quick-select button label with town max
                 const topBtn = wrap ? wrap.querySelector('.floor-quick-btn:last-of-type') : null;
                 if (topBtn && townMax) {
                     topBtn.innerHTML = `Top<br><span class="font-normal text-slate-400">31–${townMax}</span>`;
@@ -314,7 +296,6 @@ async function _loadFlatSpecs() {
             }
         }
 
-        // ── Floor slider (condo only) ─────────────────────────────
         if (!isHdb) {
             const floorRange   = document.getElementById('range-floor');
             const floorHint    = document.getElementById('floor-max-hint');
@@ -333,7 +314,6 @@ async function _loadFlatSpecs() {
             }
         }
 
-        // ── Area slider (index-based snap, shared) ────────────────
         const areaRange = document.getElementById('range-area');
         const areaHint  = document.getElementById('area-range-hint');
         if (areaRange && areas.length > 0) {
@@ -390,7 +370,6 @@ async function handlePostalSearch() {
         const building = result.BUILDING && result.BUILDING !== 'NIL' ? result.BUILDING : address;
         const postal = result.POSTAL && result.POSTAL !== 'NIL' ? result.POSTAL : searchVal;
 
-        // Reject non-residential properties
         const NON_RESIDENTIAL_KEYWORDS = [
             'MRT STATION', ' MRT', 'LRT STATION', ' LRT', 'SHOPPING MALL', 'SHOPPING CENTRE',
             'SHOPPING CENTER', 'RETAIL MALL', 'OFFICE', 'INDUSTRIAL', 'COMMERCIAL',
@@ -421,28 +400,24 @@ async function handlePostalSearch() {
         if (landedBanner) landedBanner.classList.add('hidden');
         if (postalLoadingEl) postalLoadingEl.classList.remove('hidden');
 
-        // Auto-fill property type + lease type from backend; detect landed
         fetch(`/api/property-lookup?postal=${encodeURIComponent(postal)}`)
             .then(r => r.json())
             .then(info => {
                 const landedEl  = document.getElementById('landed-rejection');
                 const detailsEl = document.getElementById('postal-details');
 
-                // Property not found — show modal
                 if (info.error || (!info.property_type && !info.town)) {
                     openPropertyNotFoundModal(postal);
                     return;
                 }
 
                 if (info.is_landed) {
-                    // Show landed rejection, hide prediction form
                     if (landedEl)  landedEl.classList.remove('hidden');
                     if (detailsEl) detailsEl.classList.add('hidden');
                     lucide.createIcons();
                     return;
                 }
 
-                // Valid HDB or Condo — hide skeleton, show details
                 if (postalLoadingEl) postalLoadingEl.classList.add('hidden');
                 if (landedEl)  landedEl.classList.add('hidden');
                 if (detailsEl) detailsEl.classList.remove('hidden');

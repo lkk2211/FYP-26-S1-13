@@ -21,7 +21,6 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from predict import predict_price
 import predict as _predict_module
 
-# ─── 2FA / Security helpers ──────────────────────────────────────────────────
 MASTER_SECRET = os.environ.get('MASTER_SECRET', 'dev-fallback-change-in-prod-99x')
 
 def _get_client_ip():
@@ -56,7 +55,7 @@ def _make_temp_token(user_id: int, ttl: int = 300) -> str:
     sig = _hmac.new(MASTER_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
     return base64.urlsafe_b64encode(f"{payload}:{sig}".encode()).decode()
 
-_SESSION_TTL = 30 * 24 * 3600  # 30-day session token for authenticated API calls
+_SESSION_TTL = 30 * 24 * 3600  # 30-day TTL; contrast with the 5-min TTL used for the 2FA temp_token flow
 
 def _verify_temp_token(token: str):
     """Return user_id (int) if valid and not expired, else None."""
@@ -106,8 +105,6 @@ def _log_audit(conn, user_id, action: str, event_type: str, details: str = ''):
         print(f"[audit] log failed: {_e}")
 
 
-# ─── Live retraining state ────────────────────────────────────────────────────
-
 _BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 
 _retrain_status = {
@@ -116,7 +113,6 @@ _retrain_status = {
 }
 _retrain_lock = threading.Lock()
 
-# ── Upload job tracking (async background processing) ────────────────────────
 _upload_jobs  = {}   # job_id → {state, message, inserted, total_rows}
 _upload_lock  = threading.Lock()
 
@@ -134,7 +130,6 @@ def _run_upload_thread(job_id, file_bytes, filename, tx_type):
 
     _upd('processing', 'Starting upload…')
 
-    # ── _get helper (same fuzzy lookup as in the sync path) ───────────────────
     def _get(row, *keys, default=None):
         for k in keys:
             kn = k.lower().replace(' ', '').replace('(', '').replace(')', '').replace('$', '').replace('#', '').replace('-', '').replace('_', '')
@@ -153,7 +148,6 @@ def _run_upload_thread(job_id, file_bytes, filename, tx_type):
         # SORA excluded from ELT path — the SQL DATE conversion in process_uploaded_data()
         # doesn't reliably handle all date formats. Python _norm_date() is more robust.
         if USE_POSTGRES and tx_type in ('hdb', 'geocoded', 'policy') and not is_excel:
-            # ── ELT: stream CSV → staging → RPC ──────────────────────────────
             if tx_type == 'hdb':
                 stage_sql = "INSERT INTO stage_resale (month, town, flat_type, block, street_name, storey_range, floor_area_sqm, flat_model, lease_commence_date, remaining_lease, resale_price) VALUES %s"
                 def _make_row(r):
@@ -209,9 +203,6 @@ def _run_upload_thread(job_id, file_bytes, filename, tx_type):
                 _upd('error', str(e))
             return
 
-        # ── Direct insert (SQLite / URA) ─────────────────────────────────────
-        # Re-use the synchronous logic by calling _process_rows_direct()
-        # which is defined inside upload_transactions but we duplicate here minimally.
         _upd('error', f'Unsupported async path for type={tx_type} on this backend.')
 
     except Exception as e:
@@ -280,7 +271,6 @@ ONEMAP_PASSWORD = os.environ.get('ONEMAP_PASSWORD', '')
 _om_token_cache = {'token': None, 'expiry': 0}
 _om_lock        = threading.Lock()
 
-# Database helpers — supports SQLite (local) and PostgreSQL (Supabase)
 def get_db():
     if USE_POSTGRES:
         import psycopg2
@@ -559,7 +549,6 @@ POSTGRES_SCHEMA = """
     );
 """
 
-# ── Supabase RPC: ELT cleaning function ──────────────────────────────────────
 # Executed once on startup via init_db(). Safe to re-run (CREATE OR REPLACE).
 _POSTGRES_RPC = """
 CREATE OR REPLACE FUNCTION process_uploaded_data()
@@ -640,7 +629,6 @@ def init_db():
             s = statement.strip()
             if s:
                 cur.execute(s)
-        # Install / refresh the ELT cleaning RPC (idempotent — CREATE OR REPLACE)
         try:
             cur.execute(_POSTGRES_RPC)
         except Exception as e:
@@ -658,7 +646,6 @@ def migrate_db():
     try:
         if USE_POSTGRES:
             cur = _cursor(conn)
-            # Drop legacy tables
             for tbl in ('hdb_transactions', 'private_transactions', 'sync_log', 'hdb_resale'):
                 try: cur.execute(f"DROP TABLE IF EXISTS {tbl}")
                 except Exception: pass
@@ -671,7 +658,6 @@ def migrate_db():
             ]:
                 try: cur.execute(col_def)
                 except Exception: pass
-            # Ensure resale_flat_prices has all columns
             for col_def in [
                 "ALTER TABLE resale_flat_prices ADD COLUMN IF NOT EXISTS month TEXT",
                 "ALTER TABLE resale_flat_prices ADD COLUMN IF NOT EXISTS town TEXT",
@@ -687,7 +673,6 @@ def migrate_db():
             ]:
                 try: cur.execute(col_def)
                 except Exception: pass
-            # Ensure geocoded_addresses has correct columns
             for col_def in [
                 "ALTER TABLE geocoded_addresses ADD COLUMN IF NOT EXISTS search_text TEXT",
                 "ALTER TABLE geocoded_addresses ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION",
@@ -695,7 +680,6 @@ def migrate_db():
             ]:
                 try: cur.execute(col_def)
                 except Exception: pass
-            # Ensure policy_changes has correct columns
             for col_def in [
                 "ALTER TABLE policy_changes ADD COLUMN IF NOT EXISTS effective_month DATE",
                 "ALTER TABLE policy_changes ADD COLUMN IF NOT EXISTS effective_date DATE",
@@ -707,7 +691,6 @@ def migrate_db():
             ]:
                 try: cur.execute(col_def)
                 except Exception: pass
-            # Ensure sora_rates has new column schema
             for col_def in [
                 "ALTER TABLE sora_rates ADD COLUMN IF NOT EXISTS publication_date DATE",
                 "ALTER TABLE sora_rates ADD COLUMN IF NOT EXISTS compound_sora_3m NUMERIC",
@@ -717,14 +700,12 @@ def migrate_db():
             ]:
                 try: cur.execute(col_def)
                 except Exception: pass
-            # 2FA columns on users
             for col_def in [
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret TEXT",
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN DEFAULT FALSE",
             ]:
                 try: cur.execute(col_def)
                 except Exception: pass
-            # Trusted devices table for 2FA "remember me"
             try:
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS trusted_devices (
@@ -737,7 +718,6 @@ def migrate_db():
                     )
                 """)
             except Exception: pass
-            # Ensure ura_transactions has all required columns
             for col_def in [
                 "ALTER TABLE ura_transactions ADD COLUMN IF NOT EXISTS project TEXT",
                 "ALTER TABLE ura_transactions ADD COLUMN IF NOT EXISTS street TEXT",
@@ -824,7 +804,7 @@ def get_onemap_token():
             token = data.get('access_token')
             if token:
                 _om_token_cache['token'] = token
-                _om_token_cache['expiry'] = time.time() + 172800  # 48 h
+                _om_token_cache['expiry'] = time.time() + 172800  # 48-hour OneMap token lifetime
             return token
         except Exception as e:
             print(f'OneMap auth error: {e}')
@@ -1028,66 +1008,38 @@ def fetch_overpass_amenities(lat, lng):
     return cats
 
 
-# Postal sector → neighbourhood (first 2 digits of 6-digit postal code)
+# Postal sector → neighbourhood (first 2 digits of 6-digit postal code).
 # Source: URA postal district table. Used as fallback when OneMap planning area API fails.
 POSTAL_DISTRICTS = {
-    # D01: Boat Quay / Raffles Place / Marina / Cecil / People's Park
     '01': 'Raffles Place', '02': 'Tanjong Pagar', '03': 'Queenstown',
     '04': 'Telok Blangah', '05': 'Clementi',      '06': 'City Hall',
-    # D02: Chinatown / Tanjong Pagar / Anson
     '07': 'Tanjong Pagar', '08': 'Chinatown',
-    # D03: Alexandra / Commonwealth / Queenstown / Tiong Bahru
     '14': 'Queenstown',    '15': 'Queenstown',    '16': 'Queenstown',
-    # D04: Harbourfront / Telok Blangah
     '09': 'Harbourfront',  '10': 'Harbourfront',
-    # D05: Buona Vista / West Coast / Clementi / Pasir Panjang
     '11': 'Buona Vista',   '12': 'Buona Vista',   '13': 'Clementi',
-    # D06: City Hall / Clarke Quay / High Street
     '17': 'City Hall',
-    # D07: Beach Road / Bugis / Rochor / Middle Road / Golden Mile
     '18': 'Bugis',         '19': 'Bugis',
-    # D08: Farrer Park / Serangoon Road / Little India
     '20': 'Little India',  '21': 'Little India',
-    # D09: Orchard / Cairnhill / River Valley
     '22': 'Orchard',       '23': 'Orchard',
-    # D10: Tanglin / Ardmore / Holland / Bukit Timah
     '24': 'Bukit Timah',   '25': 'Bukit Timah',   '26': 'Bukit Timah',   '27': 'Bukit Timah',
-    # D11: Newton / Novena / Watten Estate / Thomson
     '28': 'Newton',        '29': 'Newton',        '30': 'Novena',
-    # D12: Balestier / Toa Payoh / Serangoon
     '31': 'Toa Payoh',     '32': 'Toa Payoh',     '33': 'Toa Payoh',
-    # D13: Macpherson / Potong Pasir / Braddell
     '34': 'Potong Pasir',  '35': 'Potong Pasir',  '36': 'Potong Pasir',  '37': 'Potong Pasir',
-    # D14: Kembangan / Eunos / Paya Lebar / Geylang
     '38': 'Geylang',       '39': 'Geylang',       '40': 'Paya Lebar',    '41': 'Paya Lebar',
-    # D15: East Coast / Marine Parade / Katong / Joo Chiat / Amber Road
     '42': 'Marine Parade', '43': 'Marine Parade', '44': 'Marine Parade', '45': 'Marine Parade',
-    # D16: Bedok / Upper East Coast / Eastwood / Kew Drive
     '46': 'Bedok',         '47': 'Bedok',         '48': 'Bedok',
-    # D17: Changi Airport / Changi Village / Loyang
     '49': 'Changi',        '50': 'Changi',        '81': 'Changi',
-    # D18: Pasir Ris / Tampines
     '51': 'Pasir Ris',     '52': 'Tampines',
-    # D19: Serangoon Gardens / Hougang / Punggol / Sengkang
     '53': 'Serangoon',     '54': 'Sengkang',      '55': 'Sengkang',      '82': 'Punggol',
-    # D20: Ang Mo Kio / Bishan / Thomson
     '56': 'Ang Mo Kio',    '57': 'Ang Mo Kio',
-    # D21: Clementi Park / Upper Bukit Timah / Ulu Pandan
     '58': 'Upper Bukit Timah', '59': 'Upper Bukit Timah',
-    # D22: Boon Lay / Jurong / Tuas
     '60': 'Jurong West',   '61': 'Jurong West',   '62': 'Jurong West',
     '63': 'Jurong West',   '64': 'Jurong West',
-    # D23: Hillview / Dairy Farm / Bukit Panjang / Choa Chu Kang
     '65': 'Bukit Batok',   '66': 'Bukit Batok',   '67': 'Bukit Panjang', '68': 'Choa Chu Kang',
-    # D24: Lim Chu Kang / Tengah
     '69': 'Jurong West',   '70': 'Jurong West',   '71': 'Jurong West',
-    # D25: Admiralty / Woodlands / Kranji / Woodgrove
     '72': 'Woodlands',     '73': 'Woodlands',
-    # D26: Mandai / Upper Thomson / Springleaf
     '77': 'Upper Thomson', '78': 'Upper Thomson',
-    # D27: Yishun / Sembawang
     '75': 'Yishun',        '76': 'Yishun',
-    # D28: Seletar / Yio Chu Kang
     '79': 'Yio Chu Kang',  '80': 'Yio Chu Kang',
 }
 
@@ -1096,7 +1048,6 @@ def postal_to_area(postal):
     return POSTAL_DISTRICTS.get(str(postal)[:2], 'Singapore')
 
 
-# News — Google News RSS, no API key required
 def fetch_news(query, limit=6, max_age_years=5):
     import xml.etree.ElementTree as ET
     import urllib.parse
@@ -1327,7 +1278,6 @@ def get_amenities():
 
     others = fetch_overpass_amenities(lat, lng)
 
-    # Merge OneMap MRT + Overpass MRT (single Overpass call now covers both)
     def _norm(name):
         n = re.sub(r'\s+(MRT|LRT)\s+Station$', '', name, flags=re.IGNORECASE)
         return re.sub(r'\s+(MRT|LRT)$', '', n, flags=re.IGNORECASE).strip().lower()
@@ -1396,8 +1346,8 @@ def market_watch():
     else:
         m_prev_dt = datetime.datetime(m_curr_dt.year, m_curr_dt.month - 1, 1)
 
-    m_curr = m_curr_dt.strftime('%Y-%m')   # e.g. "2026-02"
-    m_prev = m_prev_dt.strftime('%Y-%m')   # e.g. "2026-01"
+    m_curr = m_curr_dt.strftime('%Y-%m')
+    m_prev = m_prev_dt.strftime('%Y-%m')
     m_curr_label = m_curr_dt.strftime('%b %Y')
     m_prev_label = m_prev_dt.strftime('%b %Y')
 
