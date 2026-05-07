@@ -24,7 +24,6 @@ def _bala_fraction(lr):
             return round(f1 + t * (f0 - f1), 6)
     return 0.0
 
-# ─── MRT station coordinates — synced with train_model.py ────────────────────
 _MRT_STATIONS = [
     (1.4474,103.7742),(1.4617,103.7875),(1.4739,103.8003),(1.4271,103.8384),
     (1.4041,103.8485),(1.3817,103.8449),(1.3620,103.8330),(1.3699,103.8486),
@@ -534,8 +533,6 @@ def _load_private_models():
         print(f"[predict] Private ML models not available: {e}")
         return False
 
-
-# ─── OneMap geocoding ─────────────────────────────────────────────────────────
 
 def _load_latest_policy_sora():
     """Try to load latest policy and SORA from DB for inference."""
