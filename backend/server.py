@@ -549,7 +549,6 @@ POSTGRES_SCHEMA = """
     );
 """
 
-# Executed once on startup via init_db(). Safe to re-run (CREATE OR REPLACE).
 _POSTGRES_RPC = """
 CREATE OR REPLACE FUNCTION process_uploaded_data()
 RETURNS void
@@ -784,7 +783,6 @@ def migrate_db():
     finally:
         conn.close()
 
-# OneMap API helpers
 def get_onemap_token():
     with _om_lock:
         if _om_token_cache['token'] and time.time() < _om_token_cache['expiry']:
@@ -1008,8 +1006,6 @@ def fetch_overpass_amenities(lat, lng):
     return cats
 
 
-# Postal sector → neighbourhood (first 2 digits of 6-digit postal code).
-# Source: URA postal district table. Used as fallback when OneMap planning area API fails.
 POSTAL_DISTRICTS = {
     '01': 'Raffles Place', '02': 'Tanjong Pagar', '03': 'Queenstown',
     '04': 'Telok Blangah', '05': 'Clementi',      '06': 'City Hall',
@@ -1335,7 +1331,6 @@ def market_watch():
     import urllib.parse
 
     now = datetime.datetime.now()
-    # Last two full months
     if now.month == 1:
         m_curr_dt = datetime.datetime(now.year - 1, 12, 1)
     else:
@@ -1378,7 +1373,7 @@ def market_watch():
             hdb_vol_chg   = round((vol_c - vol_p) / vol_p * 100, 1)
             live = True
     except Exception:
-        pass  # fall back to curated figures
+        pass
 
     payload = {
         'period': {'current': m_curr_label, 'previous': m_prev_label},
@@ -1392,7 +1387,6 @@ def market_watch():
     return jsonify(payload)
 
 
-# Static frontend
 @app.route('/')
 def index():
     return send_from_directory(app.static_folder, 'index.html')
@@ -1401,7 +1395,6 @@ def index():
 def static_proxy(path):
     return send_from_directory(app.static_folder, path)
 
-# API routes
 @app.route('/api/predict', methods=['POST'])
 def predict():
     data   = request.json
@@ -1444,7 +1437,6 @@ def stats():
     total_users       = count(cur, 'users')
     total_predictions = count(cur, 'predictions')
 
-    # New table counts
     try:
         cur.execute("SELECT COUNT(*) AS n FROM resale_flat_prices"); hdb_tx_count = dict(cur.fetchone())['n']
     except: hdb_tx_count = 0
@@ -1468,7 +1460,6 @@ def stats():
     all_users = [{"id": r["id"], "full_name": r["full_name"], "email": r["email"],
                   "role": r["role"], "is_admin": r["role"] == "admin"} for r in _rows(cur)]
 
-    # Predictions by property type (infer from flat_type)
     cur.execute("SELECT flat_type, COUNT(*) AS n FROM predictions GROUP BY flat_type")
     hdb_types = {'1 ROOM','2 ROOM','3 ROOM','4 ROOM','5 ROOM','EXECUTIVE','MULTI-GENERATION'}
     hdb_count, priv_count = 0, 0
@@ -1480,18 +1471,15 @@ def stats():
             priv_count += r['n']
     predictions_by_type = {'hdb': hdb_count, 'private': priv_count}
 
-    # Top 10 towns by prediction count
     cur.execute("SELECT town, COUNT(*) AS n FROM predictions WHERE town IS NOT NULL GROUP BY town ORDER BY n DESC LIMIT 10")
     predictions_by_town = [{'town': r['town'], 'count': r['n']} for r in _rows(cur)]
 
-    # Daily predictions last 14 days
     if USE_POSTGRES:
         cur.execute("SELECT DATE(predicted_at) AS d, COUNT(*) AS n FROM predictions WHERE predicted_at >= NOW() - INTERVAL '14 days' GROUP BY DATE(predicted_at) ORDER BY d")
     else:
         cur.execute("SELECT DATE(predicted_at) AS d, COUNT(*) AS n FROM predictions WHERE predicted_at >= datetime('now','-14 days') GROUP BY DATE(predicted_at) ORDER BY d")
     daily_predictions = [{'date': str(r['d']), 'count': r['n']} for r in _rows(cur)]
 
-    # Daily registrations last 14 days (requires created_at column from migrate_db)
     daily_registrations = []
     try:
         if USE_POSTGRES:
@@ -1502,11 +1490,7 @@ def stats():
     except Exception:
         pass
 
-    # Recent 50 predictions
-    if USE_POSTGRES:
-        cur.execute("SELECT p.id, p.town, p.flat_type, p.floor_area_sqm, p.estimated_value, p.confidence, p.predicted_at, u.full_name FROM predictions p LEFT JOIN users u ON p.user_id=u.id ORDER BY p.predicted_at DESC LIMIT 50")
-    else:
-        cur.execute("SELECT p.id, p.town, p.flat_type, p.floor_area_sqm, p.estimated_value, p.confidence, p.predicted_at, u.full_name FROM predictions p LEFT JOIN users u ON p.user_id=u.id ORDER BY p.predicted_at DESC LIMIT 50")
+    cur.execute("SELECT p.id, p.town, p.flat_type, p.floor_area_sqm, p.estimated_value, p.confidence, p.predicted_at, u.full_name FROM predictions p LEFT JOIN users u ON p.user_id=u.id ORDER BY p.predicted_at DESC LIMIT 50")
     recent_preds = _rows(cur)
     for r in recent_preds:
         for k in list(r.keys()):
@@ -1521,7 +1505,6 @@ def stats():
 
     conn.close()
 
-    # Model eval metrics from saved meta files
     model_metrics = {}
     try:
         import joblib as _jl
@@ -1565,7 +1548,6 @@ def trend():
     conn = get_db()
     cur  = _cursor(conn)
 
-    # Build WHERE clauses
     filters, params = [], []
     filters.append("month IS NOT NULL")
     filters.append("resale_price > 0")
@@ -1577,7 +1559,6 @@ def trend():
         params.append(flat_type)
     where = "WHERE " + " AND ".join(filters)
 
-    # ── 6-month trend: average resale price per month ─────────────────────────
     try:
         cur.execute(_q(
             f"SELECT month, AVG(resale_price) AS avg_price "
@@ -1598,8 +1579,6 @@ def trend():
             label = mo_str
         trend_data.append({"month": label, "price": int(float(r.get('avg_price') or 0))})
 
-    # ── Comparable recent sales ───────────────────────────────────────────────
-    # Step 1: find the latest month in the filtered dataset
     try:
         cur.execute(_q(
             f"SELECT MAX(month) AS max_month FROM resale_flat_prices {where}"
@@ -1609,11 +1588,10 @@ def trend():
     except Exception:
         max_month = ''
 
-    # Step 2: compute the oldest month to include (3 months back from latest)
     if max_month and len(max_month) >= 7:
         try:
             my, mm = int(max_month[:4]), int(max_month[5:7])
-            mm -= 2          # e.g. latest = 2025-03 → min = 2025-01
+            mm -= 2
             if mm <= 0:
                 mm += 12; my -= 1
             min_month = f"{my:04d}-{mm:02d}"
@@ -1622,7 +1600,6 @@ def trend():
     else:
         min_month = ''
 
-    # Step 3: query transactions from those 3 months, ordered randomly
     comp_rows = []
     try:
         date_filters = list(params)
@@ -1764,9 +1741,7 @@ def login():
         "totp_enabled": bool(user.get("totp_enabled")),
     }
 
-    # ── 2FA check ────────────────────────────────────────────────────────────
     if user.get("totp_enabled"):
-        # Check trusted device cookie first
         td_cookie = request.cookies.get('td_token', '')
         if td_cookie:
             td_hash = _hash_token(td_cookie)
@@ -1788,7 +1763,6 @@ def login():
     return jsonify({"user": user_obj})
 
 
-# ── 2FA Endpoints ─────────────────────────────────────────────────────────────
 
 @app.route('/api/2fa/setup', methods=['POST'])
 def twofa_setup():
@@ -1812,7 +1786,6 @@ def twofa_setup():
             conn.close()
             return jsonify({"error": "User not found"}), 404
 
-        # Generate new secret — use parameterised False to handle both BOOLEAN (PG) and INTEGER (SQLite)
         raw_secret = pyotp.random_base32()
         encrypted  = _encrypt_secret(raw_secret)
         cur.execute(_q("UPDATE users SET totp_secret = ?, totp_enabled = ? WHERE id = ?"),
@@ -1911,7 +1884,6 @@ def twofa_verify():
         expires_str = expires_dt.isoformat()
         client_ip  = _get_client_ip()
         try:
-            # Ensure table exists (guard against first-run race before migrate_db)
             if USE_POSTGRES:
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS trusted_devices (
@@ -1939,7 +1911,6 @@ def twofa_verify():
                 VALUES (?, ?, ?, ?)
             """), (user_id, token_hash, client_ip, expires_str))
             conn.commit()
-            # secure=True only in production (HTTPS); False lets the cookie work over HTTP locally
             resp.set_cookie(
                 'td_token', raw_token,
                 max_age=30 * 24 * 3600,
@@ -2193,7 +2164,6 @@ def update_profile(user_id):
         conn.close()
         return jsonify({"error": "Email already in use"}), 400
 
-    # Password change
     if new_password:
         pw_err = _validate_password_strength(new_password)
         if pw_err:
@@ -2206,7 +2176,6 @@ def update_profile(user_id):
             conn.close()
             return jsonify({"error": "Current password is incorrect"}), 400
 
-        # 2FA check if enabled
         if row.get('totp_enabled') and row.get('totp_secret'):
             try:
                 import pyotp
@@ -2295,11 +2264,9 @@ def mop_leads():
     try:
         import datetime as _dt
         today = _dt.date.today()
-        mop_start = today.year - 5          # units that passed MOP in last 12 months
-        mop_end   = today.year - 4          # units that will pass MOP in next 12 months
+        mop_start = today.year - 5
+        mop_end   = today.year - 4
 
-        # We look for leases that commenced between (today - 6 years) and (today - 4 years)
-        # so MOP date falls within a ±1 year window around now
         lease_min = today.year - 6
         lease_max = today.year - 4
 
@@ -2336,7 +2303,7 @@ def mop_leads():
             mop_yr = int(r.get('mop_year') or 0)
             lc     = int(r.get('lease_commence_date') or 0)
             status = 'eligible' if mop_yr <= today.year else 'upcoming'
-            months_to_mop = max(0, (mop_yr - today.year) * 12 + (7 - today.month))  # rough
+            months_to_mop = max(0, (mop_yr - today.year) * 12 + (7 - today.month))
             leads.append({
                 "town":          r.get('town', ''),
                 "block":         r.get('block', ''),
@@ -2377,7 +2344,6 @@ def gap_analysis():
         return jsonify({"error": "Agent account required"}), 403
 
     try:
-        # HDB towns → market segment (OCR/RCR/CCR)
         _TOWN_SEGMENT = {
             'CENTRAL AREA': 'CCR', 'BUKIT TIMAH': 'CCR',
             'QUEENSTOWN': 'RCR', 'BUKIT MERAH': 'RCR', 'BISHAN': 'RCR',
@@ -2391,7 +2357,6 @@ def gap_analysis():
             'YISHUN': 'OCR',
         }
 
-        # HDB avg resale price and avg sqm (last 24 months of data)
         if USE_POSTGRES:
             hdb_date_filter = "month >= TO_CHAR(CURRENT_DATE - INTERVAL '24 months', 'YYYY-MM')"
             ura_date_filter = "sale_date >= TO_CHAR(CURRENT_DATE - INTERVAL '24 months', 'YYYY-MM')"
@@ -2415,8 +2380,6 @@ def gap_analysis():
         )
         hdb_rows = _rows(cur)
 
-        # Resale condo avg PSF per market segment (last 24 months)
-        # Cap PSF to realistic Singapore range (S$500–S$8000/sqft) to exclude outliers
         cur.execute(
             f"""
             SELECT market_segment,
@@ -2433,14 +2396,12 @@ def gap_analysis():
         priv_rows  = _rows(cur)
         conn.close()
 
-        # Build segment PSF lookup
         seg_psf = {}
         for r in priv_rows:
             s = str(r.get('market_segment') or '').strip().upper()
             if s:
                 seg_psf[s] = float(r.get('avg_psf') or 0)
 
-        # Default benchmark PSFs if DB is sparse — resale condo 2026 estimates
         BENCH = {'CCR': 2200, 'RCR': 1550, 'OCR': 1150}
         for k, v in BENCH.items():
             if k not in seg_psf or seg_psf[k] < 500:
@@ -2454,7 +2415,6 @@ def gap_analysis():
             avg_p    = float(r.get('avg_price') or 0)
             avg_sqm  = float(r.get('avg_sqm')  or 90)
             tx_count = int(r.get('tx_count')   or 0)
-            # Skip implausible aggregates (outlier rows leaked past SQL filter)
             if avg_p <= 100000 or avg_p > 2500000:
                 continue
             if avg_sqm < 28 or avg_sqm > 300:
@@ -2464,10 +2424,9 @@ def gap_analysis():
             avg_sqft = avg_sqm * 10.764
             rc_total = rc_psf * avg_sqft
             gap_pct  = (rc_total - avg_p) / avg_p if avg_p > 0 else 0
-            # Skip rows with implausible gap (> 500% signals bad data slipping through)
             if gap_pct > 5.0 or gap_pct < 0:
                 continue
-            deviation = gap_pct - HIST_GAP           # +ve → gap wider than historical
+            deviation = gap_pct - HIST_GAP
 
             results.append({
                 "town":        town,
@@ -2481,7 +2440,6 @@ def gap_analysis():
                 "tx_count":    tx_count,
             })
 
-        # Sort: widest deviation first (best leads)
         results.sort(key=lambda x: x['deviation'], reverse=True)
         return jsonify({"gaps": results[:25], "seg_psf": seg_psf, "comparison": "resale_condo"})
     except Exception as e:
@@ -2559,9 +2517,6 @@ def property_lookup():
     if not postal:
         return jsonify({'error': 'postal required'}), 400
 
-    # geocoded_addresses no longer stores postal_code — skip to OneMap lookup
-
-    # 2. OneMap elastic search
     try:
         import urllib.parse
         r = urllib.request.urlopen(
@@ -2579,9 +2534,6 @@ def property_lookup():
         building = str(result.get('BUILDING') or '').strip().upper()
         blk_no   = str(result.get('BLK_NO') or '').strip()
 
-        # ── DB-first property type classification ────────────────────────
-        # HDB → exists in resale_flat_prices; Condo → exists in ura_transactions
-        # Landed → in neither (and no named building)
         db_is_hdb   = False
         db_is_condo = False
         try:
@@ -2598,8 +2550,6 @@ def property_lookup():
                         "SELECT 1 FROM resale_flat_prices WHERE UPPER(block) LIKE ? LIMIT 1"
                     ), (f'{_blk_core}%',))
                     db_is_hdb = _dbc_cur.fetchone() is not None
-            # Check URA (condo/EC) DB by building name — takes priority over a bare block match,
-            # because named HDBs (Pinnacle, Dawson etc.) will NOT appear in ura_transactions
             if building not in ('NIL', ''):
                 # Exclude landed types so detached/terrace houses don't trigger db_is_condo
                 _LANDED = ('Detached House', 'Semi-Detached House', 'Terrace House',
@@ -2614,10 +2564,6 @@ def property_lookup():
         except Exception:
             pass
 
-        # Combine DB signals with OneMap heuristic.
-        # URA (condo/EC) match takes priority over bare HDB block match:
-        # named HDBs (Pinnacle@Duxton, SkyVille@Dawson) won't appear in ura_transactions,
-        # but ECs (Blossom Residences, The Canopy) will — so a URA hit is authoritative.
         onemap_looks_hdb   = (building in ('NIL', '')) and bool(_re.match(r'^\d+[A-Z]?$', blk_no))
         onemap_looks_condo = building not in ('NIL', '')
 
@@ -2626,12 +2572,10 @@ def property_lookup():
         elif db_is_hdb:
             is_hdb, is_condo, is_landed = True, False, False
         elif onemap_looks_hdb:
-            # Block number present but not yet in our DB (e.g. new flat) — treat as HDB
             is_hdb, is_condo, is_landed = True, False, False
         elif onemap_looks_condo:
             is_hdb, is_condo, is_landed = False, True, False
         else:
-            # No named building + not in HDB DB → landed / unknown
             is_hdb, is_condo, is_landed = False, False, True
 
         town = None
@@ -2673,7 +2617,6 @@ def property_lookup():
             lease_type = 'Freehold'
         else:
             prop_type  = 'Condominium'
-            # Check tenure from URA transactions
             lease_type = 'Freehold'
             if building not in ('NIL', ''):
                 try:
@@ -2695,8 +2638,6 @@ def property_lookup():
                     pass
         road_name = str(result.get('ROAD_NAME') or '').strip()
 
-        # DB fallback: if planning area API returned nothing, get town from HDB DB
-        # Must filter by block+road to avoid matching same block number across towns
         if not town and is_hdb and blk_no and road_name:
             try:
                 _dbc2 = get_db(); _dbc2_cur = _cursor(_dbc2)
@@ -2719,7 +2660,6 @@ def property_lookup():
             except Exception:
                 pass
 
-        # ── Query DB for accurate floor data ─────────────────────────────
         storey_ranges = []
         max_floor     = None
         project_name  = building if not is_hdb else ''
@@ -2754,7 +2694,6 @@ def property_lookup():
                 def _lk_gen(mf):
                     return [f'{lo:02d} TO {min(lo+2,mf):02d}' for lo in range(1, mf+1, 3)]
 
-                # Step 1: block + town (any flat type) — gives building height even with few transactions
                 srs = []
                 if town:
                     dbc_cur.execute(_q(
@@ -2767,14 +2706,12 @@ def property_lookup():
                         max_floor = max(_lk_top(s) for s in srs)
                         srs = _lk_gen(max_floor)
 
-                # Step 2: block + road first word (only when town missing)
                 if not srs and road_name:
                     road_keyword = road_name.upper().split()[0] if road_name else ''
                     if road_keyword:
                         srs = _q_storeys("AND UPPER(street_name) LIKE ?",
                                          (block_upper, f'%{road_keyword}%'))
 
-                # Step 3: town-wide fallback — typical ranges for any flat in this town
                 if not srs and town:
                     dbc_cur.execute(_q(
                         "SELECT DISTINCT storey_range FROM resale_flat_prices "
@@ -2791,8 +2728,6 @@ def property_lookup():
                     max_floor = max(_top(s) for s in srs)
 
             elif not is_hdb and not is_landed and building not in ('NIL', ''):
-                # Condo/EC: get floor_level from ura_transactions by project name
-                # Try exact match first, then LIKE fallback for minor name differences
                 def _ura_floor_query(q_param, use_like=False):
                     op = 'LIKE' if use_like else '='
                     dbc_cur.execute(_q(
@@ -2804,7 +2739,6 @@ def property_lookup():
 
                 fl_rows = _ura_floor_query(building.upper())
                 if not fl_rows:
-                    # Fuzzy: first word of building name (handles minor suffix diffs)
                     first_word = building.upper().split()[0] if building else ''
                     if first_word and len(first_word) >= 4:
                         fl_rows = _ura_floor_query(f'%{first_word}%', use_like=True)
@@ -2820,7 +2754,6 @@ def property_lookup():
         except Exception:
             pass
 
-        # ── Remaining lease years from HDB DB ────────────────────────
         remaining_lease_years = None
         if is_hdb and blk_no:
             try:
@@ -2866,7 +2799,6 @@ def hdb_flat_specs():
     flat_type = request.args.get('flat_type', '').strip().upper()
     town      = request.args.get('town', '').strip().upper()
 
-    # Hardcoded defaults by flat type (sqft) used when table is empty
     _DEFAULTS = {
         '1 ROOM':  {'min': 280,  'max': 500,  'median': 355,  'max_floor': 12},
         '2 ROOM':  {'min': 380,  'max': 560,  'median': 474,  'max_floor': 16},
@@ -2916,11 +2848,11 @@ def hdb_flat_specs():
     areas_sqft = sorted([a * 10.764 for a in areas])
     n = len(areas_sqft)
     median_sqft = areas_sqft[n // 2]
-    min_sqft    = areas_sqft[max(0, int(n * 0.05))]  # 5th percentile
-    max_sqft    = areas_sqft[min(n - 1, int(n * 0.95))]  # 95th percentile
+    min_sqft    = areas_sqft[max(0, int(n * 0.05))]
+    max_sqft    = areas_sqft[min(n - 1, int(n * 0.95))]
 
     max_floor = max((_parse_storey_max(s) for s in storeys), default=defaults['max_floor'])
-    max_floor = max(max_floor, defaults['max_floor'])  # at least the default
+    max_floor = max(max_floor, defaults['max_floor'])
 
     return jsonify({
         'area_sqft_min':    round(min_sqft / 50) * 50,
@@ -3000,7 +2932,6 @@ def floor_comps():
     try:
         conn = get_db(); cur = _cursor(conn)
 
-        # Step 1: exact block match, fall back to numeric-core LIKE if no data
         block_core = ''.join(c for c in block if c.isdigit())
         rows = _fetch("AND UPPER(town) = ? AND UPPER(block) = ?", (flat_type, town, block))
         if not rows and block_core and block_core != block:
@@ -3008,7 +2939,6 @@ def floor_comps():
         comps = _aggregate(rows, max_blk_diff=0)
 
         source = 'block'
-        # Step 2: if fewer than 5 storey bands, widen to ±5 sibling blocks on same street
         if len(comps) < 5:
             road_kw = road.split()[0] if road else ''
             if road_kw:
@@ -3042,7 +2972,6 @@ def property_areas():
     town          = request.args.get('town', '').strip().upper()
     project_name  = request.args.get('project', '').strip().upper()
 
-    # If town missing (planning area API failed upstream), derive from DB using block + road first word
     if not town and block and property_type == 'HDB':
         try:
             _tc = get_db(); _tcu = _cursor(_tc)
@@ -3063,7 +2992,6 @@ def property_areas():
         except Exception:
             pass
 
-    # Postal sector → URA postal district mapping (first 2 postal digits)
     _SECTOR_TO_DISTRICT = {
         '01':'D01','02':'D01','03':'D01','04':'D01','05':'D01','06':'D01',
         '07':'D02','08':'D02',
@@ -3095,8 +3023,6 @@ def property_areas():
         '79':'D28','80':'D28',
     }
 
-    # Fallback condo floor areas (sqft) — general range spanning studio to large units
-    # Used only when no URA transaction data is available for the project/district
     _CONDO_FALLBACK = [
         431, 484, 560, 614, 700, 764, 850, 915, 969,
         1044, 1163, 1302, 1453, 1604, 1830, 2000, 2400,
@@ -3107,18 +3033,17 @@ def property_areas():
     flat_type = flat_type_param if flat_type_param in _BEDS_TO_FLAT.values() else _BEDS_TO_FLAT.get(bedrooms, '3 ROOM')
 
     floor_areas          = []
-    max_floor            = None   # computed from real data; frontend falls back to 20 if still None
+    max_floor            = None
     storey_ranges        = []
-    default_storey_range = None   # most frequent range for this block — pre-selects in UI
-    floor_data_source    = 'block'  # must be initialised here — condo path never sets it
-    max_transacted_floor = None   # HDB-only but referenced in return for all property types
+    default_storey_range = None
+    floor_data_source    = 'block'  # condo path never sets this, so initialise here
+    max_transacted_floor = None
 
     try:
         conn = get_db()
         cur  = _cursor(conn)
 
         if property_type == 'HDB':
-            # Try to get areas for the specific block+street first, then fall back to flat_type-wide
             def _fetch_hdb_areas(extra_where, params):
                 cur.execute(_q(
                     "SELECT DISTINCT floor_area_sqm FROM resale_flat_prices "
@@ -3128,7 +3053,6 @@ def property_areas():
                 return sorted(set(float(r['floor_area_sqm'] if hasattr(r, '__getitem__') else r[0])
                                   for r in rows if (r['floor_area_sqm'] if hasattr(r, '__getitem__') else r[0])))
 
-            # Helper: block+road → block+town → town → flat_type-wide (no block-only step)
             def _fetch_hdb_areas_cascade(block, road, flat_type):
                 road_kw = road.split()[0] if road else ''
                 if block and road_kw:
@@ -3145,10 +3069,8 @@ def property_areas():
 
             sqm_vals = _fetch_hdb_areas_cascade(block, road, flat_type)
 
-            # Return sqm values rounded to nearest 1 sqm, deduplicated
             floor_areas = sorted(set(round(s) for s in sqm_vals))
 
-            # Helper: fetch storey ranges with cascade fallback
             def _fetch_storeys(extra_where, params):
                 cur.execute(_q(
                     "SELECT DISTINCT storey_range FROM resale_flat_prices "
@@ -3172,16 +3094,14 @@ def property_areas():
                     out.append(f'{lo:02d} TO {hi:02d}')
                 return out
 
-            # Extract numeric part of block for proximity matching (e.g. '443A' → 443)
             try:
                 block_num = int(''.join(c for c in block if c.isdigit()) or '0')
             except Exception:
                 block_num = 0
 
-            # Step A: get max floor from the specific block (all flat types)
             block_max_floor      = None
             max_transacted_floor = None
-            block_core = ''.join(c for c in block if c.isdigit())  # "443A" → "443"
+            block_core = ''.join(c for c in block if c.isdigit())
             if block and town:
                 cur.execute(_q(
                     "SELECT DISTINCT storey_range FROM resale_flat_prices "
@@ -3200,8 +3120,6 @@ def property_areas():
                     block_max_floor = max(_top(s) for s in all_ft)
                     max_transacted_floor = block_max_floor
 
-            # Step B: numeric-proximity sibling query — blocks within ±5 on same street
-            # Finds same-estate blocks (e.g. block 20 → checks 15–25 on same road)
             road_kw = road.split()[0] if road else ''
             if road_kw and town:
                 cur.execute(_q(
@@ -3227,7 +3145,6 @@ def property_areas():
                     if not block_max_floor:
                         block_max_floor = sibling_max
 
-            # Step 1: block + town, specific flat type
             if block and town:
                 storeys = _fetch_storeys("AND UPPER(block) = ? AND UPPER(town) = ?",
                                          (flat_type, block, town))
@@ -3239,12 +3156,10 @@ def property_areas():
                     if block_max_floor and block_max_floor > _top(storeys[-1]):
                         storeys = _gen_ranges(block_max_floor)
 
-            # Step 1b: no flat-type data — use all-flat-type ranges for this block
             if not storeys and block_max_floor:
                 storeys = _gen_ranges(block_max_floor)
                 floor_data_source = 'block'
 
-            # Step 2: block + road keyword (only when town unavailable)
             if not storeys and block and road:
                 _rp2 = road.upper().split()
                 road_keyword = _rp2[0] if _rp2 else ''
@@ -3253,12 +3168,10 @@ def property_areas():
                                              (flat_type, block, f'%{road_keyword}%'))
                     if storeys: floor_data_source = 'block'
 
-            # Step 3: town-wide for this flat type
             if not storeys and town:
                 storeys = _fetch_storeys("AND UPPER(town) = ?", (flat_type, town))
                 if storeys: floor_data_source = 'town'
 
-            # Step 4: no data at all — user must enter floor manually
             if not storeys:
                 floor_data_source = 'none'
 
@@ -3272,7 +3185,6 @@ def property_areas():
             )
             storey_ranges = raw_ranges
 
-            # Most frequent storey range for this specific block → pre-select in UI
             if block:
                 _mf_extra = "AND UPPER(block) = ? AND UPPER(town) = ?" if town else "AND UPPER(block) = ?"
                 _mf_params = (flat_type, block, town) if town else (flat_type, block)
@@ -3287,7 +3199,7 @@ def property_areas():
                         _mf_row['storey_range'] if hasattr(_mf_row, '__getitem__') else _mf_row[0]
                     )
 
-        else:  # Condominium
+        else:
             def _condo_query(where, params):
                 cur.execute(_q(
                     "SELECT DISTINCT floor_area_sqft FROM ura_transactions "
@@ -3312,12 +3224,10 @@ def property_areas():
             raw = []
             fl_rows = []
 
-            # 1. Try by exact project name (most specific)
             if project_name:
                 raw     = _condo_query("UPPER(project) = ?", (project_name,))
                 fl_rows = _condo_floors("UPPER(project) = ?", (project_name,))
 
-            # 1b. Fuzzy fallback — first word of project name (handles minor suffix differences)
             if (not raw or not fl_rows) and project_name:
                 first_word = project_name.split()[0] if project_name else ''
                 if first_word and len(first_word) >= 4:
@@ -3326,12 +3236,10 @@ def property_areas():
                     if not fl_rows:
                         fl_rows = _condo_floors("UPPER(project) LIKE ?", (f'%{first_word}%',))
 
-            # 2. Fall back to postal district
-            # Try both "D23" and "23" formats — CSV uploads may store either
             if not raw:
                 sector      = postal[:2] if len(postal) >= 2 else ''
                 district    = _SECTOR_TO_DISTRICT.get(sector, '')
-                district_num = district.lstrip('D').zfill(2)   # "D23" → "23"
+                district_num = district.lstrip('D').zfill(2)
                 for dv in [district, district_num]:
                     if dv:
                         raw = _condo_query("UPPER(postal_district) = ?", (dv,))
@@ -3346,17 +3254,14 @@ def property_areas():
                 floor_areas = sorted(set(round(v / 50.0) * 50 for v in raw))
             tops = [_fl_top(s) for s in fl_rows if _fl_top(s) > 0]
             if tops:
-                # Use MAX not median — building height = highest transacted floor, not typical floor
                 max_floor = max(tops)
 
         conn.close()
     except Exception:
         pass
 
-    # Fall back to bedroom-based presets if no DB data
     if not floor_areas:
         if property_type == 'HDB':
-            # Preset values in sqm (common HDB flat sizes)
             _HDB_PRESETS_SQM = {
                 '1 ROOM':[31,33],'2 ROOM':[44,47],'3 ROOM':[60,65,70,75],
                 '4 ROOM':[85,90,95,100,105],'5 ROOM':[108,113,121,129,135,140],
@@ -3366,7 +3271,6 @@ def property_areas():
         else:
             floor_areas = _CONDO_FALLBACK
 
-    # When no block data found, provide town-wide max as a hint for the manual input
     town_max_floor = None
     if floor_data_source in ('none', 'generic') and property_type == 'HDB' and town:
         try:
@@ -3411,8 +3315,6 @@ def upload_transactions():
         file_bytes = file.read()
     except Exception as e:
         return jsonify({'error': f'File read error: {e}'}), 400
-
-    # ── Helpers ──────────────────────────────────────────────────────────────
 
     def _get(row, *keys, default=None):
         """Case-insensitive key lookup across multiple candidate column names."""
@@ -3470,8 +3372,7 @@ def upload_transactions():
         total = 0
         if USE_POSTGRES:
             import psycopg2.extras as _pge
-            # Rewrite "INSERT INTO t (cols) VALUES (?,?,?)" → template for execute_values
-            ev_sql = sql.replace('%s', '%%s')   # escape any existing %s first
+            ev_sql = sql.replace('%s', '%%s')
             ev_sql = ev_sql.rsplit('VALUES', 1)[0] + 'VALUES %s'
             for i in range(0, len(params_list), batch_size):
                 chunk = params_list[i:i + batch_size]
@@ -3482,7 +3383,6 @@ def upload_transactions():
                     total += len(chunk)
                 except Exception:
                     cur.execute("ROLLBACK TO SAVEPOINT _batch_sp")
-                    # row-by-row fallback for this chunk
                     for p in chunk:
                         cur.execute("SAVEPOINT _row_sp")
                         try:
@@ -3492,7 +3392,6 @@ def upload_transactions():
                         except Exception:
                             cur.execute("ROLLBACK TO SAVEPOINT _row_sp")
             return total
-        # SQLite path
         for i in range(0, len(params_list), batch_size):
             chunk = params_list[i:i + batch_size]
             try:
@@ -3507,9 +3406,6 @@ def upload_transactions():
                         pass
         return total
 
-    # ── ELT path: hand off to background thread, return immediately ───────────
-    # Avoids gunicorn worker timeout on large files (227k+ rows).
-    # SORA excluded — uses Python direct INSERT for reliable date parsing.
     if USE_POSTGRES and tx_type in ('hdb', 'geocoded', 'policy') and not is_excel:
         with _upload_lock:
             _upload_jobs[batch_id] = {'state': 'processing', 'message': 'Queued…', 'inserted': 0, 'total_rows': 0}
@@ -3518,7 +3414,6 @@ def upload_transactions():
                          daemon=True).start()
         return jsonify({'job_id': batch_id, 'message': 'Upload started'})
 
-    # ── All other paths: parse file fully (Excel, SQLite, URA) ───────────────
     try:
         if is_excel:
             import pandas as pd
@@ -3533,9 +3428,6 @@ def upload_transactions():
 
     if not rows:
         return jsonify({'error': 'CSV is empty'}), 400
-
-    # ── Build params lists (pure Python — no DB calls yet) ───────────────────
-    # Used for SQLite (local dev) and URA uploads (Postgres + SQLite).
 
     params_list = []
 
@@ -3598,7 +3490,7 @@ def upload_transactions():
                 'compound sora - 3 month', 'compoundsora-3month',
                 'compound_sora_3m', 'sora_3m', 'sora', 'published_rate', 'rate'), default=None)
             if rate_3m is None or rate_3m == 0.0:
-                continue  # skip rows with no rate value
+                continue
             params_list.append((
                 _norm_date(_get(r,
                     'sora publication date', 'sorapublicationdate',
@@ -3615,24 +3507,6 @@ def upload_transactions():
             ))
 
     elif tx_type == 'ura':
-        # URA private property transactions CSV downloaded from URA website.
-        # Accepted column names (case-insensitive):
-        #   Project Name / project
-        #   Street Name / street
-        #   Property Type / property_type
-        #   Market Segment / market_segment
-        #   Postal District / postal_district
-        #   Floor Level / floor_level
-        #   Area (SQFT) / floor_area_sqft
-        #   Area (SQM)  / floor_area_sqm
-        #   Type of Sale / type_of_sale
-        #   Transacted Price ($) / transacted_price
-        #   Unit Price ($ PSF) / unit_price_psf
-        #   Unit Price ($ PSM) / unit_price_psm
-        #   Tenure / tenure
-        #   Number of Units / num_units
-        #   Sale Date / Nett Price($) optional
-
         # Full refresh: wipe existing URA data before inserting CSV
         conn2 = get_db(); cur2 = _cursor(conn2)
         try:
@@ -3653,7 +3527,6 @@ def upload_transactions():
             sale_raw = _get(r, 'sale date', 'saledate', 'sale_date', 'contractdate', 'contract date')
             sale_date = _norm_date(sale_raw)
             if not sale_date:
-                # URA CSV uses "Jan-24" or "Jan-2024" format
                 import re as _re2
                 s = str(sale_raw or '').strip()
                 m = _re2.match(r'([A-Za-z]{3})[-\s](\d{2,4})', s)
@@ -3693,8 +3566,6 @@ def upload_transactions():
                 sale_date,
                 batch_id,
             ))
-
-    # ── Execute batch inserts ─────────────────────────────────────────────────
 
     conn = get_db()
     cur  = _cursor(conn)
@@ -3759,7 +3630,6 @@ def model_status():
     """Return live status + trained_at for HDB and private models."""
     import joblib as _jl
     import predict as _pm
-    # Trigger lazy load so in-memory pipeline state is current
     try: _pm._load_models()
     except Exception: pass
     try: _pm._load_private_models()
@@ -3793,8 +3663,6 @@ def model_status():
         return order[:len(pipelines)]
 
     def _stacker_active(pipelines, meta_obj):
-        # Read stacker state from meta file — accurate regardless of LOAD_ALL_MODELS.
-        # Equal-weight fallback ([1/n, 1/n, ...]) counts as inactive.
         coef = (meta_obj or {}).get('stacker_coef')
         if not coef:
             return False
@@ -3802,7 +3670,6 @@ def model_status():
         if n == 0:
             return False
         equal = 1.0 / n
-        # If all weights are within 0.001 of equal, it's the fallback — not a trained stacker
         is_equal_weights = all(abs(w - equal) < 0.001 for w in coef)
         return not is_equal_weights
 
@@ -3853,12 +3720,9 @@ def trigger_training():
 @app.route('/api/admin/upload-model', methods=['POST'])
 def upload_model_file():
     """Accept a .joblib model file (from Colab or GitHub Actions) and hot-swap it."""
-    # Optional secret auth — required when MODEL_UPLOAD_SECRET env var is set
     expected = os.environ.get('MODEL_UPLOAD_SECRET', '')
     if expected:
         provided = request.headers.get('X-Upload-Secret', '')
-        # Allow through if no header sent (browser manual upload from admin panel)
-        # Reject only when a wrong secret is explicitly provided
         if provided and provided != expected:
             return jsonify({'error': 'Invalid upload secret'}), 401
     f = request.files.get('file')
@@ -3983,7 +3847,6 @@ def populate_amenities():
             from collections import Counter
             counts = Counter(r[1] for r in rows)
             print(f'[amenities] Inserted {len(rows):,} rows: {dict(sorted(counts.items()))}')
-            # Invalidate predict.py amenity cache so next inference reloads
             try:
                 import predict as _pm
                 _pm._amenity_coords_cache.clear()
@@ -4035,7 +3898,6 @@ def sync_ura():
     batch_id = datetime.datetime.utcnow().isoformat()
     inserted = 0
 
-    # Collect all rows from URA API before touching the DB
     rows = []
     for batch in range(1, 5):
         try:
@@ -4052,7 +3914,6 @@ def sync_ura():
                 for det in proj.get('transaction', []):
                     cd = str(det.get('contractDate', ''))
                     try:
-                        # contractDate format: "MMYY" e.g. "0715" = July 2015
                         mo, yr = int(cd[:2]), int(cd[2:])
                         year = 2000 + yr if yr < 100 else yr
                     except Exception:
@@ -4082,7 +3943,6 @@ def sync_ura():
 
     conn = get_db(); cur = _cursor(conn)
     try:
-        # Incremental upsert: skip records that already exist for same project+sale_date+floor_level
         skipped = 0
         for row in rows:
             proj, _, _, _, _, floor_lv, _, _, _, _, _, _, _, _, sale_dt, _ = row
@@ -4133,7 +3993,6 @@ def submit_feedback():
     APP_PASS   = os.environ.get('GMAIL_APP_PASSWORD', '')
 
     if not APP_PASS:
-        # Fallback: log to console so it's not silently lost during dev
         print(f"[FEEDBACK] From: {name} <{email}>\n{message}", flush=True)
         return jsonify({'ok': True, 'note': 'logged (SMTP not configured)'}), 200
 
@@ -4225,7 +4084,6 @@ def export_report():
     except ImportError:
         return jsonify({'error': 'reportlab not installed'}), 500
 
-    # ── Gather data ─────────────────────────────────────────────────────────
     conn = get_db()
     cur  = _cursor(conn)
 
@@ -4241,12 +4099,10 @@ def export_report():
     hdb_txs      = cnt('resale_flat_prices')
     priv_txs     = cnt('ura_transactions')
 
-    # Users by role
     cur.execute("SELECT role, COUNT(*) AS n FROM users GROUP BY role")
     role_rows = {r['role']: r['n'] for r in _rows(cur)}
     admin_count = role_rows.get('admin', 0)
 
-    # Predictions by type
     cur.execute("SELECT flat_type, COUNT(*) AS n FROM predictions GROUP BY flat_type ORDER BY n DESC")
     hdb_types = {'1 ROOM','2 ROOM','3 ROOM','4 ROOM','5 ROOM','EXECUTIVE','MULTI-GENERATION'}
     hdb_c, priv_c = 0, 0
@@ -4258,18 +4114,15 @@ def export_report():
         else:
             priv_c += r['n']
 
-    # Top towns
     cur.execute("SELECT town, COUNT(*) AS n FROM predictions WHERE town IS NOT NULL GROUP BY town ORDER BY n DESC LIMIT 10")
     top_towns = _rows(cur)
 
-    # Daily predictions last 14 days
     if USE_POSTGRES:
         cur.execute("SELECT DATE(predicted_at) AS d, COUNT(*) AS n FROM predictions WHERE predicted_at >= NOW() - INTERVAL '14 days' GROUP BY DATE(predicted_at) ORDER BY d")
     else:
         cur.execute("SELECT DATE(predicted_at) AS d, COUNT(*) AS n FROM predictions WHERE predicted_at >= datetime('now','-14 days') GROUP BY DATE(predicted_at) ORDER BY d")
     daily_preds = _rows(cur)
 
-    # Daily registrations
     daily_regs = []
     try:
         if USE_POSTGRES:
@@ -4280,11 +4133,9 @@ def export_report():
     except Exception:
         pass
 
-    # Recent 50 predictions
     cur.execute("SELECT p.id, p.town, p.flat_type, p.floor_area_sqm, p.estimated_value, p.confidence, p.predicted_at, u.full_name FROM predictions p LEFT JOIN users u ON p.user_id=u.id ORDER BY p.predicted_at DESC LIMIT 50")
     recent_preds = _rows(cur)
 
-    # HDB vs Private avg estimated values
     hdb_avg_val = 0
     priv_avg_val = 0
     try:
@@ -4300,7 +4151,6 @@ def export_report():
     except Exception:
         pass
 
-    # Recent registrations
     recent_regs = []
     try:
         cur.execute(_q("SELECT full_name, email, account_type, created_at FROM users ORDER BY id DESC LIMIT 20"))
@@ -4308,7 +4158,6 @@ def export_report():
     except Exception:
         pass
 
-    # Recent audit log entries
     recent_audit = []
     try:
         cur.execute(_q(
@@ -4327,7 +4176,6 @@ def export_report():
 
     conn.close()
 
-    # ── Build PDF ────────────────────────────────────────────────────────────
     buf  = BytesIO()
     PAGE = A4
     doc  = SimpleDocTemplate(buf, pagesize=PAGE, rightMargin=2*cm, leftMargin=2*cm,
@@ -4370,7 +4218,6 @@ def export_report():
     story = []
     W = doc.width
 
-    # ── Cover / Header (blue bar) ─────────────────────────────────────────
     BLUE_BG = HexColor('#1E40AF')
     WHITE   = HexColor('#FFFFFF')
     header_data = [[Paragraph(
@@ -4392,7 +4239,6 @@ def export_report():
     story.append(hr())
     story.append(Spacer(1, 0.3*cm))
 
-    # ── 1. Platform Overview ─────────────────────────────────────────────
     story.append(Paragraph('1. Platform Overview', H1))
     ov_data = [
         ['Metric', 'Value'],
@@ -4409,7 +4255,6 @@ def export_report():
     story.append(tbl(ov_data, [W*0.6, W*0.4]))
     story.append(Spacer(1, 0.5*cm))
 
-    # ── 2. HDB vs Private Property Comparison ───────────────────────────
     story.append(Paragraph('2. HDB vs Private Property Comparison', H1))
     t_sum = hdb_c + priv_c or 1
     cmp_data = [
@@ -4426,7 +4271,6 @@ def export_report():
     story.append(tbl(cmp_data, [W*0.30, W*0.20, W*0.15, W*0.35]))
     story.append(Spacer(1, 0.5*cm))
 
-    # ── 3. User Statistics ───────────────────────────────────────────────
     story.append(Paragraph('3. User Statistics', H1))
 
     if daily_regs:
@@ -4445,10 +4289,8 @@ def export_report():
         story.append(tbl(dp_data, [W*0.5, W*0.5]))
         story.append(Spacer(1, 0.3*cm))
 
-    # ── 4. Prediction Analytics ──────────────────────────────────────────
     story.append(Paragraph('4. Prediction Analytics', H1))
 
-    # Top towns
     if top_towns:
         story.append(Paragraph('Top Areas by Prediction Volume', H2))
         town_data = [['Rank', 'Area/Town', 'Predictions']]
@@ -4457,7 +4299,6 @@ def export_report():
         story.append(tbl(town_data, [W*0.15, W*0.55, W*0.30]))
         story.append(Spacer(1, 0.3*cm))
 
-    # Recent 50 predictions
     story.append(Paragraph('Recent 50 Predictions', H2))
     pred_data = [['#', 'User', 'Area/Town', 'Flat Type', 'Est. Value (S$)', 'Conf %', 'Date']]
     for i, r in enumerate(recent_preds, 1):
@@ -4475,7 +4316,6 @@ def export_report():
     story.append(tbl(pred_data, [W*0.05, W*0.16, W*0.18, W*0.14, W*0.16, W*0.10, W*0.11], header=True))
     story.append(Spacer(1, 0.5*cm))
 
-    # ── 5. Database Statistics ───────────────────────────────────────────
     story.append(Paragraph('5. Database Statistics', H1))
     db_data = [
         ['Table', 'Record Count'],
@@ -4496,7 +4336,6 @@ def export_report():
     story.append(tbl(sys_data, [W*0.6, W*0.4]))
     story.append(Spacer(1, 0.5*cm))
 
-    # ── 6. Recent Registrations ──────────────────────────────────────────
     if recent_regs:
         story.append(Paragraph('6. Recent Registrations (last 20)', H1))
         rr_data = [['Name', 'Email', 'Type', 'Registered At']]
@@ -4512,7 +4351,6 @@ def export_report():
         story.append(tbl(rr_data, [W*0.25, W*0.35, W*0.15, W*0.25]))
         story.append(Spacer(1, 0.5*cm))
 
-    # ── 7. Recent Audit Log ──────────────────────────────────────────────
     if recent_audit:
         story.append(Paragraph('7. Recent Audit Log (last 50 entries)', H1))
         al_data = [['Time', 'User', 'Event', 'Action']]
@@ -4542,7 +4380,6 @@ def export_report():
 @app.route('/api/admin/audit-log', methods=['GET'])
 def admin_audit_log():
     """Return audit log entries, optionally filtered by month (YYYY-MM format)."""
-    # Auth check (admin only) — verified via user_id + role lookup
     user_id = request.args.get('user_id', '').strip()
     if not user_id:
         return jsonify({"error": "Admin access required"}), 403
@@ -4554,7 +4391,7 @@ def admin_audit_log():
         conn.close()
         return jsonify({"error": "Admin access required"}), 403
 
-    month_filter = request.args.get('month', '').strip()  # e.g. '2026-04'
+    month_filter = request.args.get('month', '').strip()
 
     try:
         if month_filter:
@@ -4582,7 +4419,6 @@ def admin_audit_log():
                 if hasattr(l[k], 'isoformat'):
                     l[k] = l[k].isoformat()
 
-        # Get distinct months for filter dropdown
         if USE_POSTGRES:
             cur.execute("SELECT DISTINCT TO_CHAR(logged_at::timestamp, 'YYYY-MM') AS m FROM audit_log ORDER BY m DESC LIMIT 24")
         else:
@@ -4600,7 +4436,6 @@ def admin_audit_log():
 init_db()
 migrate_db()
 
-# Eagerly load ML models at startup so admin panel reflects correct state immediately
 try:
     from predict import _load_models, _load_private_models
     _load_models()
