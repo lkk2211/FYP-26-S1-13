@@ -43,8 +43,6 @@ from catboost import CatBoostRegressor
 warnings.filterwarnings('ignore', message='X does not have valid feature names')
 warnings.filterwarnings('ignore', category=UserWarning, module='lightgbm')
 
-# ─── Constants ─────────────────────────────────────────────────────────────────
-
 MODELS_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
 TEMP_PATH   = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_progress.csv')
 RESOURCE_ID = 'f1765b54-a209-4718-8d38-a39237f502b3'
@@ -104,8 +102,6 @@ NUMERICAL_COLS_MIN = [
     'dist_nearest_health_km', 'dist_nearest_park_km', 'dist_nearest_community_km',
 ]
 
-# ─── Bala's Curve (SISV standard — 11-point table) ───────────────────────────
-
 _BALA_PTS = [
     (99, 1.000), (90, 0.914), (80, 0.811), (70, 0.697), (60, 0.565),
     (50, 0.420), (40, 0.272), (30, 0.133), (20, 0.062), (10, 0.015), (0, 0.0),
@@ -120,8 +116,6 @@ def _bala_fraction(lr):
             t = (lr - y1) / (y0 - y1)
             return round(f1 + t * (f0 - f1), 6)
     return 0.0
-
-# ─── MRT stations: lat/lon covering NSL, EWL, NEL, CCL, DTL, TEL ─────────────
 
 _MRT_STATIONS = [
     # North-South Line
@@ -167,7 +161,6 @@ _MRT_STATIONS = [
     (1.3149,103.9302),(1.3204,103.9422),
 ]
 
-# ─── Primary schools (lat/lon, ~100 schools across all HDB towns) ─────────────
 # Sources: Singapore Land Authority / data.gov.sg school dataset
 _PRIMARY_SCHOOLS = [
     # Central / Queenstown / Bukit Merah
@@ -206,7 +199,6 @@ _PRIMARY_SCHOOLS = [
     (1.3960,103.9020),(1.4020,103.9100),(1.3880,103.8950),(1.3820,103.9010),
 ]
 
-# ─── Hawker centres (lat/lon, ~80 centres across all HDB towns) ───────────────
 # Sources: NEA / data.gov.sg hawker centre dataset
 _HAWKER_CENTRES = [
     # Central / Orchard / Chinatown
@@ -249,8 +241,6 @@ _HAWKER_CENTRES = [
     (1.3137,103.8854),(1.3090,103.8820),
 ]
 
-# ─── DB helpers ────────────────────────────────────────────────────────────────
-
 def _get_db_conn():
     url = os.environ.get('DATABASE_URL', '')
     if url:
@@ -274,8 +264,6 @@ def _query(sql, params=()):
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
     return rows
-
-# ─── Data loaders ──────────────────────────────────────────────────────────────
 
 def download_hdb_data():
     base = 'https://data.gov.sg/api/action/datastore_search'
@@ -401,8 +389,6 @@ def load_amenities_from_db():
         print(f'  amenities load error: {e}')
         return {}
 
-# ─── Feature engineering ───────────────────────────────────────────────────────
-
 def _storey_mid(s):
     try:
         lo, hi = str(s).upper().split(' TO ')
@@ -423,7 +409,6 @@ def _remaining_lease_years(rl):
 def engineer_features(df, policy_df, sora_df, geo_df, amenity_dict=None):
     df = df.copy()
 
-    # ── Basic parsing ────────────────────────────────────────────────────────
     df['month']    = pd.to_datetime(df['month'].astype(str).str[:7] + '-01').astype('datetime64[s]')
     df['year']     = df['month'].dt.year
     df['quarter']  = df['month'].dt.quarter
@@ -439,17 +424,14 @@ def engineer_features(df, policy_df, sora_df, geo_df, amenity_dict=None):
     for col in CATEGORICAL_COLS:
         df[col] = df[col].astype(str).str.strip().str.upper().str.replace(r'\s+', ' ', regex=True)
 
-    # ── Bala's Curve ─────────────────────────────────────────────────────────
     df['bala_fraction'] = df['remaining_lease_years'].apply(_bala_fraction)
 
-    # ── Storey % of building height ──────────────────────────────────────────
     df['block_key']  = df['block'].fillna('').astype(str).str.strip() + '_' + df['flat_type']
     block_max        = df.groupby('block_key')['storey_mid'].transform('max')
     ft_max           = df.groupby('flat_type')['storey_mid'].transform('median')
     df['max_storey'] = block_max.where(block_max > 0, ft_max).fillna(10.0)
     df['storey_pct'] = (df['storey_mid'] / df['max_storey']).clip(0.0, 1.0)
 
-    # ── PSF hierarchy ────────────────────────────────────────────────────────
     # All features use shift(1) on the sorted series to prevent data leakage.
     df['psf'] = df['resale_price'] / (df['floor_area_sqm'].replace(0, np.nan) * 10.764)
     df_s = df.sort_values(['block_key', 'month'])
@@ -485,7 +467,6 @@ def engineer_features(df, policy_df, sora_df, geo_df, amenity_dict=None):
         .transform(lambda x: x.shift(1).rolling(24, min_periods=3).median())
     )
 
-    # Fill NaN fallbacks bottom-up: block → street → town
     df_s['block_rolling_psf_24m']         = df_s['block_rolling_psf_24m'].fillna(df_s['street_rolling_psf_24m'])
     df_s['block_median_psf_alltime']      = df_s['block_median_psf_alltime'].fillna(town_ft_psf)
     df_s['street_rolling_psf_24m']        = df_s['street_rolling_psf_24m'].fillna(town_ft_psf)
@@ -494,12 +475,10 @@ def engineer_features(df, policy_df, sora_df, geo_df, amenity_dict=None):
     # geo_rolling_psf_24m placeholder — updated after geocoding merge below
     df_s['geo_rolling_psf_24m'] = df_s['street_rolling_psf_24m']
 
-    # Cyclic month encoding
     month_num = df_s['month'].dt.month
     df_s['sin_month'] = np.sin(2 * np.pi * month_num / 12)
     df_s['cos_month'] = np.cos(2 * np.pi * month_num / 12)
 
-    # Lease commence date — fill from flat_age if raw value missing
     df_s['lease_commence_date'] = df_s['lease_commence_date'].fillna(
         df_s['year'] - df_s['flat_age_years'].fillna(34)
     )
@@ -507,9 +486,9 @@ def engineer_features(df, policy_df, sora_df, geo_df, amenity_dict=None):
     df_s.drop(columns=['_street_type_key', '_fm_town_key'], inplace=True)
     df = df_s.sort_index()
 
-    # ── Market & town rolling PSF ─────────────────────────────────────────────
-    # These require month-sorted order WITHIN each group, so must be computed
-    # on separately sorted views (df_s is sorted by block_key+month, not flat_type+month).
+    # market_rolling_psf_12m and town_rolling_psf_12m require month-sorted order
+    # WITHIN each group, so must be computed on separately sorted views
+    # (df_s above is sorted by block_key+month, not flat_type+month).
     global_psf_median = df['psf'].median()
 
     df_mkt = df.sort_values(['flat_type', 'month'])
@@ -526,7 +505,6 @@ def engineer_features(df, policy_df, sora_df, geo_df, amenity_dict=None):
     )
     df['town_rolling_psf_12m'] = town_psf.reindex(df.index).fillna(df['town_flat_type_median_psf'])
 
-    # ── Policy merge ──────────────────────────────────────────────────────────
     if policy_df is not None and len(policy_df) > 0:
         pol = policy_df.copy()
         pol['effective_month'] = pd.to_datetime(pol['effective_month'], errors='coerce').astype('datetime64[s]')
@@ -545,14 +523,12 @@ def engineer_features(df, policy_df, sora_df, geo_df, amenity_dict=None):
         df['direction'] = df['severity'] = df['policy_impact'] = 0.0
         df['months_since_policy_change'] = 0
 
-    # ── SORA merge ────────────────────────────────────────────────────────────
     if sora_df is not None and len(sora_df) > 0:
         df = df.merge(sora_df, on='month', how='left')
         df['sora'] = df['sora'].fillna(df['sora'].median())
     else:
         df['sora'] = 0.0
 
-    # ── Geocoding merge ───────────────────────────────────────────────────────
     has_geo = False
     if geo_df is not None and len(geo_df) > 0:
         df['search_text'] = (
@@ -568,7 +544,6 @@ def engineer_features(df, policy_df, sora_df, geo_df, amenity_dict=None):
     if not has_geo:
         df['lat'] = df['lon'] = 0.0
 
-    # ── Geo PSF (needs lat/lon — computed here after geocoding merge) ─────────
     if has_geo:
         df = df.sort_values(['lat', 'lon', 'month'])
         df['_geo_cell'] = (
@@ -584,7 +559,6 @@ def engineer_features(df, policy_df, sora_df, geo_df, amenity_dict=None):
         df.drop(columns=['_geo_cell'], inplace=True)
     # (else: already set to street_rolling_psf_24m as placeholder above)
 
-    # ── MRT distances (vectorised haversine) ─────────────────────────────────
     if has_geo:
         print('  Computing amenity distances (chunked)...')
         R    = 6371.0
@@ -634,7 +608,6 @@ def engineer_features(df, policy_df, sora_df, geo_df, amenity_dict=None):
         df['dist_nearest_park_km']      = 0.5
         df['dist_nearest_community_km'] = 1.0
 
-    # ── Interactions ──────────────────────────────────────────────────────────
     df['storey_psf_interaction'] = df['storey_pct'] * df['block_rolling_psf_24m']
     # Lease premium per PSF dollar varies by estate: +1yr lease in Bishan ($720/sqft)
     # is worth more in absolute dollars than in Woodlands ($450/sqft).
@@ -643,12 +616,9 @@ def engineer_features(df, policy_df, sora_df, geo_df, amenity_dict=None):
     return df, has_geo
 
 
-# ─── Training ──────────────────────────────────────────────────────────────────
-
 def train(from_db=False):
     os.makedirs(MODELS_DIR, exist_ok=True)
 
-    # 1. Load transactions
     df = None
     if from_db or os.environ.get('DATABASE_URL'):
         print('Loading HDB resale data from database...')
@@ -665,7 +635,6 @@ def train(from_db=False):
         df = download_hdb_data()
     print(f'Raw records: {len(df):,}')
 
-    # 2. Load supplementary data
     print('Loading policy, SORA, geocoding, and amenity data...')
     policy_df    = load_policy_from_db()
     sora_df      = load_sora_from_db()
@@ -674,7 +643,6 @@ def train(from_db=False):
     print(f'  Policy rows: {len(policy_df) if policy_df is not None else 0}')
     print(f'  Geo rows:    {len(geo_df)    if geo_df    is not None else 0}')
 
-    # 3. Feature engineering
     print('Engineering features...')
     df_feat, has_geo = engineer_features(df, policy_df, sora_df, geo_df, amenity_dict)
     df_feat = df_feat[df_feat['year'] >= MIN_YEAR].copy()
@@ -698,7 +666,6 @@ def train(from_db=False):
         [c for c in all_features + ['resale_price', 'time_idx_raw'] if c in df_feat.columns]
     ].to_csv(TEMP_PATH, index=False)
 
-    # time_idx normalisation
     time_idx_min    = int(df_feat['time_idx_raw'].min())
     df_feat['time_idx'] = df_feat['time_idx_raw'] - time_idx_min
 
@@ -724,7 +691,6 @@ def train(from_db=False):
     )
     del df_feat; gc.collect()
 
-    # 5. Per-model feature subsets for genuine diversity
     # XGB: keep the two most important PSF signals (block 24m + market trend)
     #   but exclude the rest of the hierarchy. XGB with shallow trees + regularisation
     #   learns a smooth global surface from structural features + local block anchor +
@@ -782,7 +748,6 @@ def train(from_db=False):
         ),
     }
 
-    # 7. Phase 1 — OOF predictions using per-model feature subsets
     print('Phase 1: Generating out-of-fold predictions for stacker...')
     kf = KFold(n_splits=3, shuffle=True, random_state=42)
     oof_preds = np.zeros((len(X_train), len(model_specs)))
@@ -810,7 +775,6 @@ def train(from_db=False):
             oof_preds[:, i] = cross_val_predict(pipe, Xtr, y_train_log, cv=kf)
         gc.collect()
 
-    # 8. Phase 2 — train final models on full training data
     print('Phase 2: Training final base models...')
     trained = {}
     for name, model in model_specs.items():
@@ -831,8 +795,6 @@ def train(from_db=False):
         joblib.dump(pipe, os.path.join(MODELS_DIR, f'{name}_pipeline.joblib'))
         gc.collect()
 
-    # 9. Select best meta-learner by evaluating candidates on the test set.
-    # Candidates: Ridge at 3 regularisation strengths + HuberRegressor.
     # Ridge handles correlated base learners well (shrinks toward equal weights).
     # HuberRegressor is robust to outlier predictions but can overfit with low alpha.
     def _mape(y_true, y_pred):
@@ -880,7 +842,6 @@ def train(from_db=False):
     stacked_r2   = r2_score(y_test, stacked_pred)
     print(f'Stacked:    MAE=S${stacked_mae:,.0f}  R²={stacked_r2:.4f}  MAPE={stacked_mape:.2f}%')
 
-    # 10. Latest policy + SORA for inference
     latest_policy = {'direction': 0.0, 'severity': 0.0, 'policy_impact': 0.0,
                      'months_since_policy_change': 0}
     if policy_df is not None and len(policy_df) > 0:
