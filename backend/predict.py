@@ -8,7 +8,7 @@ from datetime import datetime
 
 MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
 
-# ─── Bala's Curve (SISV standard) — synced with train_model.py ───────────────
+# Bala's Curve (SISV standard)
 _BALA_PTS = [
     (99, 1.000), (90, 0.914), (80, 0.811), (70, 0.697), (60, 0.565),
     (50, 0.420), (40, 0.272), (30, 0.133), (20, 0.062), (10, 0.015), (0, 0.0),
@@ -24,6 +24,7 @@ def _bala_fraction(lr):
             return round(f1 + t * (f0 - f1), 6)
     return 0.0
 
+# MRT station coordinates
 _MRT_STATIONS = [
     (1.4474,103.7742),(1.4617,103.7875),(1.4739,103.8003),(1.4271,103.8384),
     (1.4041,103.8485),(1.3817,103.8449),(1.3620,103.8330),(1.3699,103.8486),
@@ -60,6 +61,7 @@ _MRT_STATIONS = [
     (1.2847,103.8631),(1.3149,103.9302),(1.3204,103.9422),
 ]
 
+# Primary school coordinates
 _PRIMARY_SCHOOLS = [
     (1.2901,103.8194),(1.2939,103.8027),(1.2825,103.8234),(1.2698,103.8225),
     (1.2703,103.8284),(1.2847,103.8289),(1.2929,103.7897),(1.3046,103.7897),
@@ -86,6 +88,7 @@ _PRIMARY_SCHOOLS = [
     (1.3960,103.9020),(1.4020,103.9100),(1.3880,103.8950),(1.3820,103.9010),
 ]
 
+# Hawker centre coordinates
 _HAWKER_CENTRES = [
     (1.2800,103.8437),(1.2819,103.8441),(1.2847,103.8289),(1.2827,103.8158),
     (1.2890,103.8490),(1.2785,103.8395),(1.2760,103.8460),
@@ -273,6 +276,7 @@ def _build_forecast(base_price: int, annual_rate: float, months: int = 12):
     return prices
 
 
+# Planning area → HDB town normalisation
 _PLANNING_TO_HDB_TOWN = {
     'KALLANG': 'KALLANG/WHAMPOA',
     'WHAMPOA': 'KALLANG/WHAMPOA',
@@ -1361,6 +1365,7 @@ def _predict_fallback(features):
     }
 
 
+# Postal sector → URA district lookup
 _SECTOR_TO_DISTRICT = {
     '01':'D01','02':'D01','03':'D01','04':'D01','05':'D01','06':'D01',
     '07':'D02','08':'D02','14':'D03','15':'D03','16':'D03',

@@ -23,6 +23,7 @@ import predict as _predict_module
 
 MASTER_SECRET = os.environ.get('MASTER_SECRET', 'dev-fallback-change-in-prod-99x')
 
+# Auth / security helpers
 def _get_client_ip():
     """Return real client IP, honouring X-Forwarded-For on Render."""
     xff = request.headers.get('X-Forwarded-For', '')
@@ -107,6 +108,7 @@ def _log_audit(conn, user_id, action: str, event_type: str, details: str = ''):
 
 _BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# Background job state (retraining + uploads)
 _retrain_status = {
     'hdb':     {'state': 'idle', 'message': 'Not yet trained this session', 'finished_at': None},
     'private': {'state': 'idle', 'message': 'Not yet trained this session', 'finished_at': None},
@@ -262,6 +264,7 @@ def _run_training_thread(model_type):
 app = Flask(__name__, static_folder='../frontend')
 CORS(app)
 
+# Database connection (SQLite locally, PostgreSQL on Render via DATABASE_URL)
 DB_PATH      = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'propaisg.db')
 DATABASE_URL  = os.environ.get('DATABASE_URL')
 USE_POSTGRES  = bool(DATABASE_URL)
@@ -783,6 +786,7 @@ def migrate_db():
     finally:
         conn.close()
 
+# OneMap API (geocoding, transport, planning areas)
 def get_onemap_token():
     with _om_lock:
         if _om_token_cache['token'] and time.time() < _om_token_cache['expiry']:
@@ -1006,6 +1010,7 @@ def fetch_overpass_amenities(lat, lng):
     return cats
 
 
+# Postal district → neighbourhood lookup (fallback when OneMap planning area API fails)
 POSTAL_DISTRICTS = {
     '01': 'Raffles Place', '02': 'Tanjong Pagar', '03': 'Queenstown',
     '04': 'Telok Blangah', '05': 'Clementi',      '06': 'City Hall',
@@ -1044,6 +1049,7 @@ def postal_to_area(postal):
     return POSTAL_DISTRICTS.get(str(postal)[:2], 'Singapore')
 
 
+# Google News RSS fetcher
 def fetch_news(query, limit=6, max_age_years=5):
     import xml.etree.ElementTree as ET
     import urllib.parse
@@ -1660,6 +1666,7 @@ def trend():
     })
 
 
+# User registration and authentication
 @app.route('/api/register', methods=['POST'])
 def register():
     data         = request.json
@@ -1764,6 +1771,7 @@ def login():
 
 
 
+# TOTP two-factor authentication
 @app.route('/api/2fa/setup', methods=['POST'])
 def twofa_setup():
     """Generate a new TOTP secret for the user and return QR URI (does not enable yet)."""
@@ -2237,6 +2245,7 @@ def delete_account(user_id):
     return jsonify({"success": True})
 
 
+# Agent tools (MOP leads, gap analysis)
 @app.route('/api/agent/mop-leads', methods=['GET'])
 def mop_leads():
     """
@@ -2449,6 +2458,7 @@ def gap_analysis():
 
 
 
+# Mistral AI chatbot
 @app.route('/api/chat', methods=['POST'])
 def chatbot():
     """Property AI chatbot powered by Mistral AI (free tier)."""
@@ -3299,6 +3309,7 @@ def property_areas():
     })
 
 
+# Admin — data ingestion and model management
 @app.route('/api/admin/upload-transactions', methods=['POST'])
 def upload_transactions():
     import csv, io
