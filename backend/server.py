@@ -2655,7 +2655,8 @@ def property_lookup():
                                  .replace(' ROAD',' RD').replace(' AVENUE',' AVE')
                                  .replace(' STREET',' ST').replace(' DRIVE',' DR')
                                  .replace(' CRESCENT',' CRES').replace(' CLOSE',' CL')
-                                 .replace(' PLACE',' PL').replace(' BOULEVARD',' BLVD'))
+                                 .replace(' PLACE',' PL').replace(' BOULEVARD',' BLVD')
+                                 .replace('BUKIT ','BT ').replace('MOUNT ','MT '))
                 _rp_fb = _road_norm_fb.split()
                 _road_kw_fb = ' '.join(_rp_fb[:2]) if len(_rp_fb) >= 2 else (_rp_fb[0] if _rp_fb else '')
                 if _road_kw_fb:
@@ -2717,7 +2718,9 @@ def property_lookup():
                         srs = _lk_gen(max_floor)
 
                 if not srs and road_name:
-                    road_keyword = road_name.upper().split()[0] if road_name else ''
+                    road_keyword = (road_name.upper()
+                                    .replace('BUKIT ', 'BT ').replace('MOUNT ', 'MT ')
+                                    .split()[0] if road_name else '')
                     if road_keyword:
                         srs = _q_storeys("AND UPPER(street_name) LIKE ?",
                                          (block_upper, f'%{road_keyword}%'))
@@ -2988,7 +2991,7 @@ def property_areas():
     if not town and block and property_type == 'HDB':
         try:
             _tc = get_db(); _tcu = _cursor(_tc)
-            road_kw = road.split()[0] if road else ''
+            road_kw = road.upper().replace('BUKIT ', 'BT ').replace('MOUNT ', 'MT ').split()[0] if road else ''
             if road_kw:
                 _tcu.execute(_q(
                     "SELECT town FROM resale_flat_prices "
@@ -3174,7 +3177,7 @@ def property_areas():
                 floor_data_source = 'block'
 
             if not storeys and block and road:
-                _rp2 = road.upper().split()
+                _rp2 = road.upper().replace('BUKIT ', 'BT ').replace('MOUNT ', 'MT ').split()
                 road_keyword = _rp2[0] if _rp2 else ''
                 if road_keyword:
                     storeys = _fetch_storeys("AND UPPER(block) = ? AND UPPER(street_name) LIKE ?",
