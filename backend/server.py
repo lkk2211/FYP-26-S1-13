@@ -2722,6 +2722,9 @@ def property_lookup():
                         srs = _q_storeys("AND UPPER(street_name) LIKE ?",
                                          (block_upper, f'%{road_keyword}%'))
 
+                if not srs:
+                    srs = _q_storeys("", (block_upper,))
+
                 if not srs and town:
                     dbc_cur.execute(_q(
                         "SELECT DISTINCT storey_range FROM resale_flat_prices "
@@ -3177,6 +3180,12 @@ def property_areas():
                     storeys = _fetch_storeys("AND UPPER(block) = ? AND UPPER(street_name) LIKE ?",
                                              (flat_type, block, f'%{road_keyword}%'))
                     if storeys: floor_data_source = 'block'
+
+            if not storeys and block:
+                storeys = _fetch_storeys("AND UPPER(block) = ?", (flat_type, block))
+                if not storeys and block_core and block_core != block:
+                    storeys = _fetch_storeys("AND UPPER(block) LIKE ?", (flat_type, f'{block_core}%'))
+                if storeys: floor_data_source = 'block'
 
             if not storeys and town:
                 storeys = _fetch_storeys("AND UPPER(town) = ?", (flat_type, town))
