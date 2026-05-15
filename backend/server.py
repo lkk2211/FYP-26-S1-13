@@ -2591,11 +2591,14 @@ def property_lookup():
         town = None
         if lat and lon:
             try:
-                r2 = urllib.request.urlopen(
+                _pa_token = get_onemap_token()
+                _pa_req = urllib.request.Request(
                     f"https://www.onemap.gov.sg/api/public/popapi/getPlanningarea"
                     f"?lat={lat}&lon={lon}",
-                    timeout=8
                 )
+                if _pa_token:
+                    _pa_req.add_header('Authorization', _pa_token)
+                r2 = urllib.request.urlopen(_pa_req, timeout=8)
                 pa_data = json.loads(r2.read())
                 if isinstance(pa_data, list) and pa_data:
                     pa = pa_data[0].get('pln_area_n', '').strip().upper()
